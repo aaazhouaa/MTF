@@ -1,0 +1,92 @@
+package com.aazhou.mtforum.ui.screen.forumlist
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import com.aazhou.mtforum.data.model.Forum
+import com.aazhou.mtforum.ui.common.ErrorBox
+import com.aazhou.mtforum.ui.common.LoadingBox
+import com.aazhou.mtforum.ui.common.UiState
+import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ForumListScreen(onForumClick: (fid: String, name: String) -> Unit) {
+    val viewModel: ForumListViewModel = appViewModel { ForumListViewModel(it.repository) }
+    val state by viewModel.state.collectAsStateWithLifecycle()
+
+    Scaffold(topBar = { TopAppBar(title = { Text("MT论坛") }) }) { padding ->
+        when (val current = state) {
+            is UiState.Loading -> LoadingBox(Modifier.padding(padding))
+            is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.padding(padding))
+            is UiState.Success -> LazyColumn(
+                contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+            ) {
+                current.data.forEach { group ->
+                    item(key = "group-${group.name}") {
+                        Text(
+                            text = group.name,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                        )
+                    }
+                    items(group.forums, key = { it.fid }) { forum ->
+                        ForumRow(forum, onClick = { onForumClick(forum.fid, forum.name) })
+                        HorizontalDivider(modifier = Modifier.padding(start = 60.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ForumRow(forum: Forum, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        if (forum.icon != null) {
+            AsyncImage(
+                model = forum.icon,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(32.dp),
+            )
+        }
+        Column(modifier = Modifier.padding(start = 12.dp)) {
+            Text(forum.name, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
