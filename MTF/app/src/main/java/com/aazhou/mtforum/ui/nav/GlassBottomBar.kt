@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -69,12 +70,15 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
+import kotlin.random.Random
 
 /** 底部导航项。 */
 data class GlassTab(val label: String, val icon: ImageVector)
@@ -91,6 +95,19 @@ private val PillHeight = BottomBarHeight - PillMargin * 2
 
 /** 按下放大倍数：约为默认的 1.4 倍，放大后上下溢出容器。 */
 private const val PillPressedScale = 1.4f
+
+/** 水珠每次跨到新 tab 时触发弹动的概率。 */
+private const val BumpChance = 0.5f
+
+/** 弹动幅度：等比缩放增量（0.1 即放大 10%）。 */
+private const val BumpScale = 0.10f
+
+/** 弹起很快、回落带轻微回弹。 */
+private val BumpRiseSpec = spring<Float>(0.7f, 900f)
+private val BumpFallSpec = spring<Float>(0.45f, 320f)
+
+/** 长按时水平方向收缩比例（0.1 即长度减少 10%）。 */
+private const val PressedLengthShrink = 0.10f
 
 private val LocalGlassTabScale = staticCompositionLocalOf { { 1f } }
 
@@ -145,6 +162,10 @@ fun GlassBottomBar(
 
         var currentIndex by remember { mutableIntStateOf(selectedIndex) }
 
+        // 手指是否按在底栏上，用于把手势拖动与点击（胶囊自动滚动）区分开
+        val pointerDownState = remember { mutableStateOf(false) }
+        val bumpAnimation = remember { Animatable(0f) }
+
         val dampedDragAnimation = remember(animationScope) {
             DampedDragAnimation(
                 animationScope = animationScope,
@@ -185,6 +206,23 @@ fun GlassBottomBar(
                 onSelect(index)
             }
         }
+        // 水珠跨到新 tab 时，按概率轻微弹动一下（仅手指按下拖动时触发）
+        LaunchedEffect(dampedDragAnimation) {
+            var bumpJob: Job? = null
+            snapshotFlow { dampedDragAnimation.value.roundToInt() }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect {
+                    if (pointerDownState.value && Random.nextFloat() < BumpChance) {
+                        bumpJob?.cancel()
+                        bumpJob = launch {
+                            bumpAnimation.snapTo(0f)
+                            bumpAnimation.animateTo(1f, BumpRiseSpec)
+                            bumpAnimation.animateTo(0f, BumpFallSpec)
+                        }
+                    }
+                }
+        }
 
         val content: @Composable RowScope.() -> Unit = {
             tabs.forEachIndexed { index, tab ->
@@ -205,24 +243,32 @@ fun GlassBottomBar(
                     val raw = (x - panelOffset) / tabWidth - 0.5f
                     return raw.fastCoerceIn(0f, (tabsCount - 1).toFloat())
                 }
-                dampedDragAnimation.updateValue(posToValue(down.position.x))
+                var lastValue = posToValue(down.position.x)
+                pointerDownState.value = true
+                dampedDragAnimation.updateValue(lastValue)
                 var pointer = down.id
                 var lastX = down.position.x
                 var lastT = System.currentTimeMillis()
-                while (true) {
-                    val event = awaitPointerEvent()
-                    val change = event.changes.firstOrNull { it.id == pointer }
-                    if (change == null || change.changedToUpIgnoreConsumed()) break
-                    dampedDragAnimation.updateValue(posToValue(change.position.x))
-                    val now = System.currentTimeMillis()
-                    val dt = (now - lastT).coerceAtLeast(1L)
-                    dampedDragAnimation.trackFlow((change.position.x - lastX) / dt * 1000f)
-                    lastX = change.position.x
-                    lastT = now
-                    change.consume()
-                    pointer = change.id
+                try {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == pointer }
+                        if (change == null || change.changedToUpIgnoreConsumed()) break
+                        lastValue = posToValue(change.position.x)
+                        dampedDragAnimation.updateValue(lastValue)
+                        val now = System.currentTimeMillis()
+                        val dt = (now - lastT).coerceAtLeast(1L)
+                        dampedDragAnimation.trackFlow((change.position.x - lastX) / dt * 1000f)
+                        lastX = change.position.x
+                        lastT = now
+                        change.consume()
+                        pointer = change.id
+                    }
+                } finally {
+                    pointerDownState.value = false
                 }
-                val idx = dampedDragAnimation.value.roundToInt().fastCoerceIn(0, tabsCount - 1)
+                // 以手指位置对应的 tab 为准，而非弹簧当前值——后者可能尚未滚到位
+                val idx = lastValue.roundToInt().fastCoerceIn(0, tabsCount - 1)
                 dampedDragAnimation.animateToValue(idx.toFloat())
                 onSelect(idx)
             }
@@ -322,8 +368,11 @@ fun GlassBottomBar(
                         val maxV = 3500f
                         val v = (dampedDragAnimation.flow / maxV).fastCoerceIn(-1f, 1f)
                         val speed = abs(v)
-                        scaleX = dampedDragAnimation.scaleX * (1f + 0.55f * speed)
-                        scaleY = dampedDragAnimation.scaleY * (1f - 0.32f * speed * speed)
+                        val bump = 1f + BumpScale * bumpAnimation.value
+                        // 长按时长度（水平方向）收缩，高度不受影响
+                        val pressShrinkX = 1f - PressedLengthShrink * dampedDragAnimation.pressProgress
+                        scaleX = dampedDragAnimation.scaleX * (1f + 0.55f * speed) * bump * pressShrinkX
+                        scaleY = dampedDragAnimation.scaleY * (1f - 0.32f * speed * speed) * bump
                         transformOrigin = TransformOrigin(0.5f - 0.20f * v, 0.5f)
                     },
                     onDrawSurface = {
