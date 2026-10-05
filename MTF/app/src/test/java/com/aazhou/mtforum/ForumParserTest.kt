@@ -95,6 +95,34 @@ class ForumParserTest {
     }
 
     @Test
+    fun announcementsExcludeRegularThreads() {
+        // 真实站点：普通帖的 <li> class 也含 b_t（forumlist_li comiis_znalist b_t ...），
+        // 且帖内多个链接指向同一 tid。旧选择器会把它们当公告，产生重复 key 导致列表崩溃。
+        val html = """
+            <div class="comiis_forumlist">
+              <ul>
+                <li class="b_t"><a href="https://bbs.binmt.cc/thread-85763-1-1.html"><em>置顶</em>总版规</a></li>
+              </ul>
+              <ul>
+                <li class="forumlist_li comiis_znalist bg_f b_t b_b">
+                  <div class="mmlist_li_box"><h2><a href="https://bbs.binmt.cc/thread-172677-1-1.html">MT管理器2.26.9正式版</a></h2></div>
+                  <div class="list_body"><a href="https://bbs.binmt.cc/thread-172677-1-1.html">更新说明</a></div>
+                </li>
+                <li class="forumlist_li comiis_znalist bg_f b_t b_b">
+                  <div class="mmlist_li_box"><h2><a href="https://bbs.binmt.cc/thread-172546-1-1.html">MT管理器公测版</a></h2></div>
+                  <div class="list_body"><a href="https://bbs.binmt.cc/thread-172546-1-1.html">更新说明</a></div>
+                </li>
+              </ul>
+            </div>
+        """.trimIndent()
+        val page = ForumParser.parseForumPage(html, 1)
+        assertEquals(1, page.announcements.size)
+        assertEquals("85763", page.announcements[0].tid)
+        assertEquals(2, page.threads.size)
+        assertEquals(2, page.threads.map { it.tid }.distinct().size)
+    }
+
+    @Test
     fun parsesThreadPage() {
         val page = ForumParser.parseThreadPage(threadHtml, 1)
         assertEquals("174050", page.tid)

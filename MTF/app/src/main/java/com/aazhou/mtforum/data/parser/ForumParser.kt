@@ -55,8 +55,10 @@ object ForumParser {
     /** 版块页帖子列表（forum-{fid}-{page}.html）。 */
     fun parseForumPage(html: String, page: Int): ForumPage {
         val document = doc(html)
+        // 置顶帖单独用 class="b_t"，而普通帖的 class 也含 b_t（forumlist_li comiis_znalist b_t ...），
+        // 需用 :not(.forumlist_li) 排除，否则会把普通帖当作公告并产生重复 tid（LazyColumn 重复 key 崩溃）。
         val announcements = mutableListOf<Thread>()
-        for (a in document.select("li.b_t a[href*=thread-]")) {
+        for (a in document.select("li.b_t:not(.forumlist_li) a[href*=thread-]")) {
             val tid = RE_TID.find(a.attr("href"))?.groupValues?.get(1) ?: continue
             announcements.add(
                 Thread(
@@ -90,8 +92,8 @@ object ForumParser {
 
         return ForumPage(
             forumName = document.selectFirst("div.comiis_view_header1 h1")?.text()?.trim(),
-            announcements = announcements,
-            threads = threads,
+            announcements = announcements.distinctBy { it.tid },
+            threads = threads.distinctBy { it.tid },
             page = page,
             hasNext = hasNextPage(document),
         )
