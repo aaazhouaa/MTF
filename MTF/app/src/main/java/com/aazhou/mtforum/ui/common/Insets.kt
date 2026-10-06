@@ -11,7 +11,7 @@ import androidx.compose.ui.unit.dp
 val BottomBarHeight = 56.dp
 
 /** 底栏距屏幕底部的距离（在系统导航栏避让之上再留的空白）。 */
-val BottomBarBottomMargin = 28.dp
+val BottomBarBottomMargin = 21.dp
 
 /**
  * 页面滚动内容底部需要避让的高度。

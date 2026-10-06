@@ -71,12 +71,22 @@ fun PostContent(
     pageImages: List<String> = emptyList(),
     bodyStyle: TextStyle = MaterialTheme.typography.bodyMedium,
     modifier: Modifier = Modifier,
+    /**
+     * 行内前缀：拼在首段正文之前同一段起排，折行后所有行回到前缀的左边缘。
+     *
+     * 首块不是文字（例如正文以图片开头）时，前缀只能单独占一行，退化成两行排版。
+     */
+    inlinePrefix: AnnotatedString? = null,
 ) {
     val blocks = remember(html) { parseContentBlocks(html) }
     val colors = LocalMtfColors.current
     Column(modifier) {
         if (quote != null && quote.text.isNotBlank()) QuoteCard(quote)
-        for (block in blocks) {
+        // 首块不是文字（正文以图片开头）时，行内前缀无从拼接，只能单独占一行
+        if (inlinePrefix != null && blocks.firstOrNull() !is ContentBlock.Text) {
+            Text(text = inlinePrefix, style = bodyStyle, modifier = Modifier.padding(vertical = 2.dp))
+        }
+        for ((index, block) in blocks.withIndex()) {
             when (block) {
                 is ContentBlock.Quote -> {
                     Text(
@@ -97,14 +107,18 @@ fun PostContent(
                         val linkColor = MaterialTheme.colorScheme.primary
                         val codeBg = colors.quoteBackground
                         val style = remember(block, bodyStyle) { block.derivedStyle(bodyStyle) }
+                        val body = remember(text, block.smiles, block.spans, linkColor, codeBg) {
+                            buildBodyText(text, block.smiles, block.spans, linkColor, codeBg)
+                        }
                         Text(
-                            text = remember(text, block.smiles, block.spans, linkColor, codeBg) {
-                                buildBodyText(text, block.smiles, block.spans, linkColor, codeBg)
-                            },
+                            text = if (index == 0 && inlinePrefix != null) inlinePrefix + body else body,
                             inlineContent = remember(block.smiles) { smileyInlineContent(block.smiles) },
                             style = style,
                             modifier = Modifier.padding(vertical = 2.dp),
                         )
+                    } else if (index == 0 && inlinePrefix != null) {
+                        // 首块是空文本块：前缀自己占一行，正文从下一块开始
+                        Text(text = inlinePrefix, style = bodyStyle)
                     }
                 }
                 is ContentBlock.Image -> SingleImage(

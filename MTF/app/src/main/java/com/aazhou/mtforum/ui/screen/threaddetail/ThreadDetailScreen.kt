@@ -70,15 +70,19 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.Post
+import com.aazhou.mtforum.ui.common.BottomBarBottomMargin
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.ImagePreview
@@ -297,7 +301,7 @@ fun ThreadDetailScreen(
                     target = replyTarget,
                     onCancelTarget = { viewModel.setReplyTarget(null) },
                     sending = replyState is ThreadDetailViewModel.ReplyState.Sending,
-                    replyCount = page.totalReplies,
+                    replyCount = page.totalReplies ?: 0,
                     liked = liked,
                     likeCount = likeCount,
                     favorited = favorited,
@@ -344,7 +348,8 @@ fun ThreadDetailScreen(
                         isRefreshing = isRefreshing,
                         onRefresh = { viewModel.refresh() },
                         // 内容铺到屏幕底：底栏是悬浮的半透明胶囊，帖子要从它下面滚过，
-                        // 毛玻璃才有东西可采样；底部留白交给 LazyColumn 的 contentPadding
+                        // 毛玻璃才有东西可采样；底部留白须覆盖底栏实际占高：输入胶囊 48dp
+                        // + 上留白 6dp + 与首页底栏一致的底部间距，回复目标行出现时再多留一行
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(top = padding.calculateTopPadding()),
@@ -353,7 +358,8 @@ fun ThreadDetailScreen(
                         modifier = Modifier.fillMaxSize(),
                         state = listState,
                         contentPadding = PaddingValues(
-                            bottom = 64.dp +
+                            bottom = 48.dp + 6.dp + BottomBarBottomMargin +
+                                (if (replyTarget != null) 24.dp else 0.dp) +
                                 WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
                         ),
                     ) {
@@ -1193,6 +1199,14 @@ private fun ReplyBlock(
     }
 }
 
+/**
+ * 楼中楼「回复 xx：」前缀里被引用者昵称的最大显示长度。
+ *
+ * 前缀与正文同段起排后，Text 没法只对其中一段做 Ellipsis，
+ * 超长昵称会把首行顶长，因此在此定长截断。
+ */
+private const val MAX_REPLY_NICKNAME = 8
+
 /** 楼中楼：头像 22dp、昵称 13sp、正文 14sp，缩进由父容器给出。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1246,23 +1260,30 @@ private fun NestedReply(
                 )
             }
         }
-        // 「回复 xx：」单独占一行，正文另起一行，两者左边缘对齐
-        if (!inReplyTo.isNullOrBlank()) {
-            Text(
-                "回复 $inReplyTo：",
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                fontStyle = FontStyle.Italic,
-                color = colors.textPrimary.copy(alpha = 0.8f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 30.dp, top = 3.dp),
-            )
+        // 「回复 xx：」拼成正文首段的行内前缀：首行紧接正文，折行后回到「回复」的左边缘
+        val replyPrefix = remember(inReplyTo) {
+            if (inReplyTo.isNullOrBlank()) {
+                null
+            } else {
+                // 同段起排后没法对前缀单独 Ellipsis，昵称定长截断，避免首行被顶长
+                val name = if (inReplyTo.length > MAX_REPLY_NICKNAME) {
+                    inReplyTo.take(MAX_REPLY_NICKNAME) + "…"
+                } else {
+                    inReplyTo
+                }
+                buildAnnotatedString {
+                    withStyle(SpanStyle(fontStyle = FontStyle.Italic, fontSize = 12.sp)) {
+                        append("回复 $name：")
+                    }
+                }
+            }
         }
         PostContent(
             html = child.contentHtml,
             onImageClick = onImageClick,
             pageImages = pageImages,
             bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 21.sp),
+            inlinePrefix = replyPrefix,
             modifier = Modifier
                 .padding(start = 30.dp, top = 3.dp)
                 .fillMaxWidth()
@@ -1327,7 +1348,7 @@ private fun ReplyBar(
     target: Post?,
     onCancelTarget: () -> Unit,
     sending: Boolean,
-    replyCount: Int?,
+    replyCount: Int,
     liked: Boolean,
     likeCount: Int,
     favorited: Boolean,
@@ -1348,7 +1369,8 @@ private fun ReplyBar(
         Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp)
+            .padding(top = 6.dp, bottom = BottomBarBottomMargin),
     ) {
         if (target != null) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
@@ -1402,7 +1424,7 @@ private fun ReplyBar(
                         Text(
                             "写评论",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = colors.textHint,
+                            color = colors.textPrimary,
                         )
                     }
                     BasicTextField(
@@ -1508,7 +1530,7 @@ private fun ReplyBar(
     }
 }
 
-/** 胶囊内的单个操作：图标在上、数字在下；数字为 null 时不占位（如站点没返回回复数）。 */
+/** 胶囊内的单个操作：图标在上、数字在下；数字为 null 时不占位。 */
 @Composable
 private fun BarCount(
     icon: @Composable () -> Unit,

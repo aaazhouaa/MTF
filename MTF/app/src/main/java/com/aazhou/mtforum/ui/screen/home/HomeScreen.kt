@@ -306,8 +306,11 @@ private fun ThreadCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(colors.quoteBackground)
+                                .border(
+                                    0.1.dp,
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.69f),
+                                    RoundedCornerShape(50),
+                                )
                                 .padding(horizontal = 6.dp, vertical = 1.dp),
                         )
                     }
