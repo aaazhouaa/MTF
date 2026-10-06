@@ -229,6 +229,7 @@ class ForumParserTest {
     fun hiddenContentBlockIsNotAQuote() {
         // 「游客，回复可见」是站点用 comiis_quote 排版的提示卡，不是引用回复；
         // 误当成楼中楼会让该回复从评论列表里消失。
+        // 提示本身只是站点排版用的说明，客户端有自己的锁卡，正文里不再保留。
         val html = """
             <html><head><title>帖子</title></head><body>
             <div class="comiis_postli" id="pid1">
@@ -240,7 +241,46 @@ class ForumParserTest {
         """.trimIndent()
         val post = ForumParser.parseThreadPage(html, 1).posts.single()
         assertNull(post.quote)
-        assertTrue(post.contentHtml.contains("游客"))
+        assertTrue(post.hasHiddenContent)
+        assertTrue(!post.contentHtml.contains("游客"))
+        assertTrue(post.contentHtml.contains("正文内容"))
+    }
+
+    @Test
+    fun hiddenPromptInLockedDivIsDroppedFromBody() {
+        // 锁定提示的另一种排版是 div.locked：同样只用来置标志位，正文里不保留
+        val html = """
+            <html><head><title>帖子</title></head><body>
+            <div class="comiis_postli" id="pid1">
+              <div class="comiis_postli_top comiis_postli_topv1"></div>
+              <div class="comiis_a">
+                正文内容
+                <div class="locked">username123，如果您要查看本帖隐藏内容请回复</div>
+              </div>
+            </div></body></html>
+        """.trimIndent()
+        val post = ForumParser.parseThreadPage(html, 1).posts.single()
+        assertTrue(post.hasHiddenContent)
+        assertTrue(!post.contentHtml.contains("username123"))
+        assertTrue(post.contentHtml.contains("正文内容"))
+    }
+
+    @Test
+    fun hiddenPromptOnReplyFloorKeepsBodyText() {
+        // 非首帖不判定锁定（回复没有「回复可见」一说），提示照旧留在正文里
+        val html = """
+            <html><head><title>帖子</title></head><body>
+            <div class="comiis_postli" id="pid2">
+              <div class="comiis_postli_top"></div>
+              <div class="comiis_a">
+                <div class="locked">username123，如果您要查看本帖隐藏内容请回复</div>谢谢分享
+              </div>
+            </div></body></html>
+        """.trimIndent()
+        val post = ForumParser.parseThreadPage(html, 1).posts.single()
+        assertTrue(!post.hasHiddenContent)
+        assertTrue(post.contentHtml.contains("username123"))
+        assertTrue(post.contentHtml.contains("谢谢分享"))
     }
 
     @Test

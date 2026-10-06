@@ -310,7 +310,7 @@ object ForumParser {
         val timeEl = li.selectFirst("span.kmtime") ?: li.selectFirst("span.comiis_tm")
         val contentEl = li.selectFirst("div.comiis_a")
         // 正文里可能同时有引用回复与「隐藏内容」提示两大类引用块，只有前者构成楼中楼，
-        // 其余的（如隐藏内容提示）保持在正文 HTML 中，由 PostContent 渲染成卡片。
+        // 其余的（如隐藏内容提示）会从正文里摘掉，改由客户端的锁卡呈现。
         var quote: PostQuote? = null
         for (el in contentEl?.select("div.comiis_quote").orEmpty()) {
             val parsed = parseQuote(el)
@@ -323,16 +323,23 @@ object ForumParser {
         val uid = RE_UID.find(authorA?.attr("href") ?: "")?.groupValues?.get(1)
         // 只有首页第一层才是主题首帖；楼主后续的回复仍要靠 uid 判定为楼主
         val firstPost = li.selectFirst("div.comiis_postli_topv1") != null
+        // 「回复可见」隐藏内容：站点把锁定提示包在 div.comiis_quote（或 div.locked）里，
+        // 与真正的引用回复（含 blockquote / 「发表于」）能区分；命中提示文案才算锁定。
+        // 提示只是站点排版用的说明，正文里留着与客户端锁卡重复，据此置标志位后摘除节点；
+        // 标志位是 HiddenContentCard 的唯一来源，晚了摘会让解锁入口一起消失。
+        val hiddenNodes = if (firstPost) {
+            contentEl?.select("div.locked, div.comiis_quote")?.filter {
+                it.selectFirst("blockquote") == null &&
+                    !it.text().contains("发表于") &&
+                    RE_HIDDEN_PROMPT.containsMatchIn(it.text())
+            }.orEmpty()
+        } else {
+            emptyList()
+        }
+        hiddenNodes.forEach { it.remove() }
         // 编辑标记混在正文里会污染引用卡快照与展示，整句剥离成单独字段
         val rawHtml = extractContentHtml(li, contentEl)
         val editedText = RE_EDITED.find(rawHtml)?.value?.trim()
-        // 「回复可见」隐藏内容：站点把锁定提示包在 div.comiis_quote（或 div.locked）里，
-        // 与真正的引用回复（含 blockquote / 「发表于」）能区分；命中提示文案才算锁定。
-        val hiddenLocked = firstPost && contentEl?.select("div.locked, div.comiis_quote")?.any {
-            it.selectFirst("blockquote") == null &&
-                !it.text().contains("发表于") &&
-                RE_HIDDEN_PROMPT.containsMatchIn(it.text())
-        } == true
         return Post(
             pid = li.id().removePrefix("pid"),
             authorName = authorA?.text()?.trim() ?: "",
@@ -350,7 +357,7 @@ object ForumParser {
             isFirstPost = firstPost,
             quote = quote,
             editedText = editedBadge(editedText),
-            hasHiddenContent = hiddenLocked,
+            hasHiddenContent = hiddenNodes.isNotEmpty(),
         )
     }
 

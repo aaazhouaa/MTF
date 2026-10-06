@@ -852,7 +852,7 @@ private fun ThreadDetailTopBar(
 }
 
 /**
- * 正文头：标题 → 细线上方一行（编辑标记靠左 / 版块 chip 靠右）→ 细线 → 正文 → 结束线 → 评论标题栏。
+ * 正文头：标题 → 细线上方一行（编辑标记靠左 / 版块 chip 靠右）→ 细线 → 正文 → 评论标题栏。
  * 作者信息栏已整体移入页面顶栏 ThreadDetailTopBar，此处不再重复。
  */
 @Composable
@@ -926,7 +926,6 @@ private fun DetailHeader(
         if (post.hasHiddenContent) {
             HiddenContentCard(onUnlock = onUnlock)
         }
-        PostFooterLine()
     }
 }
 
@@ -987,18 +986,6 @@ private fun HiddenContentCard(onUnlock: () -> Unit) {
                 .padding(horizontal = 12.dp, vertical = 6.dp),
         )
     }
-}
-
-/** 正文与评论区的过渡底线。 */
-@Composable
-private fun PostFooterLine() {
-    val colors = LocalMtfColors.current
-    Spacer(Modifier.height(6.dp))
-    HorizontalDivider(
-        color = colors.divider,
-        thickness = 0.6.dp,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 20.dp),
-    )
 }
 
 /** 「全部评论 (N) [已折叠 N 条 / 收起已折叠]  楼主 | 正序 | 倒序」。 */
