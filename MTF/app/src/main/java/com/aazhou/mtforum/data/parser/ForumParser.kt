@@ -36,6 +36,21 @@ object ForumParser {
     private val RE_BR = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
     private val RE_FLOOR_NUMBER = Regex("^(\\d+)")
 
+    /** 列表卡片配图张数上限：卡片最多铺 3 张，剩下的用右上角「N图」角标概括。 */
+    private const val MAX_CARD_IMAGES = 9
+
+    /**
+     * 配图过滤规则：命中任一者都不是帖子附件图。
+     *
+     * 懒加载占位（none.png / blank.gif / loading）、头像接口、站点自带的表情与
+     * 文件类型小图都在 static/image 下，取它们会把整卡第一格填成站点素材。
+     */
+    private val RE_NON_IMAGE = Regex(
+        "none\\.png|none\\.gif|blank\\.gif|loading|avatar\\.php|" +
+            "/static/image/(common|filetype|smiley)/|smiley|emoticon",
+        RegexOption.IGNORE_CASE,
+    )
+
     /** 帖子首帖/楼层正文里的编辑标记：「本帖最后由 X 于 <时间> 编辑」。 */
     private val RE_EDITED = Regex("本[帖贴]最后由\\s*.+?\\s*于\\s*.+?\\s*编辑")
 
@@ -143,7 +158,7 @@ object ForumParser {
                     forumName = li.selectFirst("div.comiis_xznalist_bk a[href*=forum-]")?.let { a ->
                         a.ownText().trim().ifEmpty { a.text().trim() }
                     }?.ifEmpty { null },
-                    thumbnail = li.selectFirst("img[comiis_loadimages]")?.attr("comiis_loadimages")?.takeIf { it.isNotBlank() },
+                    imageUrls = collectThreadImages(li),
                     likeCount = li.select("div.comiis_xznalist_bottom li span.comiis_tm").firstOrNull()?.text()?.trim(),
                 )
             )
@@ -156,6 +171,38 @@ object ForumParser {
             page = page,
             hasNext = hasNextPage(document),
         )
+    }
+
+    /**
+     * 列表卡片配图：按页面顺序取全部附件图，最多 9 张（卡片最多铺 3 张 + 角标张数）。
+     *
+     * 站点懒加载时 src 是 none.png 占位，真实地址在 comiis_loadimages；主容器缺失时
+     * 退回正文容器里的 img。过滤占位图与站点自带小图，避免把头像/表情当配图。
+     */
+    private fun collectThreadImages(li: Element): List<String> {
+        val urls = LinkedHashSet<String>()
+        val containers = listOf(
+            ".comiis_pyqlist_imgs img, .comiis_pyqlist_img img",
+            ".mmlist_li_box img",
+        )
+        for (selector in containers) {
+            for (img in li.select(selector)) {
+                if (urls.size >= MAX_CARD_IMAGES) break
+                val url = listOf("comiis_loadimages", "data-original", "data-src", "file", "src")
+                    .firstNotNullOfOrNull { attr ->
+                        img.attr(attr).trim().takeIf { it.isNotEmpty() }
+                    }
+                if (url != null && isCardImage(url)) urls.add(url)
+            }
+            if (urls.isNotEmpty()) break
+        }
+        return urls.toList()
+    }
+
+    /** 是否是帖子配图而非占位图/站点自带小图（头像、表情、文件类型图标）。 */
+    private fun isCardImage(url: String): Boolean {
+        val lower = url.lowercase()
+        return RE_NON_IMAGE.containsMatchIn(lower).not()
     }
 
     /** 帖子详情页（thread-{tid}-{page}-1.html）。 */

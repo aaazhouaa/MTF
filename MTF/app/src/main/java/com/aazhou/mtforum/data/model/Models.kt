@@ -28,8 +28,8 @@ data class Thread(
     val isAnnouncement: Boolean = false,
     /** 所属版块名（列表卡片底部那条 forum-N 链接）。 */
     val forumName: String? = null,
-    /** 卡片封面图地址，无图时为 null。 */
-    val thumbnail: String? = null,
+    /** 卡片配图地址，按页面顺序，最多 9 张；多图排布由此列表长度决定。 */
+    val imageUrls: List<String> = emptyList(),
     /** 点赞数（列表卡片三数之首，站点未登录时为 0）。 */
     val likeCount: String? = null,
     /** 是否置顶帖。 */

@@ -318,7 +318,74 @@ class ForumParserTest {
         assertEquals("1", thread.likeCount)
         assertEquals("6", thread.replyCount)
         assertEquals("77", thread.viewCount)
-        assertEquals("https://cdn.binmt.cc/forum.php?mod=image&aid=377738", thread.thumbnail)
+        assertEquals(listOf("https://cdn.binmt.cc/forum.php?mod=image&aid=377738"), thread.imageUrls)
+    }
+
+    @Test
+    fun cardImagesCollectedInOrderAndPlaceholdersDropped() {
+        // 多图卡片：站点把每张图放在 comiis_pyqlist_imgs 的一个 li 里，真实地址在
+        // comiis_loadimages（src 是懒加载占位 none.png），取图要保序。
+        val html = """
+            <div class="comiis_forumlist comiis_xznlist mb0 cl"><ul>
+            <li class="forumlist_li comiis_znalist bg_f b_t b_b">
+              <div class="forumlist_li_top cl">
+                <a href="https://bbs.binmt.cc/home.php?mod=space&uid=1" class="wblist_tximg"><img class="top_tximg" src="https://avatar.mt2.cn/avatar.php?uid=1"></a>
+                <h2><a href="https://bbs.binmt.cc/home.php?mod=space&uid=1" class="top_user">someone</a></h2>
+                <div class="forumlist_li_time"><span class="f_d">1 小时前</span></div>
+              </div>
+              <div class="mmlist_li_box cl">
+                <h2><a href="https://bbs.binmt.cc/thread-200001-1-1.html">多图帖</a></h2>
+                <div class="comiis_pyqlist_imgs comiis_pyqlist_img3p"><ul>
+                  <li><img src="none.png" comiis_loadimages="https://cdn.binmt.cc/forum.php?mod=image&aid=1"></li>
+                  <li><img src="none.png" comiis_loadimages="https://cdn.binmt.cc/forum.php?mod=image&aid=2"></li>
+                  <li><img src="none.png" comiis_loadimages="https://cdn.binmt.cc/forum.php?mod=image&aid=3"></li>
+                </ul></div>
+              </div>
+              <div class="comiis_xznalist_bottom cl"><ul class="cl">
+                <li><span class="comiis_tm">2</span></li>
+                <li><span class="comiis_tm">5</span></li>
+                <li><span class="comiis_tm">88</span></li>
+              </ul></div>
+            </li>
+            </ul></div>
+        """.trimIndent()
+        val thread = ForumParser.parseForumPage(html, 1).threads.single()
+        assertEquals(
+            listOf(
+                "https://cdn.binmt.cc/forum.php?mod=image&aid=1",
+                "https://cdn.binmt.cc/forum.php?mod=image&aid=2",
+                "https://cdn.binmt.cc/forum.php?mod=image&aid=3",
+            ),
+            thread.imageUrls,
+        )
+    }
+
+    @Test
+    fun cardLazyPlaceholderIsNotTreatedAsImage() {
+        // 没有真实附件图时，src 只有 none.png 占位，不能当成配图（否则卡片第一格是站点素材）
+        val html = """
+            <div class="comiis_forumlist comiis_xznlist mb0 cl"><ul>
+            <li class="forumlist_li comiis_znalist bg_f b_t b_b">
+              <div class="forumlist_li_top cl">
+                <a href="https://bbs.binmt.cc/home.php?mod=space&uid=1" class="wblist_tximg"><img class="top_tximg" src="https://avatar.mt2.cn/avatar.php?uid=1"></a>
+                <h2><a href="https://bbs.binmt.cc/home.php?mod=space&uid=1" class="top_user">someone</a></h2>
+              </div>
+              <div class="mmlist_li_box cl">
+                <h2><a href="https://bbs.binmt.cc/thread-300001-1-1.html">无图帖</a></h2>
+                <div class="comiis_pyqlist_imgs comiis_pyqlist_img3p"><ul>
+                  <li><img src="https://bbs.binmt.cc/template/comiis_app/pic/none.png"></li>
+                </ul></div>
+              </div>
+              <div class="comiis_xznalist_bottom cl"><ul class="cl">
+                <li><span class="comiis_tm">0</span></li>
+                <li><span class="comiis_tm">3</span></li>
+                <li><span class="comiis_tm">12</span></li>
+              </ul></div>
+            </li>
+            </ul></div>
+        """.trimIndent()
+        val thread = ForumParser.parseForumPage(html, 1).threads.single()
+        assertTrue(thread.imageUrls.isEmpty())
     }
 
     @Test
