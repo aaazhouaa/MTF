@@ -2,6 +2,7 @@ package com.aazhou.mtforum
 
 import android.app.Application
 import com.aazhou.mtforum.data.network.HttpClient
+import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.SessionStore
 import com.aazhou.mtforum.data.repo.ThemeStore
@@ -18,6 +19,7 @@ class AppContainer(application: Application) {
 
     val sessionStore = SessionStore(application)
     val themeStore = ThemeStore(application)
+    val actionStore = ActionStore(application)
     val httpClient = HttpClient()
     val repository = ForumRepository(httpClient)
 

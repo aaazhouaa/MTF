@@ -37,6 +37,31 @@ sealed interface ContentBlock {
     ) : ContentBlock
 }
 
+/**
+ * 按正文原顺序提取全部图片地址，供全屏查看器把单图与其它图片串成一组左右翻页。
+ */
+fun collectImageUrls(html: String): List<String> =
+    parseContentBlocks(html).flatMap { block ->
+        when (block) {
+            is ContentBlock.Image -> listOf(block.url)
+            is ContentBlock.ImageGroup -> block.urls
+            else -> emptyList()
+        }
+    }
+
+/** 正文的纯文本（用于复制评论内容），图片/表格不产出文本。 */
+fun plainTextOf(html: String): String =
+    parseContentBlocks(html)
+        .mapNotNull { block ->
+            when (block) {
+                is ContentBlock.Text -> block.text.takeIf { it.isNotBlank() }
+                is ContentBlock.Quote -> block.text.takeIf { it.isNotBlank() }
+                else -> null
+            }
+        }
+        .joinToString("\n")
+        .trim()
+
 /** 单元格在表格行内的水平对齐。 */
 enum class CellAlign { Start, Center, End }
 

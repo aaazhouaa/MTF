@@ -4,6 +4,8 @@ import com.aazhou.mtforum.data.model.Forum
 import com.aazhou.mtforum.data.model.ForumGroup
 import com.aazhou.mtforum.data.model.ForumPage
 import com.aazhou.mtforum.data.model.HomeData
+import com.aazhou.mtforum.data.model.LikeResult
+import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.model.PostQuote
@@ -40,8 +42,34 @@ object ForumParser {
     /** 「本帖最后由 X 于 2026-10-5 12:39 编辑」里的时间，用于「时间 编辑」小字。 */
     private val RE_EDIT_TIME = Regex("\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}\\s+\\d{1,2}:\\d{2}(?::\\d{2})?")
 
+    /** 「回复可见」锁定提示文案（站点模板：XX，如果您要查看本帖隐藏内容请回复）。 */
+    private val RE_HIDDEN_PROMPT = Regex("查看本帖隐藏内容|回复可见|隐藏内容|回复后.{0,6}查看")
+
     private val JS_FID = Regex("var\\s+fid\\s*=\\s*parseInt\\(['\"](\\d+)")
     private val JS_AUTHOR_ID = Regex("authorid\\s*=\\s*['\"](\\d+)")
+
+    /** 页面 JS 里的当前登录用户 uid（未登录为 "0"）。 */
+    private val RE_UID_VAR = Regex("uid\\s*=\\s*['\"](\\d+)['\"]")
+
+    /** 点赞响应里的结构化剩余次数（优先于中文文案）。 */
+    private val RE_LIKES_DAYCOUNT = Regex("daycount'?\\s*:\\s*'?(\\d+)")
+
+    /** 点赞响应里的「您今天还能评价 N 次」（文案兜底）。 */
+    private val RE_REMAIN_LIKES = Regex("还能评价\\s*(\\d+)\\s*次")
+
+    /** 点赞响应里的该帖总赞数。 */
+    private val RE_RECOMMEND_COUNT = Regex("recommendc'?\\s*:\\s*'?(\\d+)")
+
+    /** 点赞失败文案。 */
+    private val RE_LIKE_ERROR = Regex(
+        "没有点赞权限|不能点赞|今日评价机会已用完|已用完|关闭的主题|请先登录|formhash错误|非法操作",
+    )
+
+    /** 点赞成功标识。 */
+    private val RE_LIKE_SUCCESS = Regex("succeedhandle|recommendv|recommendc|点赞成功|评价成功")
+
+    /** 响应里的提示正文（messagetext 下的 p）。 */
+    private val RE_TIP_MESSAGE = Regex("(?s)<p>(.*?)(?:<script|</p>)")
 
     /** 首页楼层的中文称谓，用于反推绝对楼层号。 */
     private val FLOOR_NAMES = mapOf(
@@ -161,6 +189,7 @@ object ForumParser {
         val favoriteCount = document.selectFirst("span.comiis_favorite_a_num")
             ?.text()?.let { numberFromText(it) }
         val replyUrl = document.selectFirst("form#fastpostform")?.attr("action")
+        val action = parseActionState(document, html)
         return ThreadPage(
             tid = extractTid(document, html),
             subject = subject,
@@ -177,7 +206,52 @@ object ForumParser {
             totalReplies = totalReplies,
             likeCount = likeCount,
             favoriteCount = favoriteCount,
+            isLiked = action.liked,
+            likedStateKnown = action.likedKnown,
+            isFavorited = action.favorited,
+            favoritedStateKnown = action.favoritedKnown,
         )
+    }
+
+    /** 首帖的点赞/收藏状态；两个 known 分别表示站点是否明确给出该状态。 */
+    private data class ActionState(
+        val liked: Boolean = false,
+        val likedKnown: Boolean = false,
+        val favorited: Boolean = false,
+        val favoritedKnown: Boolean = false,
+    )
+
+    /**
+     * 解析当前登录用户对首帖的点赞/收藏状态。
+     *
+     * 站点只在登录态渲染点赞/收藏控件，未登录（JS uid=0）或控件缺失时状态视为「未知」，
+     * UI 不应据此覆盖本地状态，否则会把已点赞的帖子显示成未点赞。
+     */
+    private fun parseActionState(document: Document, html: String): ActionState {
+        val uid = RE_UID_VAR.find(html)?.groupValues?.get(1)
+        if (uid == null || uid == "0") return ActionState()
+        var liked = false
+        var likedKnown = false
+        val recommend = document.selectFirst(
+            "a.comiis_recommend_addkey, a.comiis_recommend_new, .comiis_recommend_addkey",
+        )
+        if (recommend != null) {
+            val icon = recommend.selectFirst("i.comiis_recommend_color")
+            val classes = recommend.className() + " " + (icon?.className() ?: "")
+            val iconHtml = icon?.html().orEmpty()
+            liked = classes.contains("f_a") || iconHtml.contains("e654")
+            likedKnown = true
+        }
+        var favorited = false
+        var favoritedKnown = false
+        val favoriteIcon = document.selectFirst("#comiis_favorite_a i.comiis_favorite_a_color")
+        if (favoriteIcon != null) {
+            val classes = favoriteIcon.className()
+            val iconHtml = favoriteIcon.html()
+            favorited = classes.contains("f_a") || iconHtml.contains("e64c")
+            favoritedKnown = true
+        }
+        return ActionState(liked, likedKnown, favorited, favoritedKnown)
     }
 
     private fun parsePost(li: Element, authorId: String?): Post {
@@ -202,6 +276,13 @@ object ForumParser {
         // 编辑标记混在正文里会污染引用卡快照与展示，整句剥离成单独字段
         val rawHtml = extractContentHtml(li, contentEl)
         val editedText = RE_EDITED.find(rawHtml)?.value?.trim()
+        // 「回复可见」隐藏内容：站点把锁定提示包在 div.comiis_quote（或 div.locked）里，
+        // 与真正的引用回复（含 blockquote / 「发表于」）能区分；命中提示文案才算锁定。
+        val hiddenLocked = firstPost && contentEl?.select("div.locked, div.comiis_quote")?.any {
+            it.selectFirst("blockquote") == null &&
+                !it.text().contains("发表于") &&
+                RE_HIDDEN_PROMPT.containsMatchIn(it.text())
+        } == true
         return Post(
             pid = li.id().removePrefix("pid"),
             authorName = authorA?.text()?.trim() ?: "",
@@ -209,13 +290,17 @@ object ForumParser {
             avatarUrl = li.selectFirst("img.top_tximg")?.attr("src"),
             level = li.selectFirst("a.top_lev")?.text()?.trim(),
             timeText = timeEl?.ownText()?.trim(),
-            location = timeEl?.selectFirst("code.comiis_iplocality font")?.text()?.trim()
-                ?: timeEl?.selectFirst("code.comiis_iplocality")?.text()?.trim(),
+            // 站点地点形如「来自 河南」（可能带前导换行）；只保留地点本身
+            location = (timeEl?.selectFirst("code.comiis_iplocality font")?.text()
+                ?: timeEl?.selectFirst("code.comiis_iplocality")?.text())
+                ?.replace(Regex("^\\s*来自\\s*"), "")
+                ?.trim(),
             contentHtml = RE_EDITED.replace(rawHtml, "").trim(),
             isOp = li.selectFirst("span.top_lev.bg_c") != null || (authorId != null && uid == authorId),
             isFirstPost = firstPost,
             quote = quote,
             editedText = editedBadge(editedText),
+            hasHiddenContent = hiddenLocked,
         )
     }
 
@@ -257,9 +342,13 @@ object ForumParser {
             .filter { it.isNotEmpty() }
         val metaLine = lines.firstOrNull()?.removePrefix("回复")?.trim().orEmpty()
         if (!metaLine.contains("发表于")) return null
+        // 站点 meta 形如「X 发表于 8 分钟前 来自 河南」；时间字段要去掉「来自 地点」，只留时间
+        val timePart = metaLine.substringAfter("发表于")
+            .substringBefore("来自")
+            .trim().trimEnd(']').trim()
         return PostQuote(
             author = metaLine.substringBefore("发表于").trim().ifEmpty { null },
-            time = metaLine.substringAfter("发表于").trim().trimEnd(']').trim().ifEmpty { null },
+            time = timePart.ifEmpty { null },
             text = lines.drop(1).joinToString("\n"),
             pid = pid,
         )
@@ -293,6 +382,15 @@ object ForumParser {
     /** 登录页的 formhash（在 input#formhash）。 */
     fun extractLoginFormhash(html: String): String? =
         doc(html).selectFirst("input#formhash")?.attr("value")?.ifEmpty { null }
+
+    /** 编辑页里该楼删除用的校验哈希（找不到返回 null，调用方退回通用 formhash）。 */
+    fun extractDeleteHash(html: String, pid: String): String? {
+        Regex("formhash=([0-9a-zA-Z]+)[^\"'<>]{0,200}?pid=$pid").find(html)
+            ?.let { return it.groupValues[1] }
+        Regex("pid=$pid[^\"'<>]{0,200}?formhash=([0-9a-zA-Z]+)").find(html)
+            ?.let { return it.groupValues[1] }
+        return null
+    }
 
     /** 判断登录结果：仍存在登录表单即视为失败。 */
     fun parseLoginResult(html: String): LoginResult {
@@ -332,9 +430,11 @@ object ForumParser {
     fun parseGuidePage(html: String, page: Int): ForumPage = parseForumPage(html, page)
 
     /** 从任意页面提取当前用户；未登录时 uid 为 "0"。 */
+    /** 个人空间页的 uid：优先 discuz_uid，其次 JS 变量 uid（指定 uid 查看时指向被查看者）。 */
     fun parseUserProfile(html: String): UserProfile {
         val document = doc(html)
         val uid = Regex("discuz_uid\\s*=\\s*'(\\d+)'").find(html)?.groupValues?.get(1)
+            ?: RE_UID_VAR.find(html)?.groupValues?.get(1)
         if (uid == null || uid == "0") return UserProfile(uid = uid)
         // comiis 移动模板的个人空间主页
         val name = document.selectFirst(".comiis_space_tx h2")?.text()?.trim()
@@ -364,6 +464,40 @@ object ForumParser {
             onlineTime = document.select(".comiis_space_profile li:contains(在线时间) .profile_rs")
                 .firstOrNull()?.text()?.trim(),
         )
+    }
+
+    /** 点赞用户列表（misc.php?op=recommend）：昵称取自链接文本，需剔掉图标字体私用区字符。 */
+    fun parseLikeUsers(html: String): List<LikeUser> {
+        val box = doc(html).selectFirst("div.comiis_userlist") ?: return emptyList()
+        return box.select("li a[href*=uid=]").mapNotNull { a ->
+            val uid = RE_UID.find(a.attr("href"))?.groupValues?.get(1) ?: return@mapNotNull null
+            val name = a.text().replace(Regex("[\uE000-\uF8FF]"), "").trim().ifEmpty { "用户$uid" }
+            LikeUser(uid = uid, name = name, avatarUrl = a.selectFirst("img")?.attr("src"))
+        }
+    }
+
+    /**
+     * 解析点赞/取消点赞的接口响应。
+     *
+     * 点赞：剩余可赞次数优先取 `daycount`，缺失时用「您今天还能评价 N 次」兜底。
+     * 取消：站点只回 `ok`（无次数/计数），只需判断是否成功。
+     */
+    fun parseLikeResult(body: String, like: Boolean): LikeResult {
+        val bad = RE_LIKE_ERROR.containsMatchIn(body) || body.contains("action=login", true)
+        val success = body.isNotBlank() && !bad && if (like) {
+            RE_LIKE_SUCCESS.containsMatchIn(body) || !body.contains("<html", true)
+        } else {
+            body.contains(">ok<") || body.contains("'ok'") || !body.contains("<html", true)
+        }
+        val remaining = RE_LIKES_DAYCOUNT.find(body)?.groupValues?.get(1)?.toIntOrNull()
+            ?: RE_REMAIN_LIKES.find(body)?.groupValues?.get(1)?.toIntOrNull()
+        val count = RE_RECOMMEND_COUNT.find(body)?.groupValues?.get(1)?.toIntOrNull()
+        val message = RE_TIP_MESSAGE.find(body)?.groupValues?.get(1)
+            ?.replace(Regex("<[^>]+>"), "")
+            ?.replace(Regex("您今天还能评价\\s*\\d+\\s*次"), "")
+            ?.trim()
+            ?.ifBlank { null }
+        return LikeResult(success = success, remainingToday = remaining, serverCount = count, message = message)
     }
 
     private fun numberFromText(text: String): Int? =
@@ -397,13 +531,22 @@ object ForumParser {
         return RE_TID.find(html)?.groupValues?.get(1) ?: ""
     }
 
+    /**
+     * 帖子详情总页数。
+     *
+     * 站点分页链接有两种形态：正序是 `thread-{tid}-{page}-1.html`，
+     * 倒序（带 ordertype 等参数）是 `...&page={page}`（页码在查询串里）；
+     * 只认前一种会让倒序页恒得出 1 页，从而只加载首屏。
+     */
     private fun parseTotalPages(document: Document): Int {
         var max = 1
-        for (a in document.select("a[href*=thread-][href$=-1.html], a[href*=page-]")) {
-            Regex("(?:thread-\\d+-(\\d+)-1|page-(\\d+))\\.html").find(a.attr("href"))?.let { m ->
-                val n = (m.groupValues[1].ifEmpty { m.groupValues[2] }).toIntOrNull() ?: return@let
-                if (n > max) max = n
-            }
+        for (a in document.select("a[href*=thread-], a[href*=page]")) {
+            val href = a.attr("href")
+            val n = Regex("thread-\\d+-(\\d+)-1\\.html").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("[?&]page=(\\d+)").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("page-(\\d+)\\.html").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                ?: continue
+            if (n > max) max = n
         }
         return max
     }

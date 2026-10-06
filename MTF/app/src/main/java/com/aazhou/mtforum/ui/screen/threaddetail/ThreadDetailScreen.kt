@@ -2,9 +2,11 @@ package com.aazhou.mtforum.ui.screen.threaddetail
 
 import android.content.Context
 import android.content.Intent
-import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,9 +17,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -28,11 +32,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -41,8 +47,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,8 +79,10 @@ import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.PostContent
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
-import com.aazhou.mtforum.ui.common.isWaterReply
-import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.common.collectImageUrls
+import com.aazhou.mtforum.ui.common.container
+import com.aazhou.mtforum.ui.common.plainTextOf
+import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import kotlinx.coroutines.launch
 
@@ -81,10 +91,15 @@ import kotlinx.coroutines.launch
 fun ThreadDetailScreen(
     tid: String,
     onBack: () -> Unit,
+    onUserClick: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val colors = LocalMtfColors.current
-    val viewModel: ThreadDetailViewModel = appViewModel { ThreadDetailViewModel(tid, it.repository) }
+    val container = context.container()
+    val viewModel: ThreadDetailViewModel = appViewModel {
+        ThreadDetailViewModel(tid, it.repository, it.actionStore, it.sessionStore.uid)
+    }
+    val myUid by viewModel.myUid.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val replyState by viewModel.replyState.collectAsStateWithLifecycle()
     val collapsed by viewModel.collapsed.collectAsStateWithLifecycle()
@@ -97,6 +112,11 @@ fun ThreadDetailScreen(
     val favorited by viewModel.favorited.collectAsStateWithLifecycle()
     val favoriteCount by viewModel.favoriteCount.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
+    val loadMoreState by viewModel.loadMoreState.collectAsStateWithLifecycle()
+    val treeState by viewModel.tree.collectAsStateWithLifecycle()
+    val waterPidsState by viewModel.waterPids.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val likeUsers by viewModel.likeUsers.collectAsStateWithLifecycle()
     val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     val foldExpanded by viewModel.foldExpanded.collectAsStateWithLifecycle()
@@ -106,13 +126,21 @@ fun ThreadDetailScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
+    // 切换排序/只看楼主后数据整体替换会让 LazyColumn 回顶；
+    // 记录切换前的首个可见项位置，数据回来后滚回原位，避免页面跳动。
+    var restoreIndex by remember { mutableStateOf<Int?>(null) }
+    val captureFirstVisible: () -> Unit = {
+        restoreIndex = listState.firstVisibleItemIndex
+    }
+
     LaunchedEffect(replyState) {
         when (val r = replyState) {
             is ThreadDetailViewModel.ReplyState.Success -> {
                 replyText = ""
                 snackbarHostState.showSnackbar("回复成功")
                 viewModel.consumeReplyState()
-                viewModel.load()
+                // 只重拉第 1 页并合并，保留已加载的后续页，不整页回退
+                viewModel.refreshAfterReply()
             }
             is ThreadDetailViewModel.ReplyState.Error -> {
                 snackbarHostState.showSnackbar(r.message)
@@ -136,6 +164,15 @@ fun ThreadDetailScreen(
         }
     }
 
+    LaunchedEffect(state) {
+        // 切换排序/只看楼主后数据回填完成，滚回切换前的位置
+        val target = restoreIndex
+        if (target != null && state is UiState.Success) {
+            restoreIndex = null
+            listState.scrollToItem(target.coerceAtLeast(0))
+        }
+    }
+
     val page = (state as? UiState.Success)?.data
     val following = (followState as? ThreadDetailViewModel.FollowState.Done)?.following ?: false
     // 点击图片一律进内置全屏查看器；urls 为本组全部地址，便于左右翻页
@@ -143,7 +180,31 @@ fun ThreadDetailScreen(
     val openImage: (List<String>, Int) -> Unit = { urls, index ->
         if (urls.isNotEmpty()) preview = urls to index
     }
-    val todo: (String) -> Unit = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+    // 列表底部自动续拉：距离末尾还有约一屏（6 条）就开始预加载下一页，不等到划到底。
+    // 只在 Idle 时触发（Retry 需用户手动点重试，否则会失败重试死循环）。
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val total = listState.layoutInfo.totalItemsCount
+            hasNext && loadMoreState is ThreadDetailViewModel.LoadMoreState.Idle &&
+                !loadingMore && total > 0 && last >= total - 6
+        }
+    }
+    // key 用 shouldLoadMore 本身：布局完成（false→true）与每拉完一页（Loading→Idle）都会重启
+    LaunchedEffect(shouldLoadMore) {
+        if (shouldLoadMore) viewModel.loadMore()
+    }
+
+    // 提示统一走 Snackbar，避免同屏混用 Toast
+    val todo: (String) -> Unit = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+    // 长按评论弹出的操作菜单目标
+    var actionTarget by remember { mutableStateOf<Post?>(null) }
+    // 是否显示打赏弹窗
+    var rewardOpen by remember { mutableStateOf(false) }
+    // 举报弹窗目标：pid 为 null 表示举报本帖
+    var reportTarget by remember { mutableStateOf<ReportTarget?>(null) }
+    // 删除确认弹窗目标（删除不可撤销，需二次确认）
+    var deleteTarget by remember { mutableStateOf<Post?>(null) }
 
     Scaffold(
         // 整页背景纯白（top_bar），不是灰色页面底
@@ -163,7 +224,7 @@ fun ThreadDetailScreen(
                 title = {
                     // 三个操作图标紧跟返回键左对齐
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { todo("举报需在网页端完成") }) {
+                        IconButton(onClick = { reportTarget = ReportTarget(null) }) {
                             Icon(
                                 painterResource(com.aazhou.mtforum.R.drawable.ic_report_shield),
                                 contentDescription = "举报",
@@ -171,7 +232,7 @@ fun ThreadDetailScreen(
                                 modifier = Modifier.size(20.dp),
                             )
                         }
-                        IconButton(onClick = { todo("赞赏请在网页端完成") }) {
+                        IconButton(onClick = { rewardOpen = true }) {
                             Icon(
                                 painterResource(com.aazhou.mtforum.R.drawable.ic_reward_packet_cny),
                                 contentDescription = "赞赏",
@@ -197,7 +258,7 @@ fun ThreadDetailScreen(
                             color = colors.textSecondary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(end = 16.dp),
+                            modifier = Modifier.widthIn(max = 120.dp).padding(end = 16.dp),
                         )
                     }
                 },
@@ -219,7 +280,8 @@ fun ThreadDetailScreen(
                     favoriteCount = favoriteCount,
                     onSend = { if (replyText.isNotBlank()) viewModel.reply(replyText) },
                     onComments = { scope.launch { listState.animateScrollToItem(1) } },
-                    onLike = { if (!viewModel.toggleLike()) todo("请先登录") },
+                    onLike = { viewModel.toggleLike() },
+                    onLikeLongPress = { viewModel.loadLikeUsers() },
                     onFavorite = { if (!viewModel.toggleFavorite()) todo("请先登录") },
                     onTodo = todo,
                 )
@@ -235,43 +297,46 @@ fun ThreadDetailScreen(
                     EmptyBox("没有内容", Modifier.padding(padding))
                 } else {
                     val op = data.posts.firstOrNull { it.isFirstPost } ?: data.posts.firstOrNull()
-                    // 树构建含 O(n²) 的引用匹配、灌水判定要扫全部楼层正文，都是纯计算；
-                    // 缓存到 posts（或折叠状态）变化为止，否则滚动、点赞、输入引发的重组会在主线程重算。
-                    val tree = remember(data.posts) {
-                        buildReplyTree(data.posts.filter { it !== op })
+                    // 全帖图片序列：单图与图组共用，供全屏查看左右翻页
+                    val pageImages = remember(data.posts) {
+                        data.posts.flatMap { collectImageUrls(it.contentHtml) }
                     }
-                    // 灌水回复默认折叠；带子回复的不折，否则会连子回复一起藏掉
-                    val waterPids = remember(tree) {
-                        tree.topLevel
-                            .filter { isWaterReply(it.contentHtml) && tree.children[it.pid].isNullOrEmpty() }
-                            .map { it.pid }
-                            .toSet()
-                    }
+                    // 楼中楼树与灌水集合在 ViewModel 后台算好，这里只消费，
+                    // 避免主线程做 O(n²) 引用匹配与逐楼层 Jsoup 判定
+                    val tree = treeState
+                    val waterPids = waterPidsState
                     val foldedCount = waterPids.size
                     val visibleReplies = remember(tree, waterPids, foldExpanded) {
-                        if (foldExpanded) tree.topLevel else tree.topLevel.filter { it.pid !in waterPids }
+                        val top = tree?.topLevel.orEmpty()
+                        if (foldExpanded) top else top.filter { it.pid !in waterPids }
                     }
 
-                    LazyColumn(
+                    PullToRefreshBox(
+                        isRefreshing = isRefreshing,
+                        onRefresh = { viewModel.refresh() },
                         modifier = Modifier.fillMaxSize().padding(padding),
+                    ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
                         state = listState,
-                        contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                        contentPadding = PaddingValues(),
                     ) {
                         if (op != null) {
                             item(key = "header") {
                                 DetailHeader(
                                     post = op,
                                     subject = data.subject,
-                                    forumName = data.forumName,
                                     following = following,
                                     followEnabled = data.opUid != null && data.formhash != null,
-                                    totalReplies = data.totalReplies,
-                                    opOnly = opOnly,
-                                    orderType = orderType,
                                     onFollow = { viewModel.toggleFollow() },
-                                    onOpOnly = { viewModel.setOpOnly(it) },
-                                    onOrder = { viewModel.setOrder(it) },
                                     onImageClick = openImage,
+                                    onUserClick = onUserClick,
+                                    pageImages = pageImages,
+                                    onUnlock = {
+                                        // 隐藏内容需回复后解锁：把回复目标复位到本帖，并提示到底部输入框回复
+                                        viewModel.setReplyTarget(null)
+                                        todo("回复本帖后刷新即可解锁")
+                                    },
                                 )
                             }
                         }
@@ -283,12 +348,18 @@ fun ThreadDetailScreen(
                                 opOnly = opOnly,
                                 orderType = orderType,
                                 onToggleFold = { viewModel.toggleFoldExpanded() },
-                                onOpOnly = { viewModel.setOpOnly(it) },
-                                onOrder = { viewModel.setOrder(it) },
+                                onOpOnly = {
+                                    captureFirstVisible()
+                                    viewModel.setReplyFilter(true, orderType)
+                                },
+                                onOrder = {
+                                    captureFirstVisible()
+                                    viewModel.setReplyFilter(false, it)
+                                },
                             )
                             HorizontalDivider(color = colors.divider)
                         }
-                        if (visibleReplies.isEmpty()) {
+                        if (tree != null && visibleReplies.isEmpty()) {
                             item(key = "no-comment") {
                                 Box(
                                     Modifier.fillMaxWidth().padding(vertical = 28.dp),
@@ -299,31 +370,56 @@ fun ThreadDetailScreen(
                             }
                         }
                         items(visibleReplies, key = { it.pid }) { reply ->
-                            val children = tree.children[reply.pid].orEmpty()
+                            val children = tree?.children?.get(reply.pid).orEmpty()
                             ReplyBlock(
                                 reply = reply,
                                 children = children,
+                                subReplyTo = tree?.subReplyTo.orEmpty(),
                                 expanded = !collapsed.contains(reply.pid),
                                 onToggle = { viewModel.toggleReplies(reply.pid) },
                                 onReply = { viewModel.setReplyTarget(reply) },
                                 onReplyTo = { viewModel.setReplyTarget(it) },
                                 onImageClick = openImage,
+                                onUserClick = onUserClick,
+                                pageImages = pageImages,
+                                onLongPress = { actionTarget = it },
                             )
                         }
                         item(key = "pager") {
-                            // 滑到底自动续拉下一页；失败/加载中给出行内状态
-                            LaunchedEffect(visibleReplies.size, hasNext) {
-                                if (hasNext) viewModel.loadMore()
-                            }
-                            if (loadingMore) {
-                                Box(
+                            when (loadMoreState) {
+                                is ThreadDetailViewModel.LoadMoreState.Loading -> Box(
                                     Modifier.fillMaxWidth().padding(16.dp),
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     CircularProgressIndicator(Modifier.size(22.dp))
                                 }
+                                is ThreadDetailViewModel.LoadMoreState.End -> Box(
+                                    Modifier.fillMaxWidth().padding(20.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        "已经到底了",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                        color = colors.textHint,
+                                    )
+                                }
+                                is ThreadDetailViewModel.LoadMoreState.Retry -> Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { viewModel.loadMore() }
+                                        .padding(20.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        "加载失败，点击重试",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                                else -> Unit
                             }
                         }
+                    }
                     }
                 }
             }
@@ -333,138 +429,285 @@ fun ThreadDetailScreen(
     preview?.let { (urls, index) ->
         ImagePreview(urls = urls, initialIndex = index, onDismiss = { preview = null })
     }
+
+    if (rewardOpen) {
+        RewardDialog(
+            onDismiss = { rewardOpen = false },
+            onSubmit = { amount, message ->
+                rewardOpen = false
+                viewModel.reward(null, amount, message)
+            },
+        )
+    }
+
+    reportTarget?.let { target ->
+        ReportDialog(
+            isThread = target.pid == null,
+            onDismiss = { reportTarget = null },
+            onSubmit = { reason, message ->
+                reportTarget = null
+                viewModel.report(target.pid, reason, message)
+            },
+        )
+    }
+
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除回复") },
+            text = { Text("确定要删除这条回复吗？删除后无法恢复。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteTarget = null
+                    viewModel.deleteReply(target.pid)
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text("取消") }
+            },
+        )
+    }
+
+    likeUsers?.let { users ->
+        AlertDialog(
+            onDismissRequest = { viewModel.clearLikeUsers() },
+            title = { Text("点赞用户 (${users.size})") },
+            text = {
+                if (users.isEmpty()) {
+                    Text("暂无点赞用户", color = colors.textHint, style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                        items(users, key = { it.uid }) { user ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        viewModel.clearLikeUsers()
+                                        onUserClick(user.uid)
+                                    }
+                                    .padding(vertical = 6.dp),
+                            ) {
+                                AsyncImage(
+                                    model = user.avatarUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(32.dp).clip(CircleShape).background(colors.quoteBackground),
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    user.name,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                                    color = colors.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.clearLikeUsers() }) { Text("关闭") }
+            },
+        )
+    }
+
+    actionTarget?.let { target ->
+        val isOwn = myUid.isNotBlank() && myUid == target.authorUid
+        AlertDialog(
+            onDismissRequest = { actionTarget = null },
+            title = { Text("${target.authorName.ifBlank { "匿名" }} · 评论操作") },
+            text = {
+                Column {
+                    MenuAction("回复") {
+                        actionTarget = null
+                        viewModel.setReplyTarget(target)
+                    }
+                    MenuAction("复制") {
+                        actionTarget = null
+                        val text = plainTextOf(target.contentHtml)
+                        if (text.isBlank()) {
+                            todo("无可复制内容")
+                        } else {
+                            val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                as? android.content.ClipboardManager
+                            cm?.setPrimaryClip(android.content.ClipData.newPlainText("回复内容", text))
+                            todo("已复制回复内容")
+                        }
+                    }
+                    if (isOwn) {
+                        MenuAction("删除") {
+                            actionTarget = null
+                            deleteTarget = target
+                        }
+                    } else {
+                        MenuAction("举报") {
+                            actionTarget = null
+                            reportTarget = ReportTarget(target.pid)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { actionTarget = null }) { Text("取消") }
+            },
+        )
+    }
 }
 
-/** 归属匹配用：去掉 HTML 标签、URL 与全部空白（含不换行空格），便于比较正文快照。 */
-private fun normalizeForMatch(s: String?): String = s.orEmpty()
-    .replace(Regex("<[^>]*>"), "")
-    .replace(Regex("https?://\\S+"), "")
-    .replace(Regex("[\\s\\u00A0]+"), "")
+/** 举报弹窗目标：pid 为 null 时举报本帖。 */
+private data class ReportTarget(val pid: String?)
 
-/** 引用块短于该长度（纯表情/单个词）时区分不了楼层，宁可不匹配。 */
-private const val MATCH_MIN_CHARS = 6
-
-/** 楼层树：顶层楼层顺序列表 + 「父 pid -> 子楼层列表」。 */
-private class ReplyTree(
-    val topLevel: List<Post>,
-    val children: Map<String, List<Post>>,
-)
-
-private class PostNode(val post: Post) {
-    var isSubReply: Boolean = false
-    var orderIndex: Int = -1
-    val children: MutableList<PostNode> = mutableListOf()
-}
+/** 举报理由选项。 */
+private val REPORT_REASONS = listOf("广告垃圾", "恶意灌水", "违规内容", "重复发帖", "其他")
 
 /**
- * 把当前页平铺的楼层组织成楼中楼。
- *
- * 站点只有少数引用块带 pid，故按证据强度降级：pid -> 引用正文最长公共子串 -> 昵称。
- * 三者都要求被引楼层排在引用者之前，否则两条互相引用的楼层会因遍历顺序把父子方向弄反。
+ * 举报确认弹窗：先选理由（可补充说明）再提交，不做“点一下就直接举报”。
  */
-private fun buildReplyTree(replies: List<Post>): ReplyTree {
-    if (replies.isEmpty()) return ReplyTree(emptyList(), emptyMap())
-    val nodes = replies.map { PostNode(it) }
-    val byPid = HashMap<String, PostNode>()
-    val byAuthor = HashMap<String, MutableList<PostNode>>()
-    nodes.forEachIndexed { index, node ->
-        node.orderIndex = index
-        node.post.pid.takeIf { it.isNotBlank() }?.let { byPid[it] = node }
-        node.post.authorName.takeIf { it.isNotBlank() }?.let {
-            byAuthor.getOrPut(it) { mutableListOf() }.add(node)
-        }
-    }
-
-    val childrenByParent = HashMap<String, MutableList<Post>>()
-    for (node in nodes) {
-        val quote = node.post.quote ?: continue
-        val parent = resolveParent(node, nodes, byPid, byAuthor) ?: continue
-        // 被引者本身是子回复时压平到它所属的顶层楼层，同一条子线程内的回复只平铺一层
-        val root = if (parent.isSubReply) {
-            nodes.firstOrNull { it !== parent && !it.isSubReply && it.children.any { c -> c === parent } }
-        } else {
-            parent
-        } ?: continue
-        if (root.orderIndex >= node.orderIndex) continue
-        node.isSubReply = true
-        root.children.add(node)
-        childrenByParent.getOrPut(root.post.pid) { mutableListOf() }.add(node.post)
-    }
-    return ReplyTree(
-        topLevel = nodes.filter { !it.isSubReply }.map { it.post },
-        children = childrenByParent,
+@Composable
+private fun ReportDialog(
+    isThread: Boolean,
+    onDismiss: () -> Unit,
+    onSubmit: (reason: String, message: String) -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    var reason by remember { mutableStateOf("其他") }
+    var message by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isThread) "举报本帖" else "举报该评论") },
+        text = {
+            Column {
+                REPORT_REASONS.forEach { option ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { reason = option }
+                            .padding(vertical = 8.dp),
+                    ) {
+                        RadioButton(selected = option == reason, onClick = { reason = option })
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            option,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                            color = colors.textPrimary,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                BasicTextField(
+                    value = message,
+                    onValueChange = { message = it },
+                    textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    maxLines = 3,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(colors.quoteBackground)
+                        .padding(10.dp),
+                    decorationBox = { inner ->
+                        if (message.isEmpty()) {
+                            Text("补充说明（可不填）", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp), color = colors.textHint)
+                        }
+                        inner()
+                    },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSubmit(reason, message) }) { Text("提交举报") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
     )
 }
 
-private fun resolveParent(
-    node: PostNode,
-    nodes: List<PostNode>,
-    byPid: Map<String, PostNode>,
-    byAuthor: Map<String, MutableList<PostNode>>,
-): PostNode? {
-    val quote = node.post.quote ?: return null
-    quote.pid?.takeIf { it.isNotBlank() }?.let { pid ->
-        byPid[pid]?.takeIf { it !== node && it.orderIndex < node.orderIndex }?.let { return it }
-    }
-    matchByQuotedContent(node, nodes)?.let { return it }
-    // 昵称是最弱的证据：同一作者的每条楼层都同名，只在无同名歧义时采用
-    val name = quote.author?.takeIf { it.isNotBlank() } ?: return null
-    val candidates = byAuthor[name].orEmpty().filter { it !== node && it.orderIndex < node.orderIndex }
-    return candidates.singleOrNull()
+/** 打赏弹窗：金额档位 + 可选留言。 */
+@Composable
+private fun RewardDialog(
+    onDismiss: () -> Unit,
+    onSubmit: (Int, String?) -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    val amounts = listOf(1, 5, 10, 50, 100)
+    var amount by remember { mutableStateOf(amounts.first()) }
+    var message by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("打赏作者") },
+        text = {
+            Column {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    amounts.forEach { value ->
+                        val active = value == amount
+                        Text(
+                            value.toString(),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                            color = if (active) Color.White else colors.textPrimary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(if (active) MaterialTheme.colorScheme.primary else colors.quoteBackground)
+                                .clickable { amount = value }
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                BasicTextField(
+                    value = message,
+                    onValueChange = { message = it },
+                    textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    maxLines = 3,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(colors.quoteBackground)
+                        .padding(10.dp),
+                    decorationBox = { inner ->
+                        if (message.isEmpty()) {
+                            Text("留言（可不填）", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp), color = colors.textHint)
+                        }
+                        inner()
+                    },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSubmit(amount, message.ifBlank { null }) }) { Text("打赏") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+/** 长按菜单里的一行操作。 */
+@Composable
+private fun MenuAction(label: String, onClick: () -> Unit) {
+    val colors = LocalMtfColors.current
+    Text(
+        label,
+        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+        color = colors.textPrimary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+    )
 }
 
 /**
- * pid 缺失或指向未加载楼层时的降级匹配：拿引用块正文去比对各楼层正文。
- *
- * 引用块开头还挂着「回复 X 发表于 …」这段 meta，前缀比较必然对不齐，故用最长公共子串；
- * 只重合寥寥几字更像巧合同词，命中度不足时放弃，交给更弱的昵称证据。
+ * 头像/昵称可点：有 uid 时进入该用户主页；无 uid（游客/匿名）不响应。
  */
-private fun matchByQuotedContent(node: PostNode, nodes: List<PostNode>): PostNode? {
-    val quoted = normalizeForMatch(node.post.quote?.text ?: return null)
-    if (quoted.length < MATCH_MIN_CHARS) return null
-    var best: PostNode? = null
-    var bestScore = 0
-    for (candidate in nodes) {
-        if (candidate === node || candidate.orderIndex >= node.orderIndex) continue
-        val body = normalizeForMatch(candidate.post.contentHtml)
-        if (body.isEmpty()) continue
-        val score = longestCommonSubstring(quoted, body)
-        if (score > bestScore) {
-            bestScore = score
-            best = candidate
-        }
-    }
-    if (best == null) return null
-    return if (bestScore >= MATCH_MIN_CHARS && bestScore >= quoted.length / 3) best else null
-}
-
-/** 两个字符串的最长公共子串长度（滚动数组）。 */
-private fun longestCommonSubstring(a: String, b: String): Int {
-    if (a.isEmpty() || b.isEmpty()) return 0
-    val shorter = if (a.length <= b.length) a else b
-    val longer = if (a.length <= b.length) b else a
-    var prev = IntArray(shorter.length + 1)
-    var cur = IntArray(shorter.length + 1)
-    var best = 0
-    for (i in 1..longer.length) {
-        for (j in 1..shorter.length) {
-            cur[j] = if (longer[i - 1] == shorter[j - 1]) prev[j - 1] + 1 else 0
-            if (cur[j] > best) best = cur[j]
-        }
-        val swap = prev
-        prev = cur
-        cur = swap
-        cur.fill(0)
-    }
-    return best
-}
-
-/** 头像可点：点击后用同一套全屏查看器打开；无头像地址时不响应。 */
-private fun Modifier.avatarClick(
-    url: String?,
-    onImageClick: (List<String>, Int) -> Unit,
+private fun Modifier.userClick(
+    uid: String?,
+    onUserClick: (String) -> Unit,
 ): Modifier =
-    if (url.isNullOrBlank()) this else clickable { onImageClick(listOf(url), 0) }
+    if (uid.isNullOrBlank()) this else clickable { onUserClick(uid) }
 
 private fun shareThread(context: Context, subject: String?, tid: String) {
     val intent = Intent(Intent.ACTION_SEND).apply {
@@ -482,16 +725,13 @@ private fun shareThread(context: Context, subject: String?, tid: String) {
 private fun DetailHeader(
     post: Post,
     subject: String,
-    forumName: String?,
     following: Boolean,
     followEnabled: Boolean,
-    totalReplies: Int?,
-    opOnly: Boolean,
-    orderType: Int,
     onFollow: () -> Unit,
-    onOpOnly: (Boolean) -> Unit,
-    onOrder: (Int) -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
+    onUserClick: (String) -> Unit,
+    pageImages: List<String>,
+    onUnlock: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -515,7 +755,7 @@ private fun DetailHeader(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .avatarClick(post.avatarUrl, onImageClick),
+                    .userClick(post.authorUid, onUserClick),
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
@@ -527,6 +767,7 @@ private fun DetailHeader(
                         color = colors.textPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.userClick(post.authorUid, onUserClick),
                     )
                     if (!post.level.isNullOrBlank()) {
                         Spacer(Modifier.width(6.dp))
@@ -582,10 +823,73 @@ private fun DetailHeader(
         PostContent(
             html = post.contentHtml,
             onImageClick = onImageClick,
+            pageImages = pageImages,
             bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 24.sp),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
+        if (post.hasHiddenContent) {
+            HiddenContentCard(onUnlock = onUnlock)
+        }
         PostFooterLine()
+    }
+}
+
+/** 「回复可见」锁态卡片：锁图标圆底 + 标题/提示 + 「去回复」胶囊。 */
+@Composable
+private fun HiddenContentCard(onUnlock: () -> Unit) {
+    val colors = LocalMtfColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(colors.surface)
+            .border(1.dp, colors.divider, RoundedCornerShape(12.dp))
+            .clickable(onClick = onUnlock)
+            .padding(12.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+        ) {
+            Icon(
+                painterResource(com.aazhou.mtforum.R.drawable.ic_lock_outline),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                "包含隐藏内容",
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp),
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "回复本帖后自动刷新解锁",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
+                color = colors.textSecondary,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "去回复",
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.primary)
+                .clickable(onClick = onUnlock)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        )
     }
 }
 
@@ -655,14 +959,8 @@ private fun CommentHeader(
             onSelect = { index ->
                 when (index) {
                     0 -> onOpOnly(true)
-                    1 -> {
-                        onOpOnly(false)
-                        onOrder(0)
-                    }
-                    else -> {
-                        onOpOnly(false)
-                        onOrder(1)
-                    }
+                    1 -> onOrder(0)
+                    else -> onOrder(1)
                 }
             },
         )
@@ -704,18 +1002,28 @@ private fun SegmentedControl(selected: Int, onSelect: (Int) -> Unit) {
 }
 
 /** 顶层回复：头像 36dp、楼层号 11sp、昵称 14sp、引用卡、正文 15sp、底栏时间与操作。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ReplyBlock(
     reply: Post,
     children: List<Post>,
+    subReplyTo: Map<String, String>,
     expanded: Boolean,
     onToggle: () -> Unit,
     onReply: () -> Unit,
     onReplyTo: (Post) -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
+    onUserClick: (String) -> Unit,
+    pageImages: List<String>,
+    onLongPress: (Post) -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 14.dp)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = {}, onLongClick = { onLongPress(reply) })
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 14.dp),
+    ) {
         Row(verticalAlignment = Alignment.Top) {
             AsyncImage(
                 model = reply.avatarUrl,
@@ -723,7 +1031,7 @@ private fun ReplyBlock(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
-                    .avatarClick(reply.avatarUrl, onImageClick),
+                    .userClick(reply.authorUid, onUserClick),
             )
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
@@ -742,6 +1050,7 @@ private fun ReplyBlock(
                         color = colors.textPrimary.copy(alpha = 0.8f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.userClick(reply.authorUid, onUserClick),
                     )
                     if (reply.isOp) {
                         Spacer(Modifier.width(5.dp))
@@ -764,7 +1073,9 @@ private fun ReplyBlock(
                     html = reply.contentHtml,
                     quote = reply.quote,
                     onImageClick = onImageClick,
+                    pageImages = pageImages,
                     bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp),
+                    modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { onLongPress(reply) }),
                 )
             }
         }
@@ -808,7 +1119,15 @@ private fun ReplyBlock(
             // 楼中楼容器缩进 45dp，与正文文字对齐
             Column(Modifier.padding(start = 45.dp, top = 8.dp)) {
                 children.forEach { child ->
-                    NestedReply(child, onReply = { onReplyTo(child) }, onImageClick = onImageClick)
+                    NestedReply(
+                        child = child,
+                        inReplyTo = subReplyTo[child.pid],
+                        onReply = { onReplyTo(child) },
+                        onImageClick = onImageClick,
+                        onUserClick = onUserClick,
+                        pageImages = pageImages,
+                        onLongPress = { onLongPress(child) },
+                    )
                 }
             }
         }
@@ -816,10 +1135,24 @@ private fun ReplyBlock(
 }
 
 /** 楼中楼：头像 22dp、昵称 13sp、正文 14sp，缩进由父容器给出。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun NestedReply(child: Post, onReply: () -> Unit, onImageClick: (List<String>, Int) -> Unit) {
+private fun NestedReply(
+    child: Post,
+    inReplyTo: String?,
+    onReply: () -> Unit,
+    onImageClick: (List<String>, Int) -> Unit,
+    onUserClick: (String) -> Unit,
+    pageImages: List<String>,
+    onLongPress: () -> Unit,
+) {
     val colors = LocalMtfColors.current
-    Column(Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 7.dp)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = {}, onLongClick = onLongPress)
+            .padding(top = 7.dp, bottom = 7.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
                 model = child.avatarUrl,
@@ -827,7 +1160,7 @@ private fun NestedReply(child: Post, onReply: () -> Unit, onImageClick: (List<St
                 modifier = Modifier
                     .size(22.dp)
                     .clip(CircleShape)
-                    .avatarClick(child.avatarUrl, onImageClick),
+                    .userClick(child.authorUid, onUserClick),
             )
             Spacer(Modifier.width(8.dp))
             Text(
@@ -836,6 +1169,7 @@ private fun NestedReply(child: Post, onReply: () -> Unit, onImageClick: (List<St
                 color = colors.textPrimary.copy(alpha = 0.8f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.userClick(child.authorUid, onUserClick),
             )
             if (child.isOp) {
                 Spacer(Modifier.width(6.dp))
@@ -853,11 +1187,27 @@ private fun NestedReply(child: Post, onReply: () -> Unit, onImageClick: (List<St
                 )
             }
         }
+        // 「回复 xx：」单独占一行，正文另起一行，两者左边缘对齐
+        if (!inReplyTo.isNullOrBlank()) {
+            Text(
+                "回复 $inReplyTo：",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                fontStyle = FontStyle.Italic,
+                color = colors.textPrimary.copy(alpha = 0.8f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 30.dp, top = 3.dp),
+            )
+        }
         PostContent(
             html = child.contentHtml,
             onImageClick = onImageClick,
+            pageImages = pageImages,
             bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 21.sp),
-            modifier = Modifier.padding(start = 30.dp, top = 3.dp),
+            modifier = Modifier
+                .padding(start = 30.dp, top = 3.dp)
+                .fillMaxWidth()
+                .combinedClickable(onClick = {}, onLongClick = onLongPress),
         )
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 30.dp, top = 4.dp)) {
             TimeLine(child)
@@ -925,6 +1275,7 @@ private fun ReplyBar(
     onSend: () -> Unit,
     onComments: () -> Unit,
     onLike: () -> Unit,
+    onLikeLongPress: () -> Unit,
     onFavorite: () -> Unit,
     onTodo: (String) -> Unit,
 ) {
@@ -1005,7 +1356,7 @@ private fun ReplyBar(
                         modifier = Modifier.padding(end = 6.dp),
                     )
                 }
-                BarAction(onClick = onLike) {
+                BarAction(onClick = onLike, onLongClick = onLikeLongPress) {
                     Icon(
                         painterResource(com.aazhou.mtforum.R.drawable.ic_like_outline),
                         contentDescription = "点赞",
@@ -1050,13 +1401,19 @@ private fun ReplyBar(
     }
 }
 
+/** 底部栏的单个图标操作；带长按时可触发（如长按点赞看点赞人）。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BarAction(onClick: () -> Unit, icon: @Composable () -> Unit) {
+private fun BarAction(
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    icon: @Composable () -> Unit,
+) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 4.dp, vertical = 4.dp),
     ) {
         icon()

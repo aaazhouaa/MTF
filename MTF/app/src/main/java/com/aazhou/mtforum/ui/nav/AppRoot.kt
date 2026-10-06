@@ -1,6 +1,8 @@
 package com.aazhou.mtforum.ui.nav
 
 import android.net.Uri
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
@@ -36,6 +38,7 @@ import com.aazhou.mtforum.ui.screen.search.SearchScreen
 import com.aazhou.mtforum.ui.screen.settings.SettingsScreen
 import com.aazhou.mtforum.ui.screen.threaddetail.ThreadDetailScreen
 import com.aazhou.mtforum.ui.screen.threadlist.ThreadListScreen
+import com.aazhou.mtforum.ui.screen.user.UserProfileScreen
 import com.aazhou.mtforum.ui.screen.verify.WafVerificationScreen
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -50,10 +53,12 @@ object Routes {
     const val SETTINGS = "settings"
     const val FORUM = "forum/{fid}/{name}"
     const val THREAD = "thread/{tid}"
+    const val USER = "user/{uid}"
     const val POST = "post/{fid}/{name}"
 
     fun forum(fid: String, name: String) = "forum/$fid/${Uri.encode(name)}"
     fun thread(tid: String) = "thread/$tid"
+    fun user(uid: String) = "user/$uid"
     fun post(fid: String, name: String) = "post/$fid/${Uri.encode(name)}"
 }
 
@@ -95,6 +100,12 @@ fun AppRoot(onToggleTheme: () -> Unit) {
         NavHost(
             navController = navController,
             startDestination = Routes.HOME,
+            // 返回过渡必须为 None：NavHost 默认 popEnter/popExit 是 700ms 交叉淡入淡出，
+            // 期间被弹出的页面仍留在 composition 里淡出且 zIndex 高于下层页面，会先接到并
+            // 消耗用户的手势，表现为「退出帖子后第一次滑动不生效」。淡出用 alpha 实现，
+            // 命中测试不看 alpha，所以只能让旧页面在返回时立即移除。
+            popEnterTransition = { EnterTransition.None },
+            popExitTransition = { ExitTransition.None },
             modifier = Modifier
                 .fillMaxSize()
                 .layerBackdrop(backdrop),
@@ -153,6 +164,14 @@ fun AppRoot(onToggleTheme: () -> Unit) {
             composable(Routes.THREAD, arguments = listOf(navArgument("tid") { type = NavType.StringType })) { entry ->
                 ThreadDetailScreen(
                     tid = entry.arguments?.getString("tid").orEmpty(),
+                    onBack = { navController.popBackStack() },
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                )
+            }
+
+            composable(Routes.USER, arguments = listOf(navArgument("uid") { type = NavType.StringType })) { entry ->
+                UserProfileScreen(
+                    uid = entry.arguments?.getString("uid").orEmpty(),
                     onBack = { navController.popBackStack() },
                 )
             }

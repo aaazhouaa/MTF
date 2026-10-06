@@ -179,7 +179,7 @@ class ForumParserTest {
         assertTrue(op.isOp)
         assertTrue(op.isFirstPost)
         assertEquals("ChenHao", op.authorName)
-        assertEquals("来自 广东", op.location)
+        assertEquals("广东", op.location)
         assertTrue(op.contentHtml.contains("目前进度百分之30"))
         assertEquals(0, op.floor)
 
@@ -187,7 +187,7 @@ class ForumParserTest {
         assertEquals("沙发", first.floorLabel)
         assertEquals(2, first.floor)
         assertEquals("秋枫Mod", first.authorName)
-        assertEquals("来自 河南", first.location)
+        assertEquals("河南", first.location)
         assertTrue(!first.isOp)
         // 引用块应从正文 HTML 中移除（改由 quote 字段渲染），正文只留「谢谢」
         assertEquals("ChenHao", first.quote?.author)
@@ -220,7 +220,7 @@ class ForumParserTest {
         val quote = page.posts.single().quote
         assertEquals("11911193", quote?.pid)
         assertEquals("秋枫Mod", quote?.author)
-        assertEquals("8 分钟前 来自 河南", quote?.time)
+        assertEquals("8 分钟前", quote?.time)
         assertEquals("拿走不谢 https://lspilot.fun/get-started/installation", quote?.text)
     }
 

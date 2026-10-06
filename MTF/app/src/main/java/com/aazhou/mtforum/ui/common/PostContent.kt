@@ -41,12 +41,14 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -64,6 +66,7 @@ fun PostContent(
     html: String,
     quote: PostQuote? = null,
     onImageClick: ((urls: List<String>, index: Int) -> Unit)? = null,
+    pageImages: List<String> = emptyList(),
     bodyStyle: TextStyle = MaterialTheme.typography.bodyMedium,
     modifier: Modifier = Modifier,
 ) {
@@ -104,7 +107,12 @@ fun PostContent(
                 }
                 is ContentBlock.Image -> SingleImage(
                     url = block.url,
-                    onImageClick = onImageClick?.let { click -> { click(listOf(block.url), 0) } },
+                    onImageClick = onImageClick?.let { click ->
+                        // 单图也放进全帖图片序列，全屏查看时可左右翻到其它图
+                        val urls = pageImages.ifEmpty { listOf(block.url) }
+                        val index = urls.indexOf(block.url).coerceAtLeast(0)
+                        return@let { click(urls, index) }
+                    },
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
                 is ContentBlock.ImageGroup -> ImageGrid(
@@ -406,38 +414,48 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
     }
 }
 
-/** 引用卡：灰底，被引正文 13sp，右下角「被引者 发表于 时间」11sp 半透明。 */
+/** 引用卡：上方「回复 {被引作者}：」斜体小字；卡内「原文」+ 被引正文；右下角仅时间。 */
 @Composable
 private fun QuoteCard(quote: PostQuote) {
     val colors = LocalMtfColors.current
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(colors.quoteBackground)
-            .padding(horizontal = 10.dp, vertical = 7.dp),
-    ) {
-        Text(
-            text = quote.text,
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp),
-            color = colors.quoteContent,
-        )
-        val title = buildString {
-            if (!quote.author.isNullOrBlank()) append(quote.author)
-            if (!quote.time.isNullOrBlank()) {
-                if (isNotEmpty()) append(' ')
-                append("发表于 ").append(quote.time)
-            }
-        }
-        if (title.isNotBlank()) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        if (!quote.author.isNullOrBlank()) {
             Text(
-                text = title,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                color = colors.textSecondary,
-                textAlign = TextAlign.End,
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                text = "回复 ${quote.author}：",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                fontStyle = FontStyle.Italic,
+                color = colors.textHint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(bottom = 3.dp),
             )
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(colors.quoteBackground)
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+        ) {
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)) {
+                        append("原文 ")
+                    }
+                    append(quote.text)
+                },
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp),
+                color = colors.quoteContent,
+            )
+            if (!quote.time.isNullOrBlank()) {
+                Text(
+                    text = quote.time,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = colors.textSecondary,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                )
+            }
         }
     }
 }

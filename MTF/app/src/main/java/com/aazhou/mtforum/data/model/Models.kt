@@ -64,6 +64,14 @@ data class ThreadPage(
     val likeCount: Int? = null,
     /** 收藏数（span.comiis_favorite_a_num）。 */
     val favoriteCount: Int? = null,
+    /** 当前用户是否已点赞；[likedStateKnown] 为 false 时该值无意义。 */
+    val isLiked: Boolean = false,
+    /** 页面是否明确给出点赞状态（登录态且站点渲染了点赞控件）。 */
+    val likedStateKnown: Boolean = false,
+    /** 当前用户是否已收藏；[favoritedStateKnown] 为 false 时该值无意义。 */
+    val isFavorited: Boolean = false,
+    /** 页面是否明确给出收藏状态。 */
+    val favoritedStateKnown: Boolean = false,
 )
 
 /** 单个楼层/回复。 */
@@ -87,6 +95,8 @@ data class Post(
     val quote: PostQuote? = null,
     /** 「本帖最后由 X 于 T 编辑」的编辑标记；无编辑为 null。 */
     val editedText: String? = null,
+    /** 首帖是否含「回复可见」隐藏内容（处于锁定态，需回复后解锁）。 */
+    val hasHiddenContent: Boolean = false,
 )
 
 /** 楼层内的引用（回复某人时站点插入的引用块）。 */
@@ -99,6 +109,27 @@ data class PostQuote(
     val text: String = "",
     /** 被引用楼层 pid，站点仅部分模板会带上。 */
     val pid: String? = null,
+)
+
+/** 点赞用户（点赞列表接口返回）。 */
+data class LikeUser(
+    val uid: String,
+    val name: String,
+    val avatarUrl: String? = null,
+)
+
+/**
+ * 点赞结果。
+ *
+ * [remainingToday] 与 [serverCount] 均取自站点响应（daycount / recommendc），
+ * 取不到时为 null，不得用任何写死的默认值代替。
+ */
+data class LikeResult(
+    val success: Boolean,
+    val remainingToday: Int? = null,
+    val serverCount: Int? = null,
+    /** 服务端提示原文（成功或失败）。 */
+    val message: String? = null,
 )
 
 /** 登录结果。 */
