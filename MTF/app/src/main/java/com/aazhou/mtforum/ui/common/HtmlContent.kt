@@ -218,13 +218,15 @@ private fun dropEdgeBlankBlocks(blocks: List<ContentBlock>): List<ContentBlock> 
 }
 
 /**
- * 压掉模板自带的空段落与连续换行。
- *
+ * 压掉模板空块，并把 3 个以上连续换行压成一个空行。
+
+ * 两个连续 <br> 是作者的分段（网页上就是一空行），必须原样留下；
+ * 3 个以上多为模板/图片抽走后的残留，压成一个空行即可。<br>
  * 图片会被抽成独立块，抽走后原位残留的换行、以及模板空块，若无内容承接，
  * 会被逐行渲染成一片空白，因此先在 HTML 层压掉。
  */
 private fun collapseBlankBlocks(html: String): String = html
-    .replace(Regex("(?i)(?:<br\\s*/?>\\s*){2,}"), "<br>")
+    .replace(Regex("(?i)(?:<br\\s*/?>\\s*){3,}"), "<br><br>")
     .replace(Regex("(?i)<p\\s*>\\s*(?:&nbsp;|&#160;|\\s)*</p>"), "")
     .replace(Regex("(?i)<div[^>]*>\\s*(?:&nbsp;|&#160;|<br\\s*/?>|\\s)*</div>"), "")
 
@@ -255,6 +257,13 @@ private class BlocksBuilder {
         val start = text.length
         text.append(value)
         syncSpans(style, start, text.length)
+    }
+
+    /** 换行：连续换行最多留两个（一个空行即作者分段），更多视为模板残留，不叠成大片空白。 */
+    private fun appendBreak(style: InlineStyle) {
+        val cursor = text.length
+        if (cursor >= 2 && text[cursor - 1] == '\n' && text[cursor - 2] == '\n') return
+        appendText("\n", style)
     }
 
     private fun appendSmiley(url: String, style: InlineStyle) {
@@ -339,7 +348,7 @@ private class BlocksBuilder {
         when (element.tagName()) {
             "script", "style" -> Unit
             "img" -> appendImage(element, style)
-            "br" -> appendText("\n", style)
+            "br" -> appendBreak(style)
             "table" -> {
                 flushText()
                 buildTable(element)?.let { blocks.add(it) }

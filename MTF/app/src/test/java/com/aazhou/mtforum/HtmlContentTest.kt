@@ -124,11 +124,29 @@ class HtmlContentTest {
 
     @Test
     fun middleBlankLineIsKept() {
-        // 段落中间的空行是作者本意的分段，必须保留
+        // 段落中间的空行是作者本意的分段，必须保留（网页上就是一个空行）
         val blocks = parseContentBlocks("第一段<br><br>第二段")
         val texts = blocks.filterIsInstance<ContentBlock.Text>().map { it.text }
         assertEquals(1, texts.size)
         assertTrue(texts[0].contains("第一段") && texts[0].contains("第二段"))
+        assertTrue(texts[0].contains("第一段\n\n第二段"))
+    }
+
+    @Test
+    fun excessiveBreaksCollapseToOneBlankLine() {
+        // 3 个以上连续换行是模板/图片残留，压成一个空行，不叠成大片空白
+        val text = parseContentBlocks("上<br><br><br><br>下").filterIsInstance<ContentBlock.Text>().single().text
+        assertEquals("上\n\n下", text)
+    }
+
+    @Test
+    fun breaksAroundImagesDoNotLeaveBlankBlocks() {
+        // 图片前后的连续换行只是抽图残留，不能变成空白文本块，图片仍要相邻成组
+        val blocks = parseContentBlocks(
+            img("https://a/1.png") + "<br><br><br>" + img("https://a/2.png"),
+        )
+        assertTrue(blocks.none { it is ContentBlock.Text })
+        assertEquals(2, blocks.filterIsInstance<ContentBlock.ImageGroup>().single().urls.size)
     }
 
     private fun img(url: String) = "<img src=\"$url\" />"

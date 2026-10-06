@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -256,39 +255,7 @@ fun ThreadDetailScreen(
                         )
                     }
                 },
-                title = {
-                    // 两个操作图标紧跟返回键左对齐（分享已移到底栏）
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { reportTarget = ReportTarget(null) }) {
-                            Icon(
-                                painterResource(com.aazhou.mtforum.R.drawable.ic_report_shield),
-                                contentDescription = "举报",
-                                tint = colors.iconSecondary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        IconButton(onClick = { rewardOpen = true }) {
-                            Icon(
-                                painterResource(com.aazhou.mtforum.R.drawable.ic_reward_gift),
-                                contentDescription = "赞赏",
-                                tint = colors.iconSecondary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    if (!page?.forumName.isNullOrBlank()) {
-                        Text(
-                            text = page.forumName,
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = colors.textSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 120.dp).padding(end = 16.dp),
-                        )
-                    }
-                },
+                title = {},
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -368,9 +335,12 @@ fun ThreadDetailScreen(
                                 DetailHeader(
                                     post = op,
                                     subject = data.subject,
+                                    forumName = data.forumName,
                                     following = following,
                                     followEnabled = data.opUid != null && data.formhash != null,
                                     onFollow = { viewModel.toggleFollow() },
+                                    onReport = { reportTarget = ReportTarget(null) },
+                                    onReward = { rewardOpen = true },
                                     onImageClick = openImage,
                                     onUserClick = onUserClick,
                                     pageImages = pageImages,
@@ -771,16 +741,19 @@ private fun shareThread(context: Context, subject: String?, tid: String) {
 }
 
 /**
- * 正文头：标题 → 隔离线 → 作者信息栏（头像/昵称/等级/时间/地点/关注）→
+ * 正文头：标题 → 隔离线 → 作者信息栏（头像/昵称/操作图标/时间/地点/关注）→
  * 编辑标记 → 正文 → 结束线 → 评论标题栏（计数/折叠徽章/分段控件）。
  */
 @Composable
 private fun DetailHeader(
     post: Post,
     subject: String,
+    forumName: String?,
     following: Boolean,
     followEnabled: Boolean,
     onFollow: () -> Unit,
+    onReport: () -> Unit,
+    onReward: () -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
     onUserClick: (String) -> Unit,
     pageImages: List<String>,
@@ -788,14 +761,36 @@ private fun DetailHeader(
 ) {
     val colors = LocalMtfColors.current
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-        // 标题
-        Text(
-            text = subject,
-            style = MaterialTheme.typography.headlineSmall.copy(fontSize = 20.sp, lineHeight = 29.sp),
-            fontWeight = FontWeight.Bold,
-            color = colors.textPrimary,
+        // 标题与版块 chip 同一行：版块 chip 靠标题行右侧，样式与列表卡片一致
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
-        )
+        ) {
+            Text(
+                text = subject,
+                style = MaterialTheme.typography.headlineSmall.copy(fontSize = 20.sp, lineHeight = 29.sp),
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            if (!forumName.isNullOrBlank()) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = forumName,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .border(
+                            0.1.dp,
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.69f),
+                            RoundedCornerShape(50),
+                        )
+                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                )
+            }
+        }
         HorizontalDivider(
             color = colors.divider,
             thickness = 0.5.dp,
@@ -822,14 +817,27 @@ private fun DetailHeader(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.userClick(post.authorUid, onUserClick),
                     )
-                    if (!post.level.isNullOrBlank()) {
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            post.level,
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = colors.textSecondary,
-                        )
-                    }
+                    // 举报/打赏从顶栏移到昵称后：与楼主信息同处一行，触达更近
+                    Icon(
+                        painterResource(com.aazhou.mtforum.R.drawable.ic_report_shield),
+                        contentDescription = "举报",
+                        tint = colors.iconSecondary,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onReport)
+                            .padding(5.dp),
+                    )
+                    Icon(
+                        painterResource(com.aazhou.mtforum.R.drawable.ic_reward_gift),
+                        contentDescription = "赞赏",
+                        tint = colors.iconSecondary,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onReward)
+                            .padding(5.dp),
+                    )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
                     Text(
