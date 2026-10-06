@@ -13,11 +13,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,13 +29,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.Send
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -88,6 +91,13 @@ import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.plainTextOf
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.kyant.backdrop.backdrops.LayerBackdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.vibrancy
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -220,6 +230,13 @@ fun ThreadDetailScreen(
     // 删除确认弹窗目标（删除不可撤销，需二次确认）
     var deleteTarget by remember { mutableStateOf<Post?>(null) }
 
+    // 底栏两颗毛玻璃胶囊采样本页内容：只记录内容区，底栏作为兄弟层再采样，
+    // 避免与底栏的 drawBackdrop 形成回环
+    val replyBarBackdrop = rememberLayerBackdrop {
+        drawRect(colors.topBar)
+        drawContent()
+    }
+
     Scaffold(
         // 整页背景纯白（top_bar），不是灰色页面底
         containerColor = colors.topBar,
@@ -236,7 +253,7 @@ fun ThreadDetailScreen(
                     }
                 },
                 title = {
-                    // 三个操作图标紧跟返回键左对齐
+                    // 两个操作图标紧跟返回键左对齐（分享已移到底栏）
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { reportTarget = ReportTarget(null) }) {
                             Icon(
@@ -248,16 +265,8 @@ fun ThreadDetailScreen(
                         }
                         IconButton(onClick = { rewardOpen = true }) {
                             Icon(
-                                painterResource(com.aazhou.mtforum.R.drawable.ic_reward_packet_cny),
+                                painterResource(com.aazhou.mtforum.R.drawable.ic_reward_gift),
                                 contentDescription = "赞赏",
-                                tint = colors.iconSecondary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        IconButton(onClick = { shareThread(context, page?.subject, tid) }) {
-                            Icon(
-                                painterResource(com.aazhou.mtforum.R.drawable.ic_share_outline),
-                                contentDescription = "分享",
                                 tint = colors.iconSecondary,
                                 modifier = Modifier.size(20.dp),
                             )
@@ -282,6 +291,7 @@ fun ThreadDetailScreen(
         bottomBar = {
             if (page != null) {
                 ReplyBar(
+                    backdrop = replyBarBackdrop,
                     value = replyText,
                     onValueChange = { replyText = it },
                     target = replyTarget,
@@ -297,18 +307,23 @@ fun ThreadDetailScreen(
                     onLike = { viewModel.toggleLike() },
                     onLikeLongPress = { viewModel.loadLikeUsers() },
                     onFavorite = { if (!viewModel.toggleFavorite()) todo("请先登录") },
-                    onTodo = todo,
+                    onShare = { shareThread(context, page.subject, tid) },
                 )
             }
         },
     ) { padding ->
+        Box(
+            Modifier
+                .fillMaxSize()
+                .layerBackdrop(replyBarBackdrop),
+        ) {
         when (val current = state) {
-            is UiState.Loading -> LoadingBox(Modifier.padding(padding))
-            is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.padding(padding))
+            is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
+            is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.fillMaxSize())
             is UiState.Success -> {
                 val data = current.data
                 if (data.posts.isEmpty()) {
-                    EmptyBox("没有内容", Modifier.padding(padding))
+                    EmptyBox("没有内容", Modifier.fillMaxSize())
                 } else {
                     val op = data.posts.firstOrNull { it.isFirstPost } ?: data.posts.firstOrNull()
                     // 全帖图片序列：单图与图组共用，供全屏查看左右翻页
@@ -328,12 +343,19 @@ fun ThreadDetailScreen(
                     PullToRefreshBox(
                         isRefreshing = isRefreshing,
                         onRefresh = { viewModel.refresh() },
-                        modifier = Modifier.fillMaxSize().padding(padding),
+                        // 内容铺到屏幕底：底栏是悬浮的半透明胶囊，帖子要从它下面滚过，
+                        // 毛玻璃才有东西可采样；底部留白交给 LazyColumn 的 contentPadding
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = padding.calculateTopPadding()),
                     ) {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         state = listState,
-                        contentPadding = PaddingValues(),
+                        contentPadding = PaddingValues(
+                            bottom = 64.dp +
+                                WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+                        ),
                     ) {
                         if (op != null) {
                             item(key = "header") {
@@ -447,6 +469,7 @@ fun ThreadDetailScreen(
                     }
                 }
             }
+        }
         }
     }
 
@@ -1118,7 +1141,13 @@ private fun ReplyBlock(
                         .padding(horizontal = 4.dp, vertical = 2.dp),
                 ) {
                     Icon(
-                        if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                        painterResource(
+                            if (expanded) {
+                                com.aazhou.mtforum.R.drawable.ic_arrow_up
+                            } else {
+                                com.aazhou.mtforum.R.drawable.ic_arrow_down
+                            },
+                        ),
                         contentDescription = null,
                         tint = colors.textSecondary,
                         modifier = Modifier.size(18.dp),
@@ -1132,7 +1161,7 @@ private fun ReplyBlock(
                 Spacer(Modifier.width(6.dp))
             }
             Icon(
-                painterResource(com.aazhou.mtforum.R.drawable.ic_comment_lines),
+                painterResource(com.aazhou.mtforum.R.drawable.ic_reply),
                 contentDescription = "回复",
                 tint = colors.iconSecondary,
                 modifier = Modifier
@@ -1243,7 +1272,7 @@ private fun NestedReply(
             TimeLine(child)
             Spacer(Modifier.weight(1f))
             Icon(
-                painterResource(com.aazhou.mtforum.R.drawable.ic_comment_lines),
+                painterResource(com.aazhou.mtforum.R.drawable.ic_reply),
                 contentDescription = "回复",
                 tint = colors.iconSecondary,
                 modifier = Modifier
@@ -1289,9 +1318,10 @@ private fun TimeLine(post: Post) {
     }
 }
 
-/** 底部栏：灰底输入框 + 评论 / 点赞 / 收藏 / 图片。 */
+/** 底部栏：两颗毛玻璃胶囊——左侧「写评论」输入，右侧 评论 / 点赞 / 收藏 / 分享。 */
 @Composable
 private fun ReplyBar(
+    backdrop: LayerBackdrop,
     value: String,
     onValueChange: (String) -> Unit,
     target: Post?,
@@ -1307,14 +1337,18 @@ private fun ReplyBar(
     onLike: () -> Unit,
     onLikeLongPress: () -> Unit,
     onFavorite: () -> Unit,
-    onTodo: (String) -> Unit,
+    onShare: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    // 玻璃面色与全局玻璃底栏一致：浅色薄白、深色薄黑
+    val glassColor =
+        if (isSystemInDarkTheme()) Color(0xFF121212).copy(0.28f) else Color(0xFFFAFAFA).copy(0.28f)
+    val glassShape = AbsoluteRoundedCornerShape(24.dp)
     Column(
         Modifier
             .fillMaxWidth()
-            .background(colors.topBar)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         if (target != null) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
@@ -1333,100 +1367,152 @@ private fun ReplyBar(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
+            // 左胶囊：写评论
+            Row(
                 modifier = Modifier
                     .weight(1f)
-                    .height(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(colors.quoteBackground)
-                    .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.CenterStart,
+                    .height(48.dp)
+                    .drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { glassShape },
+                        effects = {
+                            vibrancy()
+                            blur(16.dp.toPx())
+                            lens(12.dp.toPx(), 16.dp.toPx())
+                        },
+                        onDrawSurface = { drawRect(glassColor) },
+                    )
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (value.isEmpty()) {
+                        Text(
+                            "写评论",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.textHint,
+                        )
+                    }
+                    BasicTextField(
+                        value = value,
+                        onValueChange = onValueChange,
+                        textStyle = TextStyle(color = colors.textPrimary, fontSize = 15.sp),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        maxLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 if (value.isEmpty()) {
-                    Text(
-                        "说点什么吧...",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textHint,
+                    Icon(
+                        painterResource(com.aazhou.mtforum.R.drawable.ic_comment_pen),
+                        contentDescription = null,
+                        tint = colors.textHint,
+                        modifier = Modifier.size(17.dp),
                     )
+                } else if (sending) {
+                    CircularProgressIndicator(Modifier.size(20.dp))
+                } else {
+                    IconButton(onClick = onSend) {
+                        Icon(
+                            painterResource(com.aazhou.mtforum.R.drawable.ic_send),
+                            contentDescription = "发送",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
-                BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
-                    textStyle = TextStyle(color = colors.textPrimary, fontSize = 15.sp),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    maxLines = 2,
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
-            Spacer(Modifier.width(6.dp))
-            if (sending) {
-                CircularProgressIndicator(Modifier.size(22.dp))
-            } else if (value.isNotBlank()) {
-                IconButton(onClick = onSend) {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.Send,
-                        contentDescription = "发送",
-                        tint = MaterialTheme.colorScheme.primary,
+            Spacer(Modifier.width(8.dp))
+            // 右胶囊：评论 / 点赞 / 收藏 / 分享，图标在上数字在下；与左胶囊各占一半宽度
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { glassShape },
+                        effects = {
+                            vibrancy()
+                            blur(16.dp.toPx())
+                            lens(12.dp.toPx(), 16.dp.toPx())
+                        },
+                        onDrawSurface = { drawRect(glassColor) },
                     )
-                }
-            } else {
-                BarAction(onClick = onComments) {
-                    Icon(
-                        painterResource(com.aazhou.mtforum.R.drawable.ic_comment_outline),
-                        contentDescription = "查看评论",
-                        tint = colors.iconSecondary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                if (replyCount != null) {
-                    Text(
-                        replyCount.toString(),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BarAction(onClick = onComments, modifier = Modifier.weight(1f)) {
+                    BarCount(
+                        icon = {
+                            Icon(
+                                painterResource(com.aazhou.mtforum.R.drawable.ic_comment_lines),
+                                contentDescription = "查看评论",
+                                tint = colors.iconSecondary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        },
+                        count = replyCount,
                         color = colors.textSecondary,
-                        modifier = Modifier.padding(end = 6.dp),
                     )
                 }
-                BarAction(onClick = onLike, onLongClick = onLikeLongPress) {
-                    Icon(
-                        painterResource(com.aazhou.mtforum.R.drawable.ic_like_outline),
-                        contentDescription = "点赞",
-                        tint = if (liked) MaterialTheme.colorScheme.primary else colors.iconSecondary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                if (likeCount > 0) {
-                    Text(
-                        likeCount.toString(),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                BarAction(onClick = onLike, onLongClick = onLikeLongPress, modifier = Modifier.weight(1f)) {
+                    BarCount(
+                        icon = {
+                            Icon(
+                                painterResource(com.aazhou.mtforum.R.drawable.ic_like_outline),
+                                contentDescription = "点赞",
+                                tint = if (liked) MaterialTheme.colorScheme.primary else colors.iconSecondary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        },
+                        count = likeCount,
                         color = if (liked) MaterialTheme.colorScheme.primary else colors.textSecondary,
-                        modifier = Modifier.padding(end = 6.dp),
                     )
                 }
-                BarAction(onClick = onFavorite) {
-                    Icon(
-                        painterResource(com.aazhou.mtforum.R.drawable.ic_favorite_outline),
-                        contentDescription = "收藏",
-                        tint = if (favorited) MaterialTheme.colorScheme.primary else colors.iconSecondary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                if (favoriteCount > 0) {
-                    Text(
-                        favoriteCount.toString(),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                BarAction(onClick = onFavorite, modifier = Modifier.weight(1f)) {
+                    BarCount(
+                        icon = {
+                            Icon(
+                                painterResource(com.aazhou.mtforum.R.drawable.ic_favorite_outline),
+                                contentDescription = "收藏",
+                                tint = if (favorited) MaterialTheme.colorScheme.primary else colors.iconSecondary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        },
+                        count = favoriteCount,
                         color = if (favorited) MaterialTheme.colorScheme.primary else colors.textSecondary,
-                        modifier = Modifier.padding(end = 6.dp),
                     )
                 }
-                BarAction(onClick = { onTodo("图片上传暂未开放") }) {
+                BarAction(onClick = onShare, modifier = Modifier.weight(1f)) {
                     Icon(
-                        painterResource(com.aazhou.mtforum.R.drawable.ic_gallery_outline),
-                        contentDescription = "选择图片",
+                        painterResource(com.aazhou.mtforum.R.drawable.ic_share),
+                        contentDescription = "分享",
                         tint = colors.iconSecondary,
                         modifier = Modifier.size(20.dp),
                     )
                 }
             }
+        }
+    }
+}
+
+/** 胶囊内的单个操作：图标在上、数字在下；数字为 null 时不占位（如站点没返回回复数）。 */
+@Composable
+private fun BarCount(
+    icon: @Composable () -> Unit,
+    count: Int?,
+    color: Color,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        icon()
+        if (count != null) {
+            Text(
+                count.toString(),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                color = color,
+            )
         }
     }
 }
@@ -1437,11 +1523,12 @@ private fun ReplyBar(
 private fun BarAction(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
     icon: @Composable () -> Unit,
 ) {
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 4.dp, vertical = 4.dp),

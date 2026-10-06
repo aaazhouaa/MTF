@@ -194,7 +194,7 @@ fun ImagePreview(
                     }
                 }
                 Spacer(Modifier.width(8.dp))
-                PreviewActionIcon(R.drawable.ic_share_outline, "分享", foreground, actionPill) {
+                PreviewActionIcon(R.drawable.ic_share, "分享", foreground, actionPill) {
                     runBusy(scope, { busy = it }, context, "分享失败") {
                         val url = urls[pagerState.currentPage]
                         val bytes = downloadBytes(context, url)

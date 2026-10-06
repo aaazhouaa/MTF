@@ -18,10 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -33,8 +29,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -163,7 +160,7 @@ private fun InfoCard(
                     .clickable(onClick = onAccountAction),
             ) {
                 Icon(
-                    Icons.Filled.AccountCircle,
+                    painterResource(com.aazhou.mtforum.R.drawable.ic_people),
                     contentDescription = if (loggedIn) "退出登录" else "登录",
                     tint = colors.iconSecondary,
                     modifier = Modifier.size(28.dp),
@@ -214,12 +211,12 @@ private fun MenuCard(onSettings: () -> Unit) {
         )
         HorizontalDivider(color = colors.divider)
         val entries = listOf(
-            "我的帖子" to Icons.Filled.AccountCircle,
-            "我的收藏" to Icons.Filled.Star,
-            "我的好友" to Icons.Filled.AccountCircle,
-            "积分详情" to Icons.Filled.Star,
-            "个人资料" to Icons.Filled.AccountCircle,
-            "个人小黑屋" to Icons.Filled.AccountCircle,
+            "我的帖子" to painterResource(com.aazhou.mtforum.R.drawable.ic_posts),
+            "我的收藏" to painterResource(com.aazhou.mtforum.R.drawable.ic_favorite_outline),
+            "我的好友" to painterResource(com.aazhou.mtforum.R.drawable.ic_friends),
+            "积分详情" to painterResource(com.aazhou.mtforum.R.drawable.ic_points),
+            "个人资料" to painterResource(com.aazhou.mtforum.R.drawable.ic_people),
+            "个人小黑屋" to painterResource(com.aazhou.mtforum.R.drawable.ic_forbid),
         )
         entries.forEachIndexed { index, (label, icon) ->
             MenuRow(label, icon, onClick = { todo(label) })
@@ -291,7 +288,7 @@ private fun MetricColumn(
 }
 
 @Composable
-private fun MenuRow(label: String, icon: ImageVector, onClick: () -> Unit) {
+private fun MenuRow(label: String, icon: Painter, onClick: () -> Unit) {
     val colors = LocalMtfColors.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -323,7 +320,7 @@ private fun MenuRow(label: String, icon: ImageVector, onClick: () -> Unit) {
             modifier = Modifier.weight(1f),
         )
         Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            painterResource(com.aazhou.mtforum.R.drawable.ic_arrow_right),
             contentDescription = null,
             tint = colors.textHint,
             modifier = Modifier.size(16.dp),

@@ -5,21 +5,18 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aazhou.mtforum.R
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -81,10 +78,10 @@ fun AppRoot(onToggleTheme: () -> Unit) {
     }
 
     val tabs = listOf(
-        GlassTab("首页", Icons.Filled.Home),
-        GlassTab("板块", Icons.Filled.List),
-        GlassTab("导读", Icons.Filled.Star),
-        GlassTab("我的", Icons.Filled.AccountCircle),
+        GlassTab("首页", painterResource(R.drawable.ic_home)),
+        GlassTab("板块", painterResource(R.drawable.ic_list)),
+        GlassTab("导读", painterResource(R.drawable.ic_find)),
+        GlassTab("我的", painterResource(R.drawable.ic_me)),
     )
     val tabRoutes = listOf(Routes.HOME, Routes.FORUMS, Routes.GUIDE, Routes.PROFILE)
     val selectedIndex = tabRoutes.indexOf(currentRoute)

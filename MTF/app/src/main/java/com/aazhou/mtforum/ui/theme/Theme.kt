@@ -6,7 +6,11 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+
+/** 当前是否深色模式；用户可在设置里覆盖系统深浅，故不能只看 isSystemInDarkTheme。 */
+val LocalIsDarkTheme = staticCompositionLocalOf { false }
 
 /** 主色容器色：把主题色向底色方向压暗/提亮得到，避免为每套配色单独定义。 */
 private fun containerOf(primary: Color) = Color(
@@ -51,7 +55,10 @@ fun MtfTheme(
             outlineVariant = colors.divider,
         )
     }
-    CompositionLocalProvider(LocalMtfColors provides colors) {
+    CompositionLocalProvider(
+        LocalMtfColors provides colors,
+        LocalIsDarkTheme provides darkTheme,
+    ) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
 }

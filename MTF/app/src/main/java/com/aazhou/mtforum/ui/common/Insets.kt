@@ -7,7 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/** 玻璃底栏本体高度（不含外边距与系统导航栏）。对照酷安底栏 168px@3x ≈ 56dp。 */
+/** 玻璃底栏本体高度（不含外边距与系统导航栏）。对照通用底栏 168px@3x ≈ 56dp。 */
 val BottomBarHeight = 56.dp
 
 /** 底栏距屏幕底部的距离（在系统导航栏避让之上再留的空白）。 */

@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -82,10 +83,10 @@ import kotlin.math.sign
 import kotlin.random.Random
 
 /** 底部导航项。 */
-data class GlassTab(val label: String, val icon: ImageVector)
+data class GlassTab(val label: String, val icon: Painter)
 
 /**
- * 胶囊四周到容器边缘的统一留白。酷安实测：胶囊靠边那侧与上下留白相等，
+ * 胶囊四周到容器边缘的统一留白。实测：胶囊靠边那侧与上下留白相等，
  * 因此胶囊尺寸由该值推导（高 = 容器高 - 2*留白，宽 = tab 宽 - 2*留白），
  * 而不是用固定宽高比——否则横向留白会远大于上下留白。
  */
@@ -144,7 +145,7 @@ fun GlassBottomBar(
     val isLightTheme = !isSystemInDarkTheme()
     val accentColor = MaterialTheme.colorScheme.primary
     val contentColor = MaterialTheme.colorScheme.onSurface
-    // 毛玻璃：白色覆盖保持较低 alpha（酷安底栏内亮度 ~253 而透出内容处 ~227，白色覆盖较薄）
+    // 毛玻璃：白色覆盖保持较低 alpha（底栏内亮度 ~253 而透出内容处 ~227，白色覆盖较薄）
     val containerColor =
         if (isLightTheme) Color(0xFFFAFAFA).copy(0.28f) else Color(0xFF121212).copy(0.28f)
 

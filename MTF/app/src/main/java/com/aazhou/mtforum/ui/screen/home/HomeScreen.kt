@@ -50,6 +50,7 @@ import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 
 /** 首页：顶栏（应用名 + 搜索胶囊 + 主题切换）、热帖排行头部、帖子卡片流。 */
@@ -159,7 +160,13 @@ private fun HomeTopBar(onSearch: () -> Unit, onToggleTheme: () -> Unit) {
         }
         Spacer(Modifier.width(8.dp))
         Icon(
-            painterResource(com.aazhou.mtforum.R.drawable.ic_theme),
+            painterResource(
+                if (LocalIsDarkTheme.current) {
+                    com.aazhou.mtforum.R.drawable.ic_theme_moon
+                } else {
+                    com.aazhou.mtforum.R.drawable.ic_theme_sun
+                },
+            ),
             contentDescription = "切换主题",
             tint = colors.iconSecondary,
             modifier = Modifier
