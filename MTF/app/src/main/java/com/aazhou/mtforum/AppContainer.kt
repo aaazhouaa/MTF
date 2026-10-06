@@ -4,6 +4,7 @@ import android.app.Application
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.SessionStore
+import com.aazhou.mtforum.data.repo.ThemeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,6 +17,7 @@ class AppContainer(application: Application) {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val sessionStore = SessionStore(application)
+    val themeStore = ThemeStore(application)
     val httpClient = HttpClient()
     val repository = ForumRepository(httpClient)
 

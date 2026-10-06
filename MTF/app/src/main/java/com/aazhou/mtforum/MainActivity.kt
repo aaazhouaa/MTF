@@ -6,23 +6,29 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aazhou.mtforum.ui.nav.AppRoot
+import com.aazhou.mtforum.ui.theme.DefaultThemeIndex
 import com.aazhou.mtforum.ui.theme.MtfTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val themeStore = (application as MtfApp).container.themeStore
         setContent {
-            // 主题切换：null 表示跟随系统，非 null 为用户强制选择
-            val systemDark = isSystemInDarkTheme()
-            var darkOverride by remember { mutableStateOf<Boolean?>(null) }
-            val darkTheme = darkOverride ?: systemDark
-            MtfTheme(darkTheme = darkTheme) {
-                AppRoot(onToggleTheme = { darkOverride = !darkTheme })
+            val scope = rememberCoroutineScope()
+            val themeIndex by themeStore.themeIndex
+                .collectAsStateWithLifecycle(initialValue = DefaultThemeIndex)
+            // darkOverride 为 null 时跟随系统
+            val darkOverride by themeStore.darkOverride.collectAsStateWithLifecycle(initialValue = null)
+            val darkTheme = darkOverride ?: isSystemInDarkTheme()
+            MtfTheme(themeIndex = themeIndex, darkTheme = darkTheme) {
+                AppRoot(onToggleTheme = {
+                    scope.launch { themeStore.setDarkOverride(!darkTheme) }
+                })
             }
         }
     }
