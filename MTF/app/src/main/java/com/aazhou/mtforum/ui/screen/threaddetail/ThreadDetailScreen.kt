@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -47,8 +48,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -232,6 +231,9 @@ fun ThreadDetailScreen(
     var reportTarget by remember { mutableStateOf<ReportTarget?>(null) }
     // 删除确认弹窗目标（删除不可撤销，需二次确认）
     var deleteTarget by remember { mutableStateOf<Post?>(null) }
+    // 举报/打赏入口已随作者栏移入顶栏，回调须提到 Scaffold 之外供 topBar 使用
+    val reportThread: () -> Unit = { reportTarget = ReportTarget(null) }
+    val rewardThread: () -> Unit = { rewardOpen = true }
 
     // 底栏两颗毛玻璃胶囊采样本页内容：只记录内容区，底栏作为兄弟层再采样，
     // 避免与底栏的 drawBackdrop 形成回环
@@ -244,18 +246,19 @@ fun ThreadDetailScreen(
         // 整页背景纯白（top_bar），不是灰色页面底
         containerColor = colors.topBar,
         topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.topBar),
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            painterResource(com.aazhou.mtforum.R.drawable.ic_back),
-                            contentDescription = "返回",
-                            tint = colors.textPrimary,
-                        )
-                    }
-                },
-                title = {},
+            // 顶栏与首页同规格：状态栏避让 + 上下 10dp，自绘单行，不用 TopAppBar 的固定高
+            // 作者信息整行搬进顶栏（头像/昵称/举报/赞赏/时间/地点/关注），标题区不再重复
+            val op = page?.posts?.firstOrNull { it.isFirstPost }
+                ?: page?.posts?.firstOrNull()
+            ThreadDetailTopBar(
+                post = op,
+                following = following,
+                followEnabled = page?.opUid != null && page?.formhash != null,
+                onBack = onBack,
+                onFollow = { viewModel.toggleFollow() },
+                onReport = reportThread,
+                onReward = rewardThread,
+                onUserClick = onUserClick,
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -336,13 +339,7 @@ fun ThreadDetailScreen(
                                     post = op,
                                     subject = data.subject,
                                     forumName = data.forumName,
-                                    following = following,
-                                    followEnabled = data.opUid != null && data.formhash != null,
-                                    onFollow = { viewModel.toggleFollow() },
-                                    onReport = { reportTarget = ReportTarget(null) },
-                                    onReward = { rewardOpen = true },
                                     onImageClick = openImage,
-                                    onUserClick = onUserClick,
                                     pageImages = pageImages,
                                     onUnlock = {
                                         // 隐藏内容需回复后解锁：把回复目标复位到本帖，并提示到底部输入框回复
@@ -741,145 +738,183 @@ private fun shareThread(context: Context, subject: String?, tid: String) {
 }
 
 /**
- * 正文头：标题 → 隔离线 → 作者信息栏（头像/昵称/操作图标/时间/地点/关注）→
- * 编辑标记 → 正文 → 结束线 → 评论标题栏（计数/折叠徽章/分段控件）。
+ * 顶栏：与首页顶栏同规格（状态栏避让 + 上下 10dp）的单行作者栏。
+ * 返回 → 头像/昵称（昵称下方左对齐显示时间/属地）→ 举报/赞赏 → 关注；作者帖未就绪时只留返回键。
+ */
+@Composable
+private fun ThreadDetailTopBar(
+    post: Post?,
+    following: Boolean,
+    followEnabled: Boolean,
+    onBack: () -> Unit,
+    onFollow: () -> Unit,
+    onReport: () -> Unit,
+    onReward: () -> Unit,
+    onUserClick: (String) -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.topBar)
+            .statusBarsPadding()
+            .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painterResource(com.aazhou.mtforum.R.drawable.ic_back),
+            contentDescription = "返回",
+            tint = colors.textPrimary,
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onBack)
+                .padding(7.dp),
+        )
+        if (post == null) return@Row
+        Spacer(Modifier.width(6.dp))
+        AsyncImage(
+            model = post.avatarUrl,
+            contentDescription = null,
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(colors.quoteBackground)
+                .userClick(post.authorUid, onUserClick),
+        )
+        Spacer(Modifier.width(8.dp))
+        // 昵称一行、时间/属地一行，均左对齐；昵称可被压缩，长昵称优先让位
+        Column(Modifier.weight(1f)) {
+            Text(
+                post.authorName.ifBlank { "匿名" },
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp),
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.userClick(post.authorUid, onUserClick),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 1.dp)) {
+                Text(
+                    post.timeText.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                )
+                if (!post.location.isNullOrBlank()) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        post.location,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        color = colors.textHint,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        // 举报/打赏只针对楼主帖，随作者栏一并搬进顶栏，靠右排布
+        Icon(
+            painterResource(com.aazhou.mtforum.R.drawable.ic_report_shield),
+            contentDescription = "举报",
+            tint = colors.iconSecondary,
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onReport)
+                .padding(4.dp),
+        )
+        Icon(
+            painterResource(com.aazhou.mtforum.R.drawable.ic_reward_gift),
+            contentDescription = "赞赏",
+            tint = colors.iconSecondary,
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onReward)
+                .padding(4.dp),
+        )
+        if (followEnabled) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = if (following) "已关注" else "关注",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                fontWeight = FontWeight.Bold,
+                color = if (following) colors.textSecondary else MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .height(26.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (following) colors.quoteBackground else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                    .clickable(onClick = onFollow)
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 正文头：标题 → 细线上方一行（编辑标记靠左 / 版块 chip 靠右）→ 细线 → 正文 → 结束线 → 评论标题栏。
+ * 作者信息栏已整体移入页面顶栏 ThreadDetailTopBar，此处不再重复。
  */
 @Composable
 private fun DetailHeader(
     post: Post,
     subject: String,
     forumName: String?,
-    following: Boolean,
-    followEnabled: Boolean,
-    onFollow: () -> Unit,
-    onReport: () -> Unit,
-    onReward: () -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
-    onUserClick: (String) -> Unit,
     pageImages: List<String>,
     onUnlock: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-        // 标题与版块 chip 同一行：版块 chip 靠标题行右侧，样式与列表卡片一致
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        Text(
+            text = subject,
+            style = MaterialTheme.typography.headlineSmall.copy(fontSize = 20.sp, lineHeight = 29.sp),
+            fontWeight = FontWeight.Bold,
+            color = colors.textPrimary,
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
-        ) {
-            Text(
-                text = subject,
-                style = MaterialTheme.typography.headlineSmall.copy(fontSize = 20.sp, lineHeight = 29.sp),
-                fontWeight = FontWeight.Bold,
-                color = colors.textPrimary,
-                modifier = Modifier.weight(1f),
-            )
-            if (!forumName.isNullOrBlank()) {
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = forumName,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                    color = colors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .border(
-                            0.1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.69f),
-                            RoundedCornerShape(50),
-                        )
-                        .padding(horizontal = 6.dp, vertical = 1.dp),
-                )
+        )
+        // 编辑标记与版块 chip 同一行、同处细线上方：编辑标记靠左，chip 靠右；两者都无时不占行
+        if (!post.editedText.isNullOrBlank() || !forumName.isNullOrBlank()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (!post.editedText.isNullOrBlank()) {
+                    Text(
+                        text = post.editedText,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        fontStyle = FontStyle.Italic,
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                if (!forumName.isNullOrBlank()) {
+                    Text(
+                        text = forumName,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .border(
+                                0.1.dp,
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.69f),
+                                RoundedCornerShape(50),
+                            )
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    )
+                }
             }
         }
         HorizontalDivider(
             color = colors.divider,
             thickness = 0.5.dp,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
+            modifier = Modifier.padding(horizontal = 16.dp),
         )
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-            AsyncImage(
-                model = post.avatarUrl,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .userClick(post.authorUid, onUserClick),
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        post.authorName.ifBlank { "匿名" },
-                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp),
-                        fontWeight = FontWeight.Bold,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.userClick(post.authorUid, onUserClick),
-                    )
-                    // 举报/打赏从顶栏移到昵称后：与楼主信息同处一行，触达更近
-                    Icon(
-                        painterResource(com.aazhou.mtforum.R.drawable.ic_report_shield),
-                        contentDescription = "举报",
-                        tint = colors.iconSecondary,
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .clickable(onClick = onReport)
-                            .padding(5.dp),
-                    )
-                    Icon(
-                        painterResource(com.aazhou.mtforum.R.drawable.ic_reward_gift),
-                        contentDescription = "赞赏",
-                        tint = colors.iconSecondary,
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .clickable(onClick = onReward)
-                            .padding(5.dp),
-                    )
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
-                    Text(
-                        post.timeText.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                        color = colors.textSecondary,
-                    )
-                    if (!post.location.isNullOrBlank()) {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            post.location,
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = colors.textHint,
-                        )
-                    }
-                }
-            }
-            if (followEnabled) {
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (following) "已关注" else "关注",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                    fontWeight = FontWeight.Bold,
-                    color = if (following) colors.textSecondary else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .height(26.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(if (following) colors.quoteBackground else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
-                        .clickable(onClick = onFollow)
-                        .padding(horizontal = 12.dp, vertical = 5.dp),
-                )
-            }
-        }
-        if (!post.editedText.isNullOrBlank()) {
-            Text(
-                text = post.editedText,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                fontStyle = FontStyle.Italic,
-                color = colors.textSecondary,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-            )
-        }
         Spacer(Modifier.height(2.dp))
         PostContent(
             html = post.contentHtml,

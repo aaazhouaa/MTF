@@ -116,10 +116,27 @@ class HtmlContentTest {
 
     @Test
     fun leadingWhitespaceBeforeContentIsTrimmed() {
-        // 正文以 &nbsp;<br> 开头时，不要在昵称行与正文之间多出空行
+        // 站点正文常以 &nbsp;<br> 开头：空行要去掉（否则昵称行与正文之间多一行空白），
+        // 行首空白也一律吃掉，与网页吞掉行首空白的渲染一致
         val blocks = parseContentBlocks("&nbsp;<br>&nbsp;看看隐藏")
         assertEquals(1, blocks.size)
         assertEquals("看看隐藏", (blocks[0] as ContentBlock.Text).text)
+    }
+
+    @Test
+    fun lineStartWhitespaceIsEatenLikeBrowser() {
+        // 网页会把每个换行后的行首空白吃掉，正文所有行都顶到同一条左边界
+        val text = parseContentBlocks("&nbsp;&nbsp;第一段<br><br>&nbsp;&nbsp;第二段<br>&nbsp;&nbsp;第三行")
+            .filterIsInstance<ContentBlock.Text>().single().text
+        assertEquals("第一段\n\n第二段\n第三行", text)
+    }
+
+    @Test
+    fun whitespaceInsideLineIsKept() {
+        // 行中间的空白是排版分隔，不能被误删
+        val text = parseContentBlocks("文字 中 间")
+            .filterIsInstance<ContentBlock.Text>().single().text
+        assertEquals("文字 中 间", text)
     }
 
     @Test

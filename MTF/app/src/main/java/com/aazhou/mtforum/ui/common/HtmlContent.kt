@@ -164,10 +164,10 @@ private fun hoistQuoteImages(html: String): String {
 }
 
 /**
- * 去掉正文首尾的空白、`&nbsp;` 与换行标签。
+ * 去掉正文首尾多余的换行与空白。
  *
  * 站点正文常以“&nbsp;<br>”开头，若不清掉，会在昵称行与正文之间多出一行空白；
- * 段落中间的空行不动，避免破坏作者本意的分段。
+ * 首尾行首空白只会让各段左边界不齐（网页会把行首空白吃掉），一并去掉。
  */
 private fun stripEdgeWhitespace(html: String): String = html
     .replace(Regex("^(?:\\s|&nbsp;|&#160;|<br\\s*/?>|\\u00A0)+", RegexOption.IGNORE_CASE), "")
@@ -254,9 +254,34 @@ private class BlocksBuilder {
 
     private fun appendText(value: String, style: InlineStyle) {
         if (value.isEmpty()) return
+        // 浏览器会吃掉每个换行后的行首空白，Jsoup 却把多个空格折叠成一个留下，
+        // 于是同一篇正文里有的行缩进、有的行不缩进，与网页不一致，故在追加时同步该行为
+        val body = eatLineStartWhitespace(value)
+        if (body.isEmpty()) return
         val start = text.length
-        text.append(value)
+        text.append(body)
         syncSpans(style, start, text.length)
+    }
+
+    /** 丢掉 value 中每个换行之后（含缓冲区正处于行首时）的空白字符。 */
+    private fun eatLineStartWhitespace(value: String): String {
+        if (value.isEmpty()) return value
+        val out = StringBuilder(value.length)
+        var atLineStart = text.isEmpty() || text[text.length - 1] == '\n'
+        for (c in value) {
+            when {
+                c == '\n' -> {
+                    out.append(c)
+                    atLineStart = true
+                }
+                atLineStart && (c.isWhitespace() || c == '\u00A0') -> Unit
+                else -> {
+                    out.append(c)
+                    atLineStart = false
+                }
+            }
+        }
+        return out.toString()
     }
 
     /** 换行：连续换行最多留两个（一个空行即作者分段），更多视为模板残留，不叠成大片空白。 */
@@ -324,6 +349,8 @@ private class BlocksBuilder {
         val raw = text.toString()
         val lead = raw.indexOfFirst { it.code != 0xA0 && !it.isWhitespace() }
         val tail = raw.indexOfLast { it.code != 0xA0 && !it.isWhitespace() }
+        // 首行一律顶到左边界：Jsoup 会把 &nbsp;/连续空格折叠成一个半角空格，与浏览器
+        // “吃掉行首空白”的渲染不一致，会让同一篇正文里有的段落缩进、有的不缩进
         val start = if (lead < 0) 0 else lead
         val end = if (tail < 0) raw.length else tail + 1
         blocks.add(
