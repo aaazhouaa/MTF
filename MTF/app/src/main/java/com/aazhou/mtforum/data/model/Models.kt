@@ -103,7 +103,12 @@ data class Post(
 data class PostQuote(
     /** 被引用者昵称。 */
     val author: String? = null,
-    /** 被引用楼层的时间文本。 */
+    /**
+     * 被引用楼层的时间文本。
+     * 站点把引用块连同时间一起烘进楼层 HTML，时间是「引用那一刻」的快照：
+     * 被引楼层当时新鲜会渲染成「N 分钟前」，隔天回看是错的，因此只保留绝对日期，
+     * 相对时间解析为 null（引用卡不显示时间）。
+     */
     val time: String? = null,
     /** 被引用层正文的纯文本。 */
     val text: String = "",

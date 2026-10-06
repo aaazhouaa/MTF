@@ -220,7 +220,8 @@ class ForumParserTest {
         val quote = page.posts.single().quote
         assertEquals("11911193", quote?.pid)
         assertEquals("秋枫Mod", quote?.author)
-        assertEquals("8 分钟前", quote?.time)
+        // 「8 分钟前」是引用当时的快照，隔天回看是错的，不采用
+        assertNull(quote?.time)
         assertEquals("拿走不谢 https://lspilot.fun/get-started/installation", quote?.text)
     }
 
@@ -257,10 +258,31 @@ class ForumParserTest {
         """.trimIndent()
         val post = ForumParser.parseThreadPage(html, 1).posts.single()
         assertEquals("环流泥猫", post.quote?.author)
-        assertEquals("5 秒前", post.quote?.time)
         assertEquals("不是，怎么还有我的事。", post.quote?.text)
         assertNull(post.quote?.pid)
         assertTrue(post.contentHtml.contains("你住论坛了"))
+    }
+
+    @Test
+    fun quoteKeepsAbsoluteDateButDropsRelativeTime() {
+        val absolute = ForumParser.parseThreadPage(
+            """<html><head><title>帖子</title></head><body>
+                <div class="comiis_postli" id="pid1"><div class="comiis_a">
+                <div class="comiis_quote"><blockquote><font color="#999999">秋枫Mod 发表于 2026-10-5 21:18 来自 河南]</font><br />
+                拿走不谢</blockquote></div></div></div></body></html>""",
+            1,
+        )
+        // 绝对日期是被引楼层的真实时间，保留
+        assertEquals("2026-10-5 21:18", absolute.posts.single().quote?.time)
+        val relative = ForumParser.parseThreadPage(
+            """<html><head><title>帖子</title></head><body>
+                <div class="comiis_postli" id="pid1"><div class="comiis_a">
+                <div class="comiis_quote"><blockquote><font color="#999999">秋枫Mod 发表于 19 秒前 来自 安徽]</font><br />
+                拿走不谢</blockquote></div></div></div></body></html>""",
+            1,
+        )
+        // 相对时间是引用那一刻的快照，隔天回看是错的，丢弃（引用卡不显示时间）
+        assertNull(relative.posts.single().quote?.time)
     }
 
     @Test

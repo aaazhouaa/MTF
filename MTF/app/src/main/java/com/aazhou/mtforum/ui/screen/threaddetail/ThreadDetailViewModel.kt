@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class ThreadDetailViewModel(
     private val tid: String,
@@ -52,6 +53,10 @@ class ThreadDetailViewModel(
     /** 灌水回复是否展开显示（默认折叠）。 */
     private val _foldExpanded = MutableStateFlow(false)
     val foldExpanded: StateFlow<Boolean> = _foldExpanded.asStateFlow()
+
+    /** 切换排序/只看楼主后待界面恢复的滚动锚点（首个可见项下标 + 像素偏移）。 */
+    private val _pendingScrollAnchor = MutableStateFlow<ScrollAnchor?>(null)
+    val pendingScrollAnchor: StateFlow<ScrollAnchor?> = _pendingScrollAnchor.asStateFlow()
 
     /** 当前回复目标：null 表示回复主题，否则为该楼层。 */
     private val _replyTarget = MutableStateFlow<Post?>(null)
@@ -108,6 +113,12 @@ class ThreadDetailViewModel(
 
     private var treeJob: Job? = null
 
+    /** 切换排序/只看楼主时界面传来的滚动锚点，新楼层上屏时才交给界面。 */
+    private var requestedAnchor: ScrollAnchor? = null
+
+    /** 数据请求代次：每次 load 递增，用于丢弃过期请求的结果，避免旧数据覆盖新数据。 */
+    private var dataGeneration = 0
+
     /** 下拉刷新中。 */
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
@@ -120,44 +131,83 @@ class ThreadDetailViewModel(
     fun load(target: Int = page) {
         // 只看楼主与排序都由站点参数决定，必须重新请求；authorid 取自上一次加载的结果
         val authorId = if (_opOnly.value) (_state.value as? UiState.Success)?.data?.opUid else null
+        val previousOpOnly = _opOnly.value
+        val previousOrderType = _orderType.value
         page = target
-        // 已有内容时保持显示（切换排序/只看楼主不清屏、不闪 Loading），请求回来原地替换；
-        // 首次进入或失败重试（当前非 Success）才置 Loading 兜底。
-        if (_state.value !is UiState.Success) _state.value = UiState.Loading
-        _tree.value = null
-        _waterPids.value = emptySet()
-        _collapsed.value = emptySet()
-        _foldExpanded.value = false
+        // 已有内容时保持显示（切换排序/只看楼主不清屏、不闪 Loading），请求回来原地替换。
+        // 楼层树不能在这里清空：楼层 items 一塌成只剩头部，LazyColumn 会被截到列表尾部
+        // （视觉上跳顶），塌陷后的短列表还会误触发底部的自动续拉。
+        // 新数据与楼层树一起上屏，见 publish()。
+        val keepContent = _state.value is UiState.Success
+        if (!keepContent) {
+            _state.value = UiState.Loading
+            _tree.value = null
+            _waterPids.value = emptySet()
+        }
+        val generation = ++dataGeneration
         viewModelScope.launch {
-            _state.value = try {
-                val data = repository.threadPage(tid, target, _orderType.value, authorId)
-                if (!likeInitialized) {
-                    _likeCount.value = data.likeCount ?: 0
-                    _favoriteCount.value = data.favoriteCount ?: 0
-                    // 登录态下站点给出明确状态，以其为准并落盘；否则沿用本地记录，
-                    // 否则已点赞/已收藏的帖子再次进入会被显示成未操作。
-                    if (data.likedStateKnown) {
-                        _liked.value = data.isLiked
-                        actionStore.setLiked(tid, data.isLiked)
-                    } else {
-                        _liked.value = actionStore.liked(tid) ?: false
-                    }
-                    if (data.favoritedStateKnown) {
-                        _favorited.value = data.isFavorited
-                        actionStore.setFavorited(tid, data.isFavorited)
-                    } else {
-                        _favorited.value = actionStore.favorited(tid) ?: false
-                    }
-                    likeInitialized = true
-                }
-                _hasNext.value = target < data.totalPages
-                _loadMoreState.value =
-                    if (target < data.totalPages) LoadMoreState.Idle else LoadMoreState.End
-                UiState.Success(data)
+            val data = try {
+                repository.threadPage(tid, target, _orderType.value, authorId)
             } catch (e: Exception) {
-                UiState.Error(e.message ?: "加载失败")
+                if (generation != dataGeneration) return@launch
+                requestedAnchor = null
+                if (keepContent) {
+                    // 旧内容原样留着，只把分段控件退回原档并提示失败
+                    _opOnly.value = previousOpOnly
+                    _orderType.value = previousOrderType
+                    _actionMessage.value = e.message ?: "加载失败"
+                } else {
+                    _state.value = UiState.Error(e.message ?: "加载失败")
+                }
+                return@launch
             }
-            refreshDerived()
+            // 被更新的请求（又一次切排序/只看楼主）取代，这一帧结果作废
+            if (generation != dataGeneration) return@launch
+            if (!likeInitialized) {
+                _likeCount.value = data.likeCount ?: 0
+                _favoriteCount.value = data.favoriteCount ?: 0
+                // 登录态下站点给出明确状态，以其为准并落盘；否则沿用本地记录，
+                // 否则已点赞/已收藏的帖子再次进入会被显示成未操作。
+                if (data.likedStateKnown) {
+                    _liked.value = data.isLiked
+                    actionStore.setLiked(tid, data.isLiked)
+                } else {
+                    _liked.value = actionStore.liked(tid) ?: false
+                }
+                if (data.favoritedStateKnown) {
+                    _favorited.value = data.isFavorited
+                    actionStore.setFavorited(tid, data.isFavorited)
+                } else {
+                    _favorited.value = actionStore.favorited(tid) ?: false
+                }
+                likeInitialized = true
+            }
+            publish(data, target)
+        }
+    }
+
+    /**
+     * 新楼层与楼中楼树、灌水集合一起上屏（折叠态也在这一刻复位）。
+     *
+     * 树在后台线程算完再发布，省掉「帖子已换、楼层还是旧树」的中间帧；
+     * 有切换筛选时记录的锚点，就同时交给界面在新楼层上屏后原地定位，屏幕不跳。
+     */
+    private fun publish(data: ThreadPage, target: Int) {
+        treeJob?.cancel()
+        treeJob = viewModelScope.launch {
+            val (tree, water) = withContext(Dispatchers.Default) { deriveTree(data) }
+            _collapsed.value = emptySet()
+            _foldExpanded.value = false
+            _state.value = UiState.Success(data)
+            _tree.value = tree
+            _waterPids.value = water
+            _hasNext.value = target < data.totalPages
+            _loadMoreState.value =
+                if (target < data.totalPages) LoadMoreState.Idle else LoadMoreState.End
+            requestedAnchor?.let {
+                _pendingScrollAnchor.value = it
+                requestedAnchor = null
+            }
         }
     }
 
@@ -168,6 +218,8 @@ class ThreadDetailViewModel(
     fun loadMore() {
         if (_loadingMore.value || !_hasNext.value) return
         val current = _state.value as? UiState.Success ?: return
+        val generation = dataGeneration
+        val currentPage = page
         _loadingMore.value = true
         _loadMoreState.value = LoadMoreState.Loading
         viewModelScope.launch {
@@ -191,8 +243,15 @@ class ThreadDetailViewModel(
                 }
             } catch (e: Exception) {
                 failed = true
+                if (generation != dataGeneration) return@launch
                 // 已有部分页拿到时仍先展示，避免白等一下全丢；完全没拿到才提示
                 if (accumulated.isEmpty()) _actionMessage.value = e.message ?: "加载更多失败"
+            }
+            // 期间又切换了排序/只看楼主：这批旧数据已无意义，丢弃并还原页码与加载态
+            if (generation != dataGeneration) {
+                page = currentPage
+                _loadingMore.value = false
+                return@launch
             }
             val merged = current.data.copy(
                 posts = current.data.posts + accumulated,
@@ -205,7 +264,7 @@ class ThreadDetailViewModel(
                 page < totalPages -> LoadMoreState.Idle
                 else -> LoadMoreState.End
             }
-            refreshDerived()
+            refreshDerived(merged)
             _loadingMore.value = false
         }
     }
@@ -217,21 +276,22 @@ class ThreadDetailViewModel(
     fun refreshAfterReply() {
         val current = _state.value as? UiState.Success ?: run { load(1); return }
         val authorId = if (_opOnly.value) current.data.opUid else null
+        val generation = dataGeneration
         viewModelScope.launch {
             val fresh = try {
                 repository.threadPage(tid, 1, _orderType.value, authorId)
             } catch (e: Exception) {
-                _actionMessage.value = e.message ?: "刷新失败"
+                if (generation == dataGeneration) _actionMessage.value = e.message ?: "刷新失败"
                 return@launch
             }
+            if (generation != dataGeneration) return@launch
             val latest = _state.value as? UiState.Success ?: return@launch
             val freshPids = fresh.posts.map { it.pid }.toSet()
             val kept = latest.data.posts.filter { it.pid !in freshPids }
             val totalPages = maxOf(fresh.totalPages, latest.data.totalPages)
-            _state.value = UiState.Success(
-                fresh.copy(posts = fresh.posts + kept, totalPages = totalPages),
-            )
-            refreshDerived()
+            val merged = fresh.copy(posts = fresh.posts + kept, totalPages = totalPages)
+            _state.value = UiState.Success(merged)
+            refreshDerived(merged)
             _hasNext.value = page < totalPages
             _loadMoreState.value =
                 if (page < totalPages) LoadMoreState.Idle else LoadMoreState.End
@@ -253,13 +313,20 @@ class ThreadDetailViewModel(
     /**
      * 三档分段（楼主/正序/倒序）一次切换：先改状态、再统一请求一次。
      * 避免 onOpOnly(false)+onOrder(x) 两个回调各触发一次 load 造成竞态与重复请求。
+     * [anchor] 是切换前的滚动位置，新楼层上屏后原样恢复，屏幕不跳。
      */
-    fun setReplyFilter(opOnly: Boolean, orderType: Int) {
+    fun setReplyFilter(opOnly: Boolean, orderType: Int, anchor: ScrollAnchor? = null) {
         val changed = _opOnly.value != opOnly || _orderType.value != orderType
         if (!changed) return
+        requestedAnchor = anchor
         _opOnly.value = opOnly
         _orderType.value = orderType
         load(1)
+    }
+
+    /** 界面已按锚点定位完，清掉待恢复状态。 */
+    fun consumePendingScrollAnchor() {
+        _pendingScrollAnchor.value = null
     }
 
     fun toggleReplies(pid: String) {
@@ -311,10 +378,11 @@ class ThreadDetailViewModel(
                 // 不能调 refreshAfterReply：它的保留式合并会把已删楼层按 pid 加回来。
                 val latest = _state.value as? UiState.Success
                 if (latest != null) {
-                    _state.value = UiState.Success(
-                        latest.data.copy(posts = latest.data.posts.filterNot { it.pid == pid }),
+                    val remaining = latest.data.copy(
+                        posts = latest.data.posts.filterNot { it.pid == pid },
                     )
-                    refreshDerived()
+                    _state.value = UiState.Success(remaining)
+                    refreshDerived(remaining)
                 }
             }
             _actionMessage.value = if (ok) "已删除该回复" else "删除未生效，站点可能不允许删除"
@@ -461,43 +529,52 @@ class ThreadDetailViewModel(
         }
         _isRefreshing.value = true
         val authorId = if (_opOnly.value) current.data.opUid else null
+        val generation = dataGeneration
         viewModelScope.launch {
             try {
                 val fresh = repository.threadPage(tid, 1, _orderType.value, authorId)
+                // 期间又切换了排序/只看楼主：这次刷新的结果已过时，丢弃
+                if (generation != dataGeneration) return@launch
                 val latest = _state.value as? UiState.Success
                 if (latest == null) {
                     _state.value = UiState.Success(fresh)
+                    refreshDerived(fresh)
                 } else {
                     val freshPids = fresh.posts.map { it.pid }.toSet()
                     val kept = latest.data.posts.filter { it.pid !in freshPids }
                     val totalPages = maxOf(fresh.totalPages, latest.data.totalPages)
-                    _state.value = UiState.Success(fresh.copy(posts = fresh.posts + kept, totalPages = totalPages))
+                    val merged = fresh.copy(posts = fresh.posts + kept, totalPages = totalPages)
+                    _state.value = UiState.Success(merged)
                     _hasNext.value = page < totalPages
+                    refreshDerived(merged)
                 }
-                refreshDerived()
             } catch (e: Exception) {
-                _actionMessage.value = e.message ?: "刷新失败"
+                if (generation == dataGeneration) _actionMessage.value = e.message ?: "刷新失败"
             }
-            _isRefreshing.value = false
+            if (generation == dataGeneration) _isRefreshing.value = false
         }
     }
 
     /** 后台重算楼中楼树与灌水集合；楼层数可上百，含 O(n²) 匹配与 Jsoup，不放主线程。 */
-    private fun refreshDerived() {
-        val data = (_state.value as? UiState.Success)?.data ?: return
+    private fun refreshDerived(data: ThreadPage) {
         treeJob?.cancel()
         treeJob = viewModelScope.launch(Dispatchers.Default) {
-            val op = data.posts.firstOrNull { it.isFirstPost } ?: data.posts.firstOrNull()
-            val replies = data.posts.filter { it !== op }
-            val built = buildReplyTree(replies)
-            // 灌水回复默认折叠；带子回复的不折，否则会连子回复一起藏掉
-            val water = built.topLevel
-                .filter { isWaterReply(it.contentHtml) && built.children[it.pid].isNullOrEmpty() }
-                .map { it.pid }
-                .toSet()
-            _tree.value = built
+            val (tree, water) = deriveTree(data)
+            _tree.value = tree
             _waterPids.value = water
         }
+    }
+
+    /** 归属树 + 默认折叠的灌水楼层 pid；带子回复的水帖不折，否则会连子回复一起藏掉。 */
+    private fun deriveTree(data: ThreadPage): Pair<ReplyTree, Set<String>> {
+        val op = data.posts.firstOrNull { it.isFirstPost } ?: data.posts.firstOrNull()
+        val replies = data.posts.filter { it !== op }
+        val built = buildReplyTree(replies)
+        val water = built.topLevel
+            .filter { isWaterReply(it.contentHtml) && built.children[it.pid].isNullOrEmpty() }
+            .map { it.pid }
+            .toSet()
+        return built to water
     }
 
     /** 打赏（pid 为空为打赏首帖）。 */
@@ -546,6 +623,9 @@ private fun normalizeForMatch(s: String?): String = s.orEmpty()
 
 /** 引用块短于该长度（纯表情/单个词）时区分不了楼层，宁可不匹配。 */
 private const val MATCH_MIN_CHARS = 6
+
+/** 切换筛选前界面的滚动位置：首个可见项下标 + 该项被遮住的像素高度。 */
+data class ScrollAnchor(val index: Int, val offset: Int)
 
 /** 楼层树：顶层楼层顺序列表 + 「父 pid -> 子楼层列表」。 */
 class ReplyTree(

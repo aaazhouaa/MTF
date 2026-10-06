@@ -56,6 +56,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -126,11 +127,14 @@ fun ThreadDetailScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    // 切换排序/只看楼主后数据整体替换会让 LazyColumn 回顶；
-    // 记录切换前的首个可见项位置，数据回来后滚回原位，避免页面跳动。
-    var restoreIndex by remember { mutableStateOf<Int?>(null) }
-    val captureFirstVisible: () -> Unit = {
-        restoreIndex = listState.firstVisibleItemIndex
+    // 切换排序/只看楼主会整体替换楼层列表，屏幕不能跟着跳；
+    // 切换前记下当前滚动锚点交给 ViewModel，新楼层上屏后再按它原地定位。
+    val pendingScrollAnchor by viewModel.pendingScrollAnchor.collectAsStateWithLifecycle()
+    val anchorNow: () -> ScrollAnchor = {
+        ScrollAnchor(
+            index = listState.firstVisibleItemIndex,
+            offset = listState.firstVisibleItemScrollOffset,
+        )
     }
 
     LaunchedEffect(replyState) {
@@ -164,13 +168,13 @@ fun ThreadDetailScreen(
         }
     }
 
-    LaunchedEffect(state) {
-        // 切换排序/只看楼主后数据回填完成，滚回切换前的位置
-        val target = restoreIndex
-        if (target != null && state is UiState.Success) {
-            restoreIndex = null
-            listState.scrollToItem(target.coerceAtLeast(0))
-        }
+    LaunchedEffect(pendingScrollAnchor) {
+        val anchor = pendingScrollAnchor ?: return@LaunchedEffect
+        // 等新楼层完成组合与测量再定位，否则目标下标可能还没布局出来
+        withFrameNanos { }
+        val lastIndex = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+        listState.scrollToItem(anchor.index.coerceAtMost(lastIndex), anchor.offset)
+        viewModel.consumePendingScrollAnchor()
     }
 
     val page = (state as? UiState.Success)?.data
@@ -349,12 +353,10 @@ fun ThreadDetailScreen(
                                 orderType = orderType,
                                 onToggleFold = { viewModel.toggleFoldExpanded() },
                                 onOpOnly = {
-                                    captureFirstVisible()
-                                    viewModel.setReplyFilter(true, orderType)
+                                    viewModel.setReplyFilter(true, orderType, anchorNow())
                                 },
                                 onOrder = {
-                                    captureFirstVisible()
-                                    viewModel.setReplyFilter(false, it)
+                                    viewModel.setReplyFilter(false, it, anchorNow())
                                 },
                             )
                             HorizontalDivider(color = colors.divider)

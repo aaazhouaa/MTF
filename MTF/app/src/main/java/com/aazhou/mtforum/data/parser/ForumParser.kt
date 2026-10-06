@@ -39,6 +39,9 @@ object ForumParser {
     /** 帖子首帖/楼层正文里的编辑标记：「本帖最后由 X 于 <时间> 编辑」。 */
     private val RE_EDITED = Regex("本[帖贴]最后由\\s*.+?\\s*于\\s*.+?\\s*编辑")
 
+    /** 引用块时间是否为绝对日期（站点对新鲜被引楼层渲染的是「N 分钟前」这类相对时间）。 */
+    private val RE_ABS_DATE = Regex("\\d{4}-\\d{1,2}-\\d{1,2}")
+
     /** 「本帖最后由 X 于 2026-10-5 12:39 编辑」里的时间，用于「时间 编辑」小字。 */
     private val RE_EDIT_TIME = Regex("\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}\\s+\\d{1,2}:\\d{2}(?::\\d{2})?")
 
@@ -348,7 +351,10 @@ object ForumParser {
             .trim().trimEnd(']').trim()
         return PostQuote(
             author = metaLine.substringBefore("发表于").trim().ifEmpty { null },
-            time = timePart.ifEmpty { null },
+            // 引用块里的时间烘在楼层 HTML 中，是「引用那一刻」的快照：被引楼层当时新鲜，
+            // 站点渲染成「N 分钟前」「19 秒前」，隔天回看就是错的；页面没有 dateline，
+            // 客户端也推算不出真实时间。只有绝对日期才是可靠时间，相对时间一律不取。
+            time = timePart.takeIf { RE_ABS_DATE.containsMatchIn(it) },
             text = lines.drop(1).joinToString("\n"),
             pid = pid,
         )
