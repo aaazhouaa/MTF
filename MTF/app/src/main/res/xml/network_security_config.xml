@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  站点部分静态资源与附件仍可能返回 http 明文地址，系统默认会拦掉导致图片加载失败。
+  这里只对站内域名放开明文，其余流量仍强制 https，避免全局放开。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">binmt.cc</domain>
+        <domain includeSubdomains="true">mt2.cn</domain>
+    </domain-config>
+</network-security-config>

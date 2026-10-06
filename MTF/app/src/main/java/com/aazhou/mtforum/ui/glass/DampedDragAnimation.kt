@@ -50,6 +50,9 @@ class DampedDragAnimation(
     private val flowAnimation = Animatable(0f, 1f)
     private val flowAnimationSpec = spring(0.6f, 400f, 1f)
 
+    /** flow 复位用：临界阻尼、快速收敛，松手后无过冲地回正。 */
+    private val flowResetSpec = spring(1f, 500f, 1f)
+
     private val mutatorMutex = MutatorMutex()
     private val velocityTracker = VelocityTracker()
 
@@ -68,6 +71,11 @@ class DampedDragAnimation(
     /** 手势内实时上报手指速度，驱动液态形变。 */
     fun trackFlow(velocityX: Float) {
         animationScope.launch { flowAnimation.animateTo(velocityX, flowAnimationSpec) }
+    }
+
+    /** 手指离开后液态形变的驱动力消失，把 flow 弹回 0，胶囊恢复圆润。 */
+    fun releaseFlow() {
+        animationScope.launch { flowAnimation.animateTo(0f, flowResetSpec) }
     }
 
     val modifier: Modifier = Modifier.pointerInput(Unit) {
@@ -99,6 +107,7 @@ class DampedDragAnimation(
     }
 
     fun release() {
+        releaseFlow()
         animationScope.launch {
             awaitFrame()
             if (value != targetValue) {

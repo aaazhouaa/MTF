@@ -200,7 +200,7 @@ object ForumParser {
         // 只有首页第一层才是主题首帖；楼主后续的回复仍要靠 uid 判定为楼主
         val firstPost = li.selectFirst("div.comiis_postli_topv1") != null
         // 编辑标记混在正文里会污染引用卡快照与展示，整句剥离成单独字段
-        val rawHtml = contentEl?.html() ?: ""
+        val rawHtml = extractContentHtml(li, contentEl)
         val editedText = RE_EDITED.find(rawHtml)?.value?.trim()
         return Post(
             pid = li.id().removePrefix("pid"),
@@ -217,6 +217,27 @@ object ForumParser {
             quote = quote,
             editedText = editedBadge(editedText),
         )
+    }
+
+    /**
+     * 抽取楼层正文 HTML。
+     *
+     * 站点把附件图从正文里抽出，集中放在与 comiis_a 平级的 ul.comiis_img_list
+     * （单张为 div.comiis_img_one）中，只取 comiis_a 会把图片整体丢掉；
+     * 这里按容器子元素原顺序把它们并回正文，保持图文相对位置。
+     */
+    private fun extractContentHtml(li: Element, contentEl: Element?): String {
+        val container = contentEl?.parent() ?: li.selectFirst("div.comiis_messages")
+        if (container == null) return contentEl?.html().orEmpty()
+        val html = StringBuilder()
+        for (child in container.children()) {
+            when {
+                child === contentEl -> html.append(child.html())
+                child.tagName() == "ul" && child.hasClass("comiis_img_list") -> html.append(child.outerHtml())
+                child.hasClass("comiis_img_one") -> html.append(child.outerHtml())
+            }
+        }
+        return html.toString()
     }
 
     /**

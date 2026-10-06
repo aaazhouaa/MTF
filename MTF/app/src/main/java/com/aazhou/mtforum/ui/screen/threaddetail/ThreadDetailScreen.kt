@@ -2,7 +2,6 @@ package com.aazhou.mtforum.ui.screen.threaddetail
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -67,6 +66,7 @@ import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
+import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.PostContent
 import com.aazhou.mtforum.ui.common.UiState
@@ -138,10 +138,10 @@ fun ThreadDetailScreen(
 
     val page = (state as? UiState.Success)?.data
     val following = (followState as? ThreadDetailViewModel.FollowState.Done)?.following ?: false
-    val openImage: (String) -> Unit = { url ->
-        if (url.startsWith("http")) {
-            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-        }
+    // 点击图片一律进内置全屏查看器；urls 为本组全部地址，便于左右翻页
+    var preview by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
+    val openImage: (List<String>, Int) -> Unit = { urls, index ->
+        if (urls.isNotEmpty()) preview = urls to index
     }
     val todo: (String) -> Unit = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
 
@@ -235,18 +235,21 @@ fun ThreadDetailScreen(
                     EmptyBox("没有内容", Modifier.padding(padding))
                 } else {
                     val op = data.posts.firstOrNull { it.isFirstPost } ?: data.posts.firstOrNull()
-                    val replies = data.posts.filter { it !== op }
-                    val tree = buildReplyTree(replies)
+                    // 树构建含 O(n²) 的引用匹配、灌水判定要扫全部楼层正文，都是纯计算；
+                    // 缓存到 posts（或折叠状态）变化为止，否则滚动、点赞、输入引发的重组会在主线程重算。
+                    val tree = remember(data.posts) {
+                        buildReplyTree(data.posts.filter { it !== op })
+                    }
                     // 灌水回复默认折叠；带子回复的不折，否则会连子回复一起藏掉
-                    val waterPids = tree.topLevel
-                        .filter { isWaterReply(it.contentHtml) && tree.children[it.pid].isNullOrEmpty() }
-                        .map { it.pid }
-                        .toSet()
-                    val foldedCount = waterPids.size
-                    val visibleReplies = if (foldExpanded) {
+                    val waterPids = remember(tree) {
                         tree.topLevel
-                    } else {
-                        tree.topLevel.filter { it.pid !in waterPids }
+                            .filter { isWaterReply(it.contentHtml) && tree.children[it.pid].isNullOrEmpty() }
+                            .map { it.pid }
+                            .toSet()
+                    }
+                    val foldedCount = waterPids.size
+                    val visibleReplies = remember(tree, waterPids, foldExpanded) {
+                        if (foldExpanded) tree.topLevel else tree.topLevel.filter { it.pid !in waterPids }
                     }
 
                     LazyColumn(
@@ -325,6 +328,10 @@ fun ThreadDetailScreen(
                 }
             }
         }
+    }
+
+    preview?.let { (urls, index) ->
+        ImagePreview(urls = urls, initialIndex = index, onDismiss = { preview = null })
     }
 }
 
@@ -452,6 +459,13 @@ private fun longestCommonSubstring(a: String, b: String): Int {
     return best
 }
 
+/** 头像可点：点击后用同一套全屏查看器打开；无头像地址时不响应。 */
+private fun Modifier.avatarClick(
+    url: String?,
+    onImageClick: (List<String>, Int) -> Unit,
+): Modifier =
+    if (url.isNullOrBlank()) this else clickable { onImageClick(listOf(url), 0) }
+
 private fun shareThread(context: Context, subject: String?, tid: String) {
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
@@ -477,7 +491,7 @@ private fun DetailHeader(
     onFollow: () -> Unit,
     onOpOnly: (Boolean) -> Unit,
     onOrder: (Int) -> Unit,
-    onImageClick: (String) -> Unit,
+    onImageClick: (List<String>, Int) -> Unit,
 ) {
     val colors = LocalMtfColors.current
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -498,7 +512,10 @@ private fun DetailHeader(
             AsyncImage(
                 model = post.avatarUrl,
                 contentDescription = null,
-                modifier = Modifier.size(40.dp).clip(CircleShape),
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .avatarClick(post.avatarUrl, onImageClick),
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
@@ -695,7 +712,7 @@ private fun ReplyBlock(
     onToggle: () -> Unit,
     onReply: () -> Unit,
     onReplyTo: (Post) -> Unit,
-    onImageClick: (String) -> Unit,
+    onImageClick: (List<String>, Int) -> Unit,
 ) {
     val colors = LocalMtfColors.current
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 14.dp)) {
@@ -703,7 +720,10 @@ private fun ReplyBlock(
             AsyncImage(
                 model = reply.avatarUrl,
                 contentDescription = null,
-                modifier = Modifier.size(36.dp).clip(CircleShape),
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .avatarClick(reply.avatarUrl, onImageClick),
             )
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
@@ -797,14 +817,17 @@ private fun ReplyBlock(
 
 /** 楼中楼：头像 22dp、昵称 13sp、正文 14sp，缩进由父容器给出。 */
 @Composable
-private fun NestedReply(child: Post, onReply: () -> Unit, onImageClick: (String) -> Unit) {
+private fun NestedReply(child: Post, onReply: () -> Unit, onImageClick: (List<String>, Int) -> Unit) {
     val colors = LocalMtfColors.current
     Column(Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 7.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
                 model = child.avatarUrl,
                 contentDescription = null,
-                modifier = Modifier.size(22.dp).clip(CircleShape),
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .avatarClick(child.avatarUrl, onImageClick),
             )
             Spacer(Modifier.width(8.dp))
             Text(

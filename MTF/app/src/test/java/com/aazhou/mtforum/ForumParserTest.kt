@@ -375,4 +375,44 @@ class ForumParserTest {
         assertEquals(3, page.likeCount)
         assertEquals(4, page.favoriteCount)
     }
+
+    @Test
+    fun attachmentImagesOutsideBodyAreMerged() {
+        // 站点把附件图从正文里抽出，放进与 comiis_a 平级的 ul.comiis_img_list（单张为 comiis_img_one），
+        // 只取 comiis_a 会丢图。首帖(view_one)、评论(view_all)与楼中楼子回复是同一套楼层结构，
+        // 都经 parsePost，三处都必须取到图。
+        val html = """
+            <html><head><title>图帖 - MT论坛</title>
+            <link rel="canonical" href="https://bbs.binmt.cc/thread-174088-1-1.html"></head>
+            <body><div class="comiis_postlist">
+            <div class="comiis_postli" id="pid1">
+              <div class="comiis_postli_top comiis_postli_topv1"></div>
+              <div class="comiis_message view_one"><div class="comiis_messages comiis_aimg_show cl">
+                <div class="comiis_a comiis_message_table cl">首帖正文</div>
+                <ul class="comiis_img_list cl">
+                  <li><span><img src="https://oos.binmt.cc/a.jpg" comiis_loadimages="https://oos.binmt.cc/a.jpg"></span></li>
+                  <li><span><img src="https://oos.binmt.cc/b.jpg" comiis_loadimages="https://oos.binmt.cc/b.jpg"></span></li>
+                </ul>
+              </div></div>
+            </div>
+            <div class="comiis_postli" id="pid2">
+              <div class="comiis_postli_top"></div>
+              <div class="comiis_message view_all"><div class="comiis_messages cl">
+                <div class="comiis_a comiis_message_table cl">楼层正文</div>
+                <div class="comiis_img_one"><img src="https://oos.binmt.cc/c.jpg" comiis_loadimages="https://oos.binmt.cc/c.jpg"></div>
+              </div></div>
+            </div>
+            </div></body></html>
+        """.trimIndent()
+        val page = ForumParser.parseThreadPage(html, 1)
+        val op = page.posts[0]
+        assertTrue(op.contentHtml.contains("首帖正文"))
+        assertTrue(op.contentHtml.contains("a.jpg"))
+        assertTrue(op.contentHtml.contains("b.jpg"))
+        // 图文相对顺序保持：正文在前、附件图列表在后
+        assertTrue(op.contentHtml.indexOf("首帖正文") < op.contentHtml.indexOf("a.jpg"))
+        val reply = page.posts[1]
+        assertTrue(reply.contentHtml.contains("楼层正文"))
+        assertTrue(reply.contentHtml.contains("c.jpg"))
+    }
 }

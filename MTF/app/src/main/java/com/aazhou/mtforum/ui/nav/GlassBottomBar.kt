@@ -76,6 +76,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlin.random.Random
@@ -97,10 +98,13 @@ private val PillHeight = BottomBarHeight - PillMargin * 2
 private const val PillPressedScale = 1.4f
 
 /** 水珠每次跨到新 tab 时触发弹动的概率。 */
-private const val BumpChance = 0.5f
+private const val BumpChance = 0.3f
 
-/** 弹动幅度：等比缩放增量（0.1 即放大 10%）。 */
-private const val BumpScale = 0.10f
+/** 弹动时宽度收缩比例（0.10 即左右两端各向中心收，总长减少 10%）。 */
+private const val BumpWidthShrink = 0.10f
+
+/** 弹动时高度增加比例（0.20 即涨高 20%，上下溢出容器，纵向占满不留白）。 */
+private const val BumpHeightGrow = 0.20f
 
 /** 弹起很快、回落带轻微回弹。 */
 private val BumpRiseSpec = spring<Float>(0.7f, 900f)
@@ -108,6 +112,15 @@ private val BumpFallSpec = spring<Float>(0.45f, 320f)
 
 /** 长按时水平方向收缩比例（0.1 即长度减少 10%）。 */
 private const val PressedLengthShrink = 0.10f
+
+/** 手指速度归一化上限（px/s），用于液态形变强度。 */
+private const val MaxFlow = 3500f
+
+/** 水珠自身速度归一化上限（tab/s），用于判定急停反向。 */
+private const val MaxPillVelocity = 4f
+
+/** 反向滑动时的横向压缩系数（越大压得越窄）。 */
+private const val OpposedSquash = 1.0f
 
 private val LocalGlassTabScale = staticCompositionLocalOf { { 1f } }
 
@@ -266,6 +279,7 @@ fun GlassBottomBar(
                     }
                 } finally {
                     pointerDownState.value = false
+                    dampedDragAnimation.releaseFlow()
                 }
                 // 以手指位置对应的 tab 为准，而非弹簧当前值——后者可能尚未滚到位
                 val idx = lastValue.roundToInt().fastCoerceIn(0, tabsCount - 1)
@@ -365,14 +379,21 @@ fun GlassBottomBar(
                     layerBlock = {
                         // 液态形变：速度越快，沿运动方向拉得越长、垂直方向压得越扁；
                         // 支点向运动前方偏移，像水滴被拉拽；速度反向时量值立即翻号重算。
-                        val maxV = 3500f
-                        val v = (dampedDragAnimation.flow / maxV).fastCoerceIn(-1f, 1f)
+                        val v = (dampedDragAnimation.flow / MaxFlow).fastCoerceIn(-1f, 1f)
                         val speed = abs(v)
-                        val bump = 1f + BumpScale * bumpAnimation.value
+                        // 水珠自身运动方向；与手指速度反向时（急停回甩）触发横向挤压
+                        val pillV =
+                            (dampedDragAnimation.velocity / MaxPillVelocity).fastCoerceIn(-1f, 1f)
+                        val opposed = if (v * pillV < 0f) min(speed, abs(pillV)) else 0f
+                        // 弹动：左右两端向中心收、上下涨高溢出，非等比缩放
+                        val bumpX = 1f - BumpWidthShrink * bumpAnimation.value
+                        val bumpY = 1f + BumpHeightGrow * bumpAnimation.value
                         // 长按时长度（水平方向）收缩，高度不受影响
                         val pressShrinkX = 1f - PressedLengthShrink * dampedDragAnimation.pressProgress
-                        scaleX = dampedDragAnimation.scaleX * (1f + 0.55f * speed) * bump * pressShrinkX
-                        scaleY = dampedDragAnimation.scaleY * (1f - 0.32f * speed * speed) * bump
+                        scaleX =
+                            dampedDragAnimation.scaleX * (1f + 0.55f * speed - OpposedSquash * opposed) *
+                                bumpX * pressShrinkX
+                        scaleY = dampedDragAnimation.scaleY * (1f - 0.32f * speed * speed) * bumpY
                         transformOrigin = TransformOrigin(0.5f - 0.20f * v, 0.5f)
                     },
                     onDrawSurface = {

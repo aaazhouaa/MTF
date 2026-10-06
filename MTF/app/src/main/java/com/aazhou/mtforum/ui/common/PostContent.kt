@@ -1,22 +1,27 @@
 package com.aazhou.mtforum.ui.common
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,17 +32,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.PostQuote
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.MtfColors
 
 /** 行内表情的显示尺寸，与正文行高匹配。 */
 private val SmileySize = 20.sp
@@ -47,7 +63,7 @@ private val SmileySize = 20.sp
 fun PostContent(
     html: String,
     quote: PostQuote? = null,
-    onImageClick: ((String) -> Unit)? = null,
+    onImageClick: ((urls: List<String>, index: Int) -> Unit)? = null,
     bodyStyle: TextStyle = MaterialTheme.typography.bodyMedium,
     modifier: Modifier = Modifier,
 ) {
@@ -73,20 +89,223 @@ fun PostContent(
                 is ContentBlock.Text -> {
                     val text = block.text.trim('\n')
                     if (text.isNotBlank()) {
+                        val linkColor = MaterialTheme.colorScheme.primary
+                        val codeBg = colors.quoteBackground
+                        val style = remember(block, bodyStyle) { block.derivedStyle(bodyStyle) }
                         Text(
-                            text = remember(text, block.smiles) { text.toAnnotatedString(block.smiles) },
+                            text = remember(text, block.smiles, block.spans, linkColor, codeBg) {
+                                buildBodyText(text, block.smiles, block.spans, linkColor, codeBg)
+                            },
                             inlineContent = remember(block.smiles) { smileyInlineContent(block.smiles) },
-                            style = bodyStyle,
+                            style = style,
                             modifier = Modifier.padding(vertical = 2.dp),
                         )
                     }
                 }
                 is ContentBlock.Image -> SingleImage(
                     url = block.url,
-                    onImageClick = onImageClick,
+                    onImageClick = onImageClick?.let { click -> { click(listOf(block.url), 0) } },
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
-                is ContentBlock.ImageGroup -> ImageGrid(block.urls, onImageClick)
+                is ContentBlock.ImageGroup -> ImageGrid(
+                    urls = block.urls,
+                    onImageClick = onImageClick?.let { click -> { url -> click(block.urls, block.urls.indexOf(url)) } },
+                )
+                is ContentBlock.Table -> PostTable(block, bodyStyle)
+            }
+        }
+    }
+}
+
+/**
+ * 一段正文的注解串：先放笑脸占位，再叠加局部样式与链接。
+ *
+ * 笑脸用字符串注解 + inlineContent 替换（注解值必须是占位字符本身）；
+ * 样式来自 [StyleSpan]，下标与 [text] 对齐，越界区间已在解析阶段裁掉。
+ */
+private fun buildBodyText(
+    text: String,
+    smiles: Map<Char, String>,
+    spans: List<StyleSpan>,
+    linkColor: Color,
+    codeBackground: Color,
+): AnnotatedString {
+    if (spans.isEmpty()) return text.toAnnotatedString(smiles)
+    return buildAnnotatedString {
+        text.forEachIndexed { index, char ->
+            append(char)
+            if (smiles.containsKey(char)) {
+                addStringAnnotation(TAG_SMILEY, char.toString(), index, index + 1)
+            }
+        }
+        for (span in spans) {
+            val start = span.start.coerceIn(0, length)
+            val end = span.end.coerceIn(start, length)
+            if (end <= start) continue
+            val decoration = when {
+                span.strikethrough -> TextDecoration.LineThrough
+                span.underline -> TextDecoration.Underline
+                else -> null
+            }
+            val spanStyle = SpanStyle(
+                fontWeight = if (span.bold || span.headingLevel > 0) FontWeight.Bold else null,
+                fontStyle = if (span.italic) FontStyle.Italic else null,
+                textDecoration = decoration,
+                fontFamily = if (span.code) FontFamily.Monospace else null,
+                background = if (span.code) codeBackground else Color.Unspecified,
+            )
+            if (spanStyle != SpanStyle()) addStyle(spanStyle, start, end)
+            span.colorArgb?.let { addStyle(SpanStyle(color = Color(it)), start, end) }
+            span.linkUrl?.let { url ->
+                addLink(
+                    LinkAnnotation.Url(
+                        url = url,
+                        styles = TextLinkStyles(
+                            style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
+                        ),
+                    ),
+                    start,
+                    end,
+                )
+            }
+        }
+    }
+}
+
+/** 由段内样式推出该段的基础排版（标题字号/加粗、字号缩放、对齐）。 */
+private fun ContentBlock.Text.derivedStyle(bodyStyle: TextStyle): TextStyle {
+    if (spans.isEmpty()) return bodyStyle
+    val heading = spans.maxOfOrNull { it.headingLevel } ?: 0
+    val scale = (spans.maxOfOrNull { it.fontSizeScale } ?: 1f) * headingScale(heading)
+    val align = spans.firstNotNullOfOrNull { it.align }
+    return bodyStyle.copy(
+        fontSize = bodyStyle.fontSize * scale,
+        lineHeight = bodyStyle.lineHeight * scale,
+        fontWeight = if (heading > 0) FontWeight.Bold else null,
+        textAlign = when (align) {
+            CellAlign.Center -> TextAlign.Center
+            CellAlign.End -> TextAlign.End
+            CellAlign.Start -> TextAlign.Start
+            null -> TextAlign.Unspecified
+        },
+    )
+}
+
+private fun headingScale(level: Int): Float = when (level) {
+    1 -> 1.6f
+    2 -> 1.4f
+    3 -> 1.25f
+    4 -> 1.15f
+    5 -> 1.08f
+    else -> 1f
+}
+
+/** 表格：列宽按内容测量分配 + 分隔线，表头行加粗并带淡底色。 */
+@Composable
+private fun PostTable(table: ContentBlock.Table, bodyStyle: TextStyle) {
+    val colors = LocalMtfColors.current
+    val cellStyle = bodyStyle.copy(fontSize = 13.sp, lineHeight = 18.sp)
+    val shape = RoundedCornerShape(8.dp)
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val cellHorizontalPadding = 10.dp
+    val dividerThickness = 0.6.dp
+    val minColumn = 36.dp
+
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        val columns = maxOf(table.header?.size ?: 0, table.rows.maxOfOrNull { it.size } ?: 0)
+        if (columns == 0) return@BoxWithConstraints
+        // 每列取该列最宽单元格的单行自然宽度作为权重，序号列才不会和正文列平分到同样宽
+        val natural = List(columns) { column ->
+            val texts = buildList {
+                table.header?.getOrNull(column)?.let(::add)
+                table.rows.forEach { row -> row.getOrNull(column)?.let(::add) }
+            }
+            val maxPx = texts.maxOfOrNull { text ->
+                measurer.measure(AnnotatedString(text), cellStyle).size.width
+            } ?: 0
+            with(density) { maxPx.toDp() }
+        }
+        val fixed = cellHorizontalPadding * 2 * columns + dividerThickness * (columns - 1)
+        val budget = (maxWidth - fixed).coerceAtLeast(minColumn * columns)
+        val widths = allocateColumnWidths(natural, budget, minColumn)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .border(dividerThickness, colors.divider, shape),
+        ) {
+            table.header?.let { header ->
+                PostTableRow(header, widths, cellStyle, FontWeight.Bold, colors, headerTab = true)
+                if (table.rows.isNotEmpty()) {
+                    HorizontalDivider(color = colors.divider, thickness = dividerThickness)
+                }
+            }
+            table.rows.forEachIndexed { rowIndex, row ->
+                PostTableRow(row, widths, cellStyle, null, colors, headerTab = false)
+                if (rowIndex < table.rows.lastIndex) {
+                    HorizontalDivider(color = colors.divider, thickness = dividerThickness)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 按内容宽度占比分配可用宽度，列间用竖线分隔。
+ *
+ * 内容很窄的列（如行号）只拿到与内容相当的宽度，剩余宽度给内容最长的列；
+ * 总宽超出预算时从最宽的列开始回收，但不小于 [min]。
+ */
+private fun allocateColumnWidths(natural: List<Dp>, budget: Dp, min: Dp): List<Dp> {
+    if (natural.isEmpty()) return emptyList()
+    val total = natural.fold(0f) { acc, width -> acc + width.value }
+    val raw = if (total <= 0f) {
+        List(natural.size) { budget.value / natural.size }
+    } else {
+        natural.map { budget.value * it.value / total }
+    }
+    val widths = raw.map { maxOf(it, min.value) }.toMutableList()
+    var overflow = widths.sum() - budget.value
+    var guard = 0
+    while (overflow > 0.5f && guard < 64) {
+        val index = widths.indices.maxByOrNull { widths[it] } ?: break
+        val reducible = (widths[index] - min.value).coerceAtMost(overflow)
+        if (reducible <= 0f) break
+        widths[index] -= reducible
+        overflow -= reducible
+        guard++
+    }
+    return widths.map { it.dp }
+}
+
+/** 一行单元格：按 [widths] 固定列宽，行高由内容最高的单元格决定，列间用竖线分隔。 */
+@Composable
+private fun PostTableRow(
+    cells: List<String>,
+    widths: List<Dp>,
+    cellStyle: TextStyle,
+    weight: FontWeight?,
+    colors: MtfColors,
+    headerTab: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (headerTab) Modifier.background(colors.quoteBackground) else Modifier)
+            .height(IntrinsicSize.Min),
+    ) {
+        cells.forEachIndexed { index, cell ->
+            Text(
+                text = cell,
+                style = cellStyle.copy(fontWeight = weight),
+                color = colors.textPrimary,
+                modifier = Modifier
+                    .width(widths.getOrElse(index) { widths.last() })
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+            if (index < cells.size - 1) {
+                VerticalDivider(color = colors.divider, thickness = 0.6.dp)
             }
         }
     }
@@ -94,7 +313,7 @@ fun PostContent(
 
 /** 单张图片：限宽并限制最大高宽比，小图不放大；尺寸未知时先按 4:3 占位。 */
 @Composable
-private fun SingleImage(url: String, onImageClick: ((String) -> Unit)?, modifier: Modifier = Modifier) {
+private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modifier = Modifier) {
     val colors = LocalMtfColors.current
     // 宽高比在图片加载完成后才可知，先给 4:3 占位避免布局跳动
     var aspectRatio by remember(url) { mutableStateOf(4f / 3f) }
@@ -112,6 +331,9 @@ private fun SingleImage(url: String, onImageClick: ((String) -> Unit)?, modifier
                         .coerceAtLeast(0.8f)
                 }
             },
+            onError = { state ->
+                android.util.Log.e("MTF-IMG", "single fail url=$url", state.result.throwable)
+            },
             modifier = Modifier
                 .align(Alignment.Center)
                 .width(maxImageWidth)
@@ -119,7 +341,7 @@ private fun SingleImage(url: String, onImageClick: ((String) -> Unit)?, modifier
                 .clip(RoundedCornerShape(6.dp))
                 .background(colors.quoteBackground)
                 .then(
-                    if (onImageClick != null) Modifier.clickable { onImageClick(url) } else Modifier
+                    if (onImageClick != null) Modifier.clickable { onImageClick() } else Modifier
                 ),
         )
     }
@@ -157,6 +379,9 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
                             model = url,
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
+                            onError = { state ->
+                                android.util.Log.e("MTF-IMG", "grid fail url=$url", state.result.throwable)
+                            },
                             modifier = Modifier.fillMaxSize(),
                         )
                         if (overflow > 0 && rowIndex * columns + columnIndex == 8) {
