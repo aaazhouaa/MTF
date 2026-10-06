@@ -1,5 +1,6 @@
 package com.aazhou.mtforum.ui.common
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -414,10 +416,12 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
     }
 }
 
-/** 引用卡：上方「回复 {被引作者}：」斜体小字；卡内「原文」+ 被引正文；右下角仅时间。 */
+/** 引用卡：上方「回复 {被引作者}：」斜体小字；正文带「原文」前缀，下方一条与正文等长的细灰线；右下角仅时间。 */
 @Composable
 private fun QuoteCard(quote: PostQuote) {
     val colors = LocalMtfColors.current
+    // 正文最后一行的文字宽度：细线长度跟着它走，多行也只在最后一行下面画一条
+    var lastLineRight by remember(quote.text) { mutableStateOf(0f) }
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         if (!quote.author.isNullOrBlank()) {
             Text(
@@ -433,8 +437,6 @@ private fun QuoteCard(quote: PostQuote) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(6.dp))
-                .background(colors.quoteBackground)
                 .padding(horizontal = 10.dp, vertical = 7.dp),
         ) {
             Text(
@@ -446,7 +448,23 @@ private fun QuoteCard(quote: PostQuote) {
                 },
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp),
                 color = colors.quoteContent,
+                onTextLayout = { layout ->
+                    lastLineRight = layout.getLineRight(layout.lineCount - 1)
+                },
             )
+            Spacer(Modifier.height(6.dp))
+            Canvas(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp),
+            ) {
+                drawLine(
+                    color = colors.divider,
+                    start = Offset(0f, size.height / 2f),
+                    end = Offset(lastLineRight, size.height / 2f),
+                    strokeWidth = size.height,
+                )
+            }
             if (!quote.time.isNullOrBlank()) {
                 Text(
                     text = quote.time,

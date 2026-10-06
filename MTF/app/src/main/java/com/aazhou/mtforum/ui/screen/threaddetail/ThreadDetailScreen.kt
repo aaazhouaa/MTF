@@ -53,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -62,7 +63,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
@@ -135,6 +138,13 @@ fun ThreadDetailScreen(
             index = listState.firstVisibleItemIndex,
             offset = listState.firstVisibleItemScrollOffset,
         )
+    }
+    // 楼中楼收起会让列表内容变矮；贴着列表底部时 LazyColumn 只能把滚动位置夹到新的末尾，
+    // 结果是「上面的内容掉下来、作者栏又冒出来」。用与收起块等高的一条底部空白把
+    // 内容高度补回去，滚动位置就不被夹：收起时只有下方内容往上靠，上方原地不动。
+    val nestedHeights = remember { mutableStateMapOf<String, Int>() }
+    val collapsedBuffer by remember {
+        derivedStateOf { collapsed.sumOf { nestedHeights[it] ?: 0 } }
     }
 
     LaunchedEffect(replyState) {
@@ -379,6 +389,9 @@ fun ThreadDetailScreen(
                                 subReplyTo = tree?.subReplyTo.orEmpty(),
                                 expanded = !collapsed.contains(reply.pid),
                                 onToggle = { viewModel.toggleReplies(reply.pid) },
+                                onNestedHeightMeasured = { height ->
+                                    nestedHeights[reply.pid] = height
+                                },
                                 onReply = { viewModel.setReplyTarget(reply) },
                                 onReplyTo = { viewModel.setReplyTarget(it) },
                                 onImageClick = openImage,
@@ -419,6 +432,15 @@ fun ThreadDetailScreen(
                                     )
                                 }
                                 else -> Unit
+                            }
+                        }
+                        if (collapsedBuffer > 0) {
+                            item(key = "collapsed-buffer") {
+                                Spacer(
+                                    Modifier.height(
+                                        with(LocalDensity.current) { collapsedBuffer.toDp() },
+                                    ),
+                                )
                             }
                         }
                     }
@@ -1012,6 +1034,7 @@ private fun ReplyBlock(
     subReplyTo: Map<String, String>,
     expanded: Boolean,
     onToggle: () -> Unit,
+    onNestedHeightMeasured: (Int) -> Unit,
     onReply: () -> Unit,
     onReplyTo: (Post) -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
@@ -1118,8 +1141,13 @@ private fun ReplyBlock(
             )
         }
         if (expanded) {
-            // 楼中楼容器缩进 45dp，与正文文字对齐
-            Column(Modifier.padding(start = 45.dp, top = 8.dp)) {
+            // 楼中楼容器缩进 45dp，与正文文字对齐；高度回报给外层：
+            // 收起时用等高的底部空白补住内容高度，滚动位置才不会被夹到列表末尾
+            Column(
+                Modifier
+                    .padding(start = 45.dp, top = 8.dp)
+                    .onGloballyPositioned { onNestedHeightMeasured(it.size.height) },
+            ) {
                 children.forEach { child ->
                     NestedReply(
                         child = child,
