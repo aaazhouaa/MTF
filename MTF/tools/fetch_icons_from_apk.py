@@ -31,8 +31,6 @@ FULLSCREEN_RECT = re.compile(r"^M0,0[hv]?([\d.]+)[vh]?([\d.]+)[hv]?-?\1[zZ]$")
 ICONS = {
     # 详情页 / 通用
     "ic_back": "ic_arrow_back_black_24",
-    "ic_comment_lines": "ic_pinglun_white_18dp",
-    "ic_like_outline": "ic_dianzan_fill_white_18dp",
     "ic_favorite_outline": "ic_shoucang_white_18dp",
     "ic_lock_outline": "ic_lock_24dp",
     # 首页 / 图片预览

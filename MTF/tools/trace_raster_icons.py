@@ -9,6 +9,7 @@ marching squares 取等值线（边缘线性插值，亚像素精度），再把
 用法：
     python3 tools/trace_raster_icons.py ic_theme_moon moon.png
     python3 tools/trace_raster_icons.py a.png sun.png b.png tip.png
+    python3 tools/trace_raster_icons.py --thicken 1 ic_share share.png   # 笔画整体加粗
 """
 
 import os
@@ -24,6 +25,17 @@ DRAWABLE_DIR = os.path.join(PROJECT_ROOT, "app/src/main/res/drawable")
 LEVEL = 0.5
 RDP_EPS = 0.03  # Douglas-Peucker 简化容差（像素）
 MIN_AREA = 1.0  # 小于该面积的环视为噪点
+
+
+def dilate(alpha: np.ndarray, rounds: int) -> np.ndarray:
+    """ morphological 膨胀 rounds 像素：把过细的笔画加粗，保持形状与画布边界不变。"""
+    if rounds <= 0:
+        return alpha
+    mask = alpha >= LEVEL
+    for _ in range(rounds):
+        p = np.pad(mask, 1)
+        mask = p[:-2, 1:-1] | p[2:, 1:-1] | p[1:-1, :-2] | p[1:-1, 2:]
+    return np.where(mask, 1.0, 0.0)
 
 
 def contours(alpha: np.ndarray, level: float = LEVEL):
@@ -221,9 +233,9 @@ def build_path_data(rings) -> str:
     return "".join(out)
 
 
-def trace(png_path: str, name: str):
+def trace(png_path: str, name: str, thicken: int = 0):
     image = Image.open(png_path).convert("RGBA")
-    alpha = np.asarray(image, dtype=np.float64)[..., 3] / 255.0
+    alpha = dilate(np.asarray(image, dtype=np.float64)[..., 3] / 255.0, thicken)
     height, width = alpha.shape
 
     rings = []
@@ -259,14 +271,24 @@ def main() -> int:
     if not args or len(args) % 2 != 0:
         print(__doc__)
         return 1
-    for i in range(0, len(args), 2):
-        name, png = args[i], args[i + 1]
+    thicken = 0
+    rest = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--thicken":
+            thicken = int(args[i + 1])
+            i += 2
+        else:
+            rest.append(args[i])
+            i += 1
+    for i in range(0, len(rest), 2):
+        name, png = rest[i], rest[i + 1]
         if name.endswith(".png") or png.endswith(".xml"):
             name, png = png, name
         if not os.path.basename(name) == name:
             print(f"资源名需为纯文件名: {name}")
             return 1
-        trace(png, name)
+        trace(png, name, thicken)
     return 0
 
 

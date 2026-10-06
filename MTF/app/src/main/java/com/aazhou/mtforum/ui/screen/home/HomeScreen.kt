@@ -296,16 +296,19 @@ private fun ThreadCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (!thread.level.isNullOrBlank()) {
+                    // 版块名紧跟昵称：卡片上只保留「谁发的」与「发在哪个版」，等级不进列表卡
+                    if (!thread.forumName.isNullOrBlank()) {
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            thread.level,
+                            thread.forumName,
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                            color = MaterialTheme.colorScheme.primary,
+                            color = colors.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-                                .padding(horizontal = 6.dp, vertical = 1.5.dp),
+                                .background(colors.quoteBackground)
+                                .padding(horizontal = 6.dp, vertical = 1.dp),
                         )
                     }
                 }
@@ -315,18 +318,6 @@ private fun ThreadCard(
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = colors.textSecondary,
                     )
-                    if (!thread.forumName.isNullOrBlank()) {
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            thread.forumName,
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                            color = colors.textSecondary,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(colors.quoteBackground)
-                                .padding(horizontal = 6.dp, vertical = 1.dp),
-                        )
-                    }
                 }
             }
         }
@@ -356,9 +347,9 @@ private fun ThreadCard(
         ) {
             StatItem(painterResource(com.aazhou.mtforum.R.drawable.ic_card_view), formatCount(thread.viewCount))
             Spacer(Modifier.width(24.dp))
-            StatItem(painterResource(com.aazhou.mtforum.R.drawable.ic_card_reply), formatCount(thread.replyCount))
+            StatItem(painterResource(com.aazhou.mtforum.R.drawable.ic_reply), formatCount(thread.replyCount))
             Spacer(Modifier.width(24.dp))
-            StatItem(painterResource(com.aazhou.mtforum.R.drawable.ic_card_like), formatCount(thread.likeCount))
+            StatItem(painterResource(com.aazhou.mtforum.R.drawable.ic_like_thumb), formatCount(thread.likeCount))
         }
     }
 }

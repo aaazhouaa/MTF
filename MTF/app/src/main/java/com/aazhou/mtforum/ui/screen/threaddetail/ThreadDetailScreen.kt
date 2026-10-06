@@ -1385,6 +1385,15 @@ private fun ReplyBar(
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (value.isEmpty()) {
+                    Icon(
+                        painterResource(com.aazhou.mtforum.R.drawable.ic_comment_pen),
+                        contentDescription = null,
+                        tint = colors.textPrimary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
                 Box(
                     modifier = Modifier.weight(1f),
                     contentAlignment = Alignment.CenterStart,
@@ -1405,27 +1414,22 @@ private fun ReplyBar(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                if (value.isEmpty()) {
-                    Icon(
-                        painterResource(com.aazhou.mtforum.R.drawable.ic_comment_pen),
-                        contentDescription = null,
-                        tint = colors.textHint,
-                        modifier = Modifier.size(17.dp),
-                    )
-                } else if (sending) {
-                    CircularProgressIndicator(Modifier.size(20.dp))
-                } else {
-                    IconButton(onClick = onSend) {
-                        Icon(
-                            painterResource(com.aazhou.mtforum.R.drawable.ic_send),
-                            contentDescription = "发送",
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
+                if (!value.isEmpty()) {
+                    if (sending) {
+                        CircularProgressIndicator(Modifier.size(20.dp))
+                    } else {
+                        IconButton(onClick = onSend) {
+                            Icon(
+                                painterResource(com.aazhou.mtforum.R.drawable.ic_send),
+                                contentDescription = "发送",
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
             }
             Spacer(Modifier.width(8.dp))
-            // 右胶囊：评论 / 点赞 / 收藏 / 分享，图标在上数字在下；与左胶囊各占一半宽度
+            // 右胶囊：评论 / 点赞 / 收藏 / 分享，图标在上、计数或文字在下；与左胶囊各占一半宽度
             Row(
                 modifier = Modifier
                     .weight(1f)
@@ -1447,10 +1451,10 @@ private fun ReplyBar(
                     BarCount(
                         icon = {
                             Icon(
-                                painterResource(com.aazhou.mtforum.R.drawable.ic_comment_lines),
+                                painterResource(com.aazhou.mtforum.R.drawable.ic_reply),
                                 contentDescription = "查看评论",
-                                tint = colors.iconSecondary,
-                                modifier = Modifier.size(20.dp),
+                                tint = colors.textPrimary,
+                                modifier = Modifier.size(22.dp),
                             )
                         },
                         count = replyCount,
@@ -1461,10 +1465,10 @@ private fun ReplyBar(
                     BarCount(
                         icon = {
                             Icon(
-                                painterResource(com.aazhou.mtforum.R.drawable.ic_like_outline),
+                                painterResource(com.aazhou.mtforum.R.drawable.ic_like_thumb),
                                 contentDescription = "点赞",
-                                tint = if (liked) MaterialTheme.colorScheme.primary else colors.iconSecondary,
-                                modifier = Modifier.size(20.dp),
+                                tint = if (liked) MaterialTheme.colorScheme.primary else colors.textPrimary,
+                                modifier = Modifier.size(22.dp),
                             )
                         },
                         count = likeCount,
@@ -1477,8 +1481,8 @@ private fun ReplyBar(
                             Icon(
                                 painterResource(com.aazhou.mtforum.R.drawable.ic_favorite_outline),
                                 contentDescription = "收藏",
-                                tint = if (favorited) MaterialTheme.colorScheme.primary else colors.iconSecondary,
-                                modifier = Modifier.size(20.dp),
+                                tint = if (favorited) MaterialTheme.colorScheme.primary else colors.textPrimary,
+                                modifier = Modifier.size(22.dp),
                             )
                         },
                         count = favoriteCount,
@@ -1486,11 +1490,17 @@ private fun ReplyBar(
                     )
                 }
                 BarAction(onClick = onShare, modifier = Modifier.weight(1f)) {
-                    Icon(
-                        painterResource(com.aazhou.mtforum.R.drawable.ic_share),
-                        contentDescription = "分享",
-                        tint = colors.iconSecondary,
-                        modifier = Modifier.size(20.dp),
+                    BarCount(
+                        icon = {
+                            Icon(
+                                painterResource(com.aazhou.mtforum.R.drawable.ic_share),
+                                contentDescription = "分享",
+                                tint = colors.textPrimary,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        },
+                        caption = "分享",
+                        color = colors.textSecondary,
                     )
                 }
             }
@@ -1505,11 +1515,21 @@ private fun BarCount(
     count: Int?,
     color: Color,
 ) {
+    BarCount(icon = icon, caption = count?.toString(), color = color)
+}
+
+/** 图标在上、固定文字在下（如「分享」）；字号与数字一致。 */
+@Composable
+private fun BarCount(
+    icon: @Composable () -> Unit,
+    caption: String?,
+    color: Color,
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         icon()
-        if (count != null) {
+        if (caption != null) {
             Text(
-                count.toString(),
+                caption,
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                 color = color,
             )

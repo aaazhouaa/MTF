@@ -25,9 +25,7 @@ PREVIEW_PATH = "/tmp/iconpark_preview.html"
 ICONS = {
     # 覆盖现有自绘图标
     "ic_back": "left",
-    "ic_like_outline": "thumbs-up",
     "ic_favorite_outline": "star",
-    "ic_comment_lines": "comment",
     "ic_search_new": "search",
     "ic_download": "download",
     "ic_browser": "browser",
