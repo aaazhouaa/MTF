@@ -29,6 +29,10 @@ class HomeViewModel(
     private val _hasNext = MutableStateFlow(true)
     val hasNext: StateFlow<Boolean> = _hasNext.asStateFlow()
 
+    /** 下拉刷新中：与 [state] 独立，刷新期间保留旧列表不清屏。 */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
     private var page = 1
 
     init {
@@ -40,13 +44,35 @@ class HomeViewModel(
         _state.value = UiState.Loading
         _hasNext.value = true
         viewModelScope.launch {
-            // 热帖排行失败不影响主列表
-            runCatching { repository.home() }.onSuccess { _hot.value = it }
-            _state.value = try {
-                UiState.Success(repository.homeFeed(1).threads)
-            } catch (e: Exception) {
-                UiState.Error(e.message ?: "加载失败")
-            }
+            reload()
+        }
+    }
+
+    /**
+     * 下拉刷新：不动 [state]，刷新成功后原地替换列表，失败时保留旧内容。
+     *
+     * 不复用 [load]：那会把 state 置回 Loading，整页变成全屏转圈，
+     * 下拉指示器也会随列表一起被撤掉。
+     */
+    fun refresh() {
+        if (_refreshing.value) return
+        _refreshing.value = true
+        viewModelScope.launch {
+            reload()
+            _refreshing.value = false
+        }
+    }
+
+    private suspend fun reload() {
+        // 热帖排行失败不影响主列表
+        runCatching { repository.home() }.onSuccess { _hot.value = it }
+        _state.value = try {
+            val first = repository.homeFeed(1)
+            page = 1
+            _hasNext.value = first.hasNext
+            UiState.Success(first.threads)
+        } catch (e: Exception) {
+            if (_state.value is UiState.Success) _state.value else UiState.Error(e.message ?: "加载失败")
         }
     }
 

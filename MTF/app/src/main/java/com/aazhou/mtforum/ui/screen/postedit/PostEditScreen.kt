@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.appViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -66,6 +67,7 @@ fun PostEditScreen(fid: String, forumName: String, onBack: () -> Unit, onPosted:
                         )
                     }
                 },
+                expandedHeight = MtfTopBarHeight,
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },

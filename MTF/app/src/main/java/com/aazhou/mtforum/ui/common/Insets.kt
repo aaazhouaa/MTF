@@ -13,6 +13,17 @@ val BottomBarHeight = 56.dp
 /** 底栏距屏幕底部的距离（在系统导航栏避让之上再留的空白）。 */
 val BottomBarBottomMargin = 21.dp
 
+/** 顶栏内容行的上下留白：对照首页与帖子详情自绘顶栏的 10dp。 */
+val TopBarVerticalPadding = 10.dp
+
+/**
+ * 顶栏统一高度（不含状态栏避让）：上下各 [TopBarVerticalPadding] + 36dp 图标行。
+ *
+ * 自绘顶栏（首页、帖子详情）天然就是这个高度；用 Material3 TopAppBar 的页面以它为
+ * `expandedHeight`，各页顶栏高度才与首页一致（TopAppBar 默认 64dp，比首页高 8dp）。
+ */
+val MtfTopBarHeight: Dp = TopBarVerticalPadding * 2 + 36.dp
+
 /**
  * 页面滚动内容底部需要避让的高度。
  *

@@ -5,7 +5,6 @@ import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -60,6 +59,7 @@ import androidx.compose.ui.util.lerp
 import com.aazhou.mtforum.ui.common.BottomBarBottomMargin
 import com.aazhou.mtforum.ui.common.BottomBarHeight
 import com.aazhou.mtforum.ui.glass.DampedDragAnimation
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
@@ -142,7 +142,9 @@ fun GlassBottomBar(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val isLightTheme = !isSystemInDarkTheme()
+    // 深浅必须取 LocalIsDarkTheme：用户可在设置里覆盖系统深浅，看 isSystemInDarkTheme
+    // 会在应用内切主题后仍按系统值选膜色（浅色主题下给深色底糊一层白膜，毛玻璃直接被盖掉）
+    val isLightTheme = !LocalIsDarkTheme.current
     val accentColor = MaterialTheme.colorScheme.primary
     val contentColor = MaterialTheme.colorScheme.onSurface
     // 毛玻璃：白色覆盖保持较低 alpha（底栏内亮度 ~253 而透出内容处 ~227，白色覆盖较薄）

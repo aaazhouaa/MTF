@@ -16,13 +16,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
@@ -56,11 +63,49 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.PostQuote
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.DarkBrightTextAlpha
+import com.aazhou.mtforum.ui.theme.bodyTextColor
+import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.MtfColors
 
 /** 行内表情的显示尺寸，与正文行高匹配。 */
 private val SmileySize = 20.sp
+
+/** 站点自带文字颜色与底色的对比度下限，低于该值即视为「看不清」。 */
+private const val MinSiteTextContrast = 2.5f
+
+/** WCAG 相对对比度：[a]/[b] 亮者在前，返回 >=1 的比值。 */
+private fun contrastRatio(a: Color, b: Color): Float {
+    val la = a.luminance() + 0.05f
+    val lb = b.luminance() + 0.05f
+    return if (la >= lb) la / lb else lb / la
+}
+
+/**
+ * 校正站点内联文字颜色的可读性。
+ *
+ * 站点把 UBB 编辑器选的颜色直接烘进 `<font color>` 里（按浅色网页选的），
+ * 深色主题下深灰/近黑字会糊进深色底里看不见。对比度不足时保持色相、
+ * 朝反色方向（深色主题趋白、浅色主题趋黑）逐级插值到达标为止。
+ *
+ * 深色主题下最终还要按 [DarkBrightTextAlpha] 压低，故这里按压暗后的合成色算对比度，
+ * 否则会「先达标再压暗」反而跌破下限。
+ */
+private fun readableSiteColor(color: Color, background: Color, darkTheme: Boolean): Color {
+    val target = if (darkTheme) color.copy(alpha = DarkBrightTextAlpha) else color
+    if (contrastRatio(target, background) >= MinSiteTextContrast) return color
+    val anchor = if (darkTheme) Color.White else Color.Black
+    var step = 0.1f
+    while (step < 1f) {
+        val candidate = lerp(color, anchor, step)
+        val rendered = if (darkTheme) candidate.copy(alpha = DarkBrightTextAlpha) else candidate
+        if (contrastRatio(rendered, background) >= MinSiteTextContrast) return candidate
+        step += 0.1f
+    }
+    return anchor
+}
 
 /** 渲染帖子正文，图文按原顺序展示；图片点击回调交给上层做大图查看。 */
 @Composable
@@ -68,6 +113,7 @@ fun PostContent(
     html: String,
     quote: PostQuote? = null,
     onImageClick: ((urls: List<String>, index: Int) -> Unit)? = null,
+    onVideoClick: ((url: String) -> Unit)? = null,
     pageImages: List<String> = emptyList(),
     bodyStyle: TextStyle = MaterialTheme.typography.bodyMedium,
     modifier: Modifier = Modifier,
@@ -80,6 +126,7 @@ fun PostContent(
 ) {
     val blocks = remember(html) { parseContentBlocks(html) }
     val colors = LocalMtfColors.current
+    val darkTheme = LocalIsDarkTheme.current
     Column(modifier) {
         if (quote != null && quote.text.isNotBlank()) QuoteCard(quote)
         // 首块不是文字（正文以图片开头）时，行内前缀无从拼接，只能单独占一行
@@ -104,11 +151,27 @@ fun PostContent(
                 is ContentBlock.Text -> {
                     val text = block.text.trim('\n')
                     if (text.isNotBlank()) {
-                        val linkColor = MaterialTheme.colorScheme.primary
+                        val linkColor = accentTextColor()
                         val codeBg = colors.quoteBackground
                         val style = remember(block, bodyStyle) { block.derivedStyle(bodyStyle) }
-                        val body = remember(text, block.smiles, block.spans, linkColor, codeBg) {
-                            buildBodyText(text, block.smiles, block.spans, linkColor, codeBg)
+                        val body = remember(
+                            text,
+                            block.smiles,
+                            block.spans,
+                            linkColor,
+                            codeBg,
+                            colors.background,
+                            darkTheme,
+                        ) {
+                            buildBodyText(
+                                text = text,
+                                smiles = block.smiles,
+                                spans = block.spans,
+                                linkColor = linkColor,
+                                codeBackground = codeBg,
+                                background = colors.background,
+                                darkTheme = darkTheme,
+                            )
                         }
                         Text(
                             text = if (index == 0 && inlinePrefix != null) inlinePrefix + body else body,
@@ -135,6 +198,11 @@ fun PostContent(
                     urls = block.urls,
                     onImageClick = onImageClick?.let { click -> { url -> click(block.urls, block.urls.indexOf(url)) } },
                 )
+                is ContentBlock.Video -> InlineVideo(
+                    url = block.url,
+                    poster = block.poster,
+                    onPlay = onVideoClick?.let { click -> { click(block.url) } },
+                )
                 is ContentBlock.Table -> PostTable(block, bodyStyle)
             }
         }
@@ -153,6 +221,8 @@ private fun buildBodyText(
     spans: List<StyleSpan>,
     linkColor: Color,
     codeBackground: Color,
+    background: Color,
+    darkTheme: Boolean,
 ): AnnotatedString {
     if (spans.isEmpty()) return text.toAnnotatedString(smiles)
     return buildAnnotatedString {
@@ -179,7 +249,12 @@ private fun buildBodyText(
                 background = if (span.code) codeBackground else Color.Unspecified,
             )
             if (spanStyle != SpanStyle()) addStyle(spanStyle, start, end)
-            span.colorArgb?.let { addStyle(SpanStyle(color = Color(it)), start, end) }
+            span.colorArgb?.let { raw ->
+                val siteColor = readableSiteColor(Color(raw), background, darkTheme)
+                // 深色下与正文统一压低（readableSiteColor 已按压暗后的合成色算过对比度）
+                val rendered = if (darkTheme) siteColor.copy(alpha = DarkBrightTextAlpha) else siteColor
+                addStyle(SpanStyle(color = rendered), start, end)
+            }
             span.linkUrl?.let { url ->
                 addLink(
                     LinkAnnotation.Url(
@@ -323,7 +398,7 @@ private fun PostTableRow(
             Text(
                 text = cell,
                 style = cellStyle.copy(fontWeight = weight),
-                color = colors.textPrimary,
+                color = bodyTextColor(),
                 modifier = Modifier
                     .width(widths.getOrElse(index) { widths.last() })
                     .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -430,11 +505,59 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
     }
 }
 
+/**
+ * 正文内嵌视频卡：16:9 黑底，封面用附件懒加载图，无封面时纯黑；中间一颗播放键。
+ * 卡片本身不持播放器，点击后由上层拉起全屏播放页，正文滚动时不会带着视频一直播。
+ */
+@Composable
+private fun InlineVideo(url: String, poster: String?, onPlay: (() -> Unit)?) {
+    val colors = LocalMtfColors.current
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        val maxVideoWidth = maxWidth * 0.92f
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .width(maxVideoWidth)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(6.dp))
+                .background(colors.quoteBackground)
+                .then(if (onPlay != null) Modifier.clickable { onPlay() } else Modifier),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (poster != null) {
+                AsyncImage(
+                    model = poster,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    onError = { state ->
+                        android.util.Log.e("MTF-IMG", "video poster fail url=$poster", state.result.throwable)
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.45f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = "播放视频",
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+        }
+    }
+}
+
 /** 引用卡：上方「回复 {被引作者}：」斜体小字；正文带「原文」前缀，下方一条与正文等长的细灰线；右下角仅时间。 */
 @Composable
 private fun QuoteCard(quote: PostQuote) {
     val colors = LocalMtfColors.current
-    // 正文最后一行的文字宽度：细线长度跟着它走，多行也只在最后一行下面画一条
+    val accentColor = accentTextColor()    // 正文最后一行的文字宽度：细线长度跟着它走，多行也只在最后一行下面画一条
     var lastLineRight by remember(quote.text) { mutableStateOf(0f) }
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         if (!quote.author.isNullOrBlank()) {
@@ -455,7 +578,7 @@ private fun QuoteCard(quote: PostQuote) {
         ) {
             Text(
                 text = buildAnnotatedString {
-                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)) {
+                    withStyle(SpanStyle(color = accentColor, fontWeight = FontWeight.Bold)) {
                         append("原文 ")
                     }
                     append(quote.text)

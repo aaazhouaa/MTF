@@ -35,6 +35,7 @@ import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.UiState
+import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 
@@ -45,7 +46,11 @@ fun GuideScreen(onThreadClick: (tid: String) -> Unit) {
     val viewModel: GuideViewModel = appViewModel { GuideViewModel(it.repository) }
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    Scaffold(topBar = { TopAppBar(title = { Text("导读") }) }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(title = { Text("导读") }, expandedHeight = MtfTopBarHeight)
+        },
+    ) { padding ->
         when (val current = state) {
             is UiState.Loading -> LoadingBox(Modifier.padding(padding))
             is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.padding(padding))

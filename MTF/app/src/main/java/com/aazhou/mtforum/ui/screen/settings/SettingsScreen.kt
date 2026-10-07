@@ -32,9 +32,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.theme.DefaultThemeIndex
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.ThemePresets
 import kotlinx.coroutines.launch
 
@@ -48,8 +50,12 @@ fun SettingsScreen() {
     val colors = LocalMtfColors.current
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("设置") }) },
+        topBar = {
+            TopAppBar(title = { Text("设置") }, expandedHeight = MtfTopBarHeight)
+        },
         containerColor = colors.background,
+        // 见 UserProfileScreen：语义色取不到 contentColorFor 时会退回旧值
+        contentColor = bodyTextColor(),
     ) { padding ->
         Column(
             modifier = Modifier

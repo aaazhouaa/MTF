@@ -72,6 +72,10 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.jsoup)
     implementation(libs.coil.compose)
+    implementation(libs.coil.gif)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+    implementation(libs.media3.datasource.okhttp)
     implementation(libs.backdrop)
 
     debugImplementation(libs.compose.ui.tooling)

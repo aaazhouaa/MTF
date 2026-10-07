@@ -38,9 +38,11 @@ import com.aazhou.mtforum.data.model.Thread
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
+import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.theme.accentTextColor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +68,7 @@ fun ThreadListScreen(
                         )
                     }
                 },
+                expandedHeight = MtfTopBarHeight,
             )
         },
         floatingActionButton = {
@@ -94,7 +97,7 @@ fun ThreadListScreen(
                                 Text(
                                     "公告",
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = accentTextColor(),
                                     modifier = Modifier.padding(16.dp),
                                 )
                             }

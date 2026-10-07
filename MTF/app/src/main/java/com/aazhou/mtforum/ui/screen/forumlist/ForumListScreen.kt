@@ -27,9 +27,11 @@ import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.Forum
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
+import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.theme.accentTextColor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,7 +39,11 @@ fun ForumListScreen(onForumClick: (fid: String, name: String) -> Unit) {
     val viewModel: ForumListViewModel = appViewModel { ForumListViewModel(it.repository) }
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    Scaffold(topBar = { TopAppBar(title = { Text("MT论坛") }) }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(title = { Text("MT论坛") }, expandedHeight = MtfTopBarHeight)
+        },
+    ) { padding ->
         when (val current = state) {
             is UiState.Loading -> LoadingBox(Modifier.padding(padding))
             is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.padding(padding))
@@ -52,7 +58,7 @@ fun ForumListScreen(onForumClick: (fid: String, name: String) -> Unit) {
                         Text(
                             text = group.name,
                             style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = accentTextColor(),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 10.dp),

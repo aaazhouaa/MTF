@@ -40,9 +40,12 @@ import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
+import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.bodyTextColor
+import com.aazhou.mtforum.ui.theme.accentTextColor
 
 /** 他人个人空间：头像/昵称/等级/用户组 + 五列统计 + 积分金币在线。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,6 +57,9 @@ fun UserProfileScreen(uid: String, onBack: () -> Unit) {
 
     Scaffold(
         containerColor = colors.background,
+        // 语义色不是 M3 配色方案里的色，contentColorFor 会退回当前 LocalContentColor
+        // （即上一次更新的值），切主题时会比容器慢一步，正文色糊在浅色底上
+        contentColor = bodyTextColor(),
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.topBar),
@@ -62,7 +68,7 @@ fun UserProfileScreen(uid: String, onBack: () -> Unit) {
                         Icon(
                             painterResource(com.aazhou.mtforum.R.drawable.ic_back),
                             contentDescription = "返回",
-                            tint = colors.textPrimary,
+                            tint = bodyTextColor(),
                         )
                     }
                 },
@@ -71,11 +77,12 @@ fun UserProfileScreen(uid: String, onBack: () -> Unit) {
                         (state as? UiState.Success)?.data?.name?.takeIf { it.isNotBlank() } ?: "用户资料",
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
                         fontWeight = FontWeight.Bold,
-                        color = colors.textPrimary,
+                        color = bodyTextColor(),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
+                expandedHeight = MtfTopBarHeight,
             )
         },
     ) { padding ->
@@ -116,7 +123,7 @@ private fun InfoCard(profile: UserProfile) {
                     profile.name.orEmpty().ifBlank { "未知用户" },
                     style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
                     fontWeight = FontWeight.Bold,
-                    color = colors.textPrimary,
+                    color = bodyTextColor(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -131,7 +138,7 @@ private fun InfoCard(profile: UserProfile) {
                         Text(
                             profile.level,
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = MaterialTheme.colorScheme.primary,
+                            color = accentTextColor(),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
                                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
@@ -144,7 +151,7 @@ private fun InfoCard(profile: UserProfile) {
                         profile.groupName,
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = accentTextColor(),
                         modifier = Modifier.padding(top = 2.dp),
                     )
                 }
@@ -166,9 +173,9 @@ private fun CreditsCard(profile: UserProfile) {
     val colors = LocalMtfColors.current
     ProfileCard {
         Row(Modifier.fillMaxWidth()) {
-            MetricColumn("积分", profile.credits?.toString(), MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+            MetricColumn("积分", profile.credits?.toString(), accentTextColor(), Modifier.weight(1f))
             MetricColumn("金币", profile.gold?.toString(), colors.gold, Modifier.weight(1f))
-            MetricColumn("在线", profile.onlineTime, colors.textPrimary, Modifier.weight(1f))
+            MetricColumn("在线", profile.onlineTime, bodyTextColor(), Modifier.weight(1f))
         }
     }
 }
@@ -200,7 +207,7 @@ private fun StatColumn(label: String, value: Int?, modifier: Modifier = Modifier
             value?.toString() ?: "—",
             style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
             fontWeight = FontWeight.Bold,
-            color = colors.textPrimary,
+            color = bodyTextColor(),
         )
         Text(
             label,

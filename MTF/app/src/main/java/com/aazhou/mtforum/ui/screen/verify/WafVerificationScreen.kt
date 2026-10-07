@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.network.WafSolver
 
@@ -56,6 +57,7 @@ fun WafVerificationScreen(url: String, onFinished: (String?) -> Unit) {
                         Text("完成")
                     }
                 },
+                expandedHeight = MtfTopBarHeight,
             )
         },
     ) { padding ->

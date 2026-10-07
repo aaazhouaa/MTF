@@ -27,6 +27,12 @@ sealed interface ContentBlock {
     ) : ContentBlock
     data class Image(val url: String) : ContentBlock
 
+    /**
+     * 正文内嵌视频：附件视频直链或 <video>/<embed> 标签，封面取同级的懒加载图属性。
+     * [poster] 为空时播放器与内联卡片用黑底占位。
+     */
+    data class Video(val url: String, val poster: String?) : ContentBlock
+
     /** 连续排列的图片组，交由网格布局展示。 */
     data class ImageGroup(val urls: List<String>) : ContentBlock
 
@@ -374,6 +380,7 @@ private class BlocksBuilder {
         }
         when (element.tagName()) {
             "script", "style" -> Unit
+            "video", "embed", "object" -> appendVideoElement(element, style)
             "img" -> appendImage(element, style)
             "br" -> appendBreak(style)
             "table" -> {
@@ -386,8 +393,9 @@ private class BlocksBuilder {
             }
             "a" -> appendAnchor(element, style)
             "ul", "ol" ->
-                // 附件图列表（ul.comiis_img_list）的 li 承载的是图片，按列表取文本会把图丢掉，故有图时走通用容器展开
-                if (element.select("img").isNotEmpty()) appendContainer(element, style)
+                // 附件图列表（ul.comiis_img_list）的 li 承载的是图片，按列表取文本会把图丢掉，
+                // 若 li 内是 <video> 附件则连视频一起丢掉，故有图或视频时走通用容器展开
+                if (element.select("img, video, embed, object").isNotEmpty()) appendContainer(element, style)
                 else appendList(element, style, ordered = element.tagName() == "ol")
             "blockquote" -> {
                 flushText()
@@ -417,12 +425,45 @@ private class BlocksBuilder {
 
     private fun appendAnchor(element: Element, style: InlineStyle) {
         val img = element.selectFirst("img")
+        val href = element.attr("href").trim()
+        // 附件视频常被包在链接里：<a href="xx.mp4"><img ...封面...></a>，
+        // 此时封面已由视频卡展示，再当正文大图会重复出一张静态图
+        if (img != null && isVideoUrl(href)) {
+            appendVideo(url = normalizeMediaUrl(href), poster = imageUrl(img), style = style)
+            return
+        }
         if (img != null) {
             appendImage(img, style)
             return
         }
-        val href = element.attr("href").trim().takeIf { it.isNotBlank() && !it.startsWith("javascript:", true) }
-        appendNodes(element.childNodes().toList(), style.copy(linkUrl = href ?: style.linkUrl))
+        // 正文贴出的视频直链没有封面，按视频卡展示而不是一行纯链接
+        if (isVideoUrl(href)) {
+            appendVideo(url = normalizeMediaUrl(href), poster = null, style = style)
+            return
+        }
+        val link = href.takeIf { it.isNotBlank() && !it.startsWith("javascript:", true) }
+        appendNodes(element.childNodes().toList(), style.copy(linkUrl = link ?: style.linkUrl))
+    }
+
+    /**
+     * 视频标签与历史附件容器：<video>（移动端附件）、<embed>/<object>（旧版 flash 附件）。
+     * <video> 的真实地址可能在自身 src、内部 <source>，取两者中先出现且可用的。
+     */
+    private fun appendVideoElement(element: Element, style: InlineStyle) {
+        val candidates = listOf(element.attr("src"), element.attr("data-src")) +
+            element.select("source").map { it.attr("src") } +
+            element.select("img").flatMap { listOf(it.attr("file"), it.attr("zoomfile")) }
+        val url = candidates.firstOrNull { it.isNotBlank() && isVideoUrl(it) }
+            ?: return
+        val posterImage = element.selectFirst("img")
+        val poster = posterImage?.let { imageUrl(it) } ?: element.attr("poster").takeIf { it.isNotBlank() }
+        appendVideo(url = normalizeMediaUrl(url), poster = poster?.let { normalizeMediaUrl(it) }, style = style)
+    }
+
+    private fun appendVideo(url: String?, poster: String?, style: InlineStyle) {
+        if (url == null) return
+        flushText()
+        blocks.add(ContentBlock.Video(url = url, poster = poster))
     }
 
     private fun appendList(element: Element, style: InlineStyle, ordered: Boolean) {
@@ -577,13 +618,7 @@ private fun imageUrl(img: Element): String? {
         .map { img.attr(it) }
         .firstOrNull { it.isNotBlank() && !isPlaceholderImage(it) }
         ?: return null
-    val absolute = when {
-        raw.startsWith("http") -> raw
-        raw.startsWith("//") -> "https:$raw"
-        raw.startsWith("/") -> "https://bbs.binmt.cc$raw"
-        else -> "https://bbs.binmt.cc/$raw"
-    }
-    return upgradeToHttps(absolute)
+    return normalizeMediaUrl(raw)
 }
 
 /** 站内静态资源服务器均支持 https；明文地址会被系统当不安全流量处理，这里统一升到 https。 */
@@ -603,4 +638,28 @@ private fun isPlaceholderImage(url: String): Boolean {
     val lower = url.lowercase()
     return "none.gif" in lower || "none.png" in lower ||
         "blank.gif" in lower || "imageloading" in lower
+}
+
+/**
+ * 视频直链判定的集中入口：附件后缀（带 query 也认）。
+ *
+ * 不把 forum.php?mod=attachment&aid=N 这类无后缀附件链接判为视频：无法从 URL 区分
+ * 视频与图片附件，误判会把图片附件整块变成视频卡。
+ */
+private fun isVideoUrl(value: String): Boolean {
+    val path = value.substringBefore('?').substringBefore('#').lowercase()
+    return VIDEO_EXTENSIONS.any { path.endsWith(".$it") }
+}
+
+private val VIDEO_EXTENSIONS = listOf("mp4", "mov", "m4v", "webm", "m3u8", "mkv")
+
+/** 媒体地址归一化：相对路径补站点域名，站内明文统一升到 https（与图片同规则）。 */
+private fun normalizeMediaUrl(raw: String): String {
+    val absolute = when {
+        raw.startsWith("http") -> raw
+        raw.startsWith("//") -> "https:$raw"
+        raw.startsWith("/") -> "https://bbs.binmt.cc$raw"
+        else -> "https://bbs.binmt.cc/$raw"
+    }
+    return upgradeToHttps(absolute)
 }

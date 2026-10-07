@@ -1,5 +1,6 @@
 package com.aazhou.mtforum.data.parser
 
+import android.util.Log
 import com.aazhou.mtforum.data.model.Forum
 import com.aazhou.mtforum.data.model.ForumGroup
 import com.aazhou.mtforum.data.model.ForumPage
@@ -7,6 +8,8 @@ import com.aazhou.mtforum.data.model.HomeData
 import com.aazhou.mtforum.data.model.LikeResult
 import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
+import com.aazhou.mtforum.data.model.Notice
+import com.aazhou.mtforum.data.model.NoticePage
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.model.PostQuote
 import com.aazhou.mtforum.data.model.SearchResult
@@ -524,6 +527,69 @@ object ForumParser {
             onlineTime = document.select(".comiis_space_profile li:contains(在线时间) .profile_rs")
                 .firstOrNull()?.text()?.trim(),
         )
+    }
+
+    /** 单条提醒里出现的时间文本：相对时间（N分钟前/今天/昨天）或绝对日期。 */
+    private val RE_NOTICE_TIME = Regex(
+        "\\d{4}-\\d{1,2}-\\d{1,2}(\\s+\\d{1,2}:\\d{2}(:\\d{2})?)?" +
+            "|\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{2}" +
+            "|今天|昨天|前天|\\d+\\s*(分钟|小时|天|秒)前",
+    )
+
+    /** 未登录时站点把提醒页换成登录表单；据此区分「未登录」与「确实没有提醒」。 */
+    private val RE_NOTICE_LOGGED_OUT = Regex("mod=logging|action=login|请先登录|需要登录")
+
+    /**
+     * 「我的」→「消息提醒」页（home.php?mod=space&do=notice）。
+     *
+     * 站点把每条提醒渲染成一个 li，容器类名随 comiis 模板版本变化，因此分三层选取：
+     * 1. 专用容器（notice/pm 相关 class）；
+     * 2. 含帖子链接的 li（提醒基本都链到对应主题）；
+     * 3. 含时间文本的 li。
+     *
+     * 三层都失配（站点改版）时返回空列表，界面显示「暂无消息提醒」，不抛异常。
+     */
+    fun parseNotices(html: String): NoticePage {
+        val document = doc(html)
+        val hasThreadLink = document.select("li a[href*=thread-]").isNotEmpty()
+        val loggedOut = RE_NOTICE_LOGGED_OUT.containsMatchIn(html) && !hasThreadLink
+
+        var rows: List<Element> = document.select(
+            "div.comiis_notice li, ul.comiis_notice li, li.comiis_notice, " +
+                "div[class*=notice] li, div[class*=pm_] li",
+        )
+        if (rows.isEmpty()) {
+            rows = document.select("li").filter { it.select("a[href*=thread-]").isNotEmpty() }
+        }
+        if (rows.isEmpty()) {
+            rows = document.select("li").filter { RE_NOTICE_TIME.containsMatchIn(it.text()) }
+        }
+        val notices = rows.mapIndexedNotNull { index, li -> noticeFromItem(li, index) }
+        if (notices.isEmpty() && !loggedOut) {
+            // 失配时只打候选节点的结构与条数（不打正文），便于按真实模板校准选择器
+            Log.d(
+                "MTF-NOTICE",
+                "no notice parsed, li=${document.select("li").size}, " +
+                    "classes=" +
+                    document.select("li").take(40).joinToString { it.className().ifBlank { "-" } },
+            )
+        }
+        return NoticePage(loggedOut = loggedOut, notices = notices)
+    }
+
+    /** 单个 li 转成提醒：正文取整行文本（去掉图标私用区字符），时间取行内最后一段。 */
+    private fun noticeFromItem(li: Element, index: Int): Notice? {
+        val raw = li.text().replace(Regex("[\\uE000-\\uF8FF]"), "").trim()
+        if (raw.isEmpty()) return null
+        val time = RE_NOTICE_TIME.findAll(raw).lastOrNull()?.value
+        val text = if (time != null && raw.endsWith(time)) {
+            raw.dropLast(time.length).trim().trimEnd('·', ' ', ',', '，').ifBlank { raw }
+        } else {
+            raw
+        }
+        val tid = li.select("a[href*=thread-]").firstOrNull()?.attr("href")
+            ?.let { RE_TID.find(it)?.groupValues?.get(1) }
+        return Notice(id = tid ?: "notice-$index", text = text, timeText = time, tid = tid)
     }
 
     /** 点赞用户列表（misc.php?op=recommend）：昵称取自链接文本，需剔掉图标字体私用区字符。 */

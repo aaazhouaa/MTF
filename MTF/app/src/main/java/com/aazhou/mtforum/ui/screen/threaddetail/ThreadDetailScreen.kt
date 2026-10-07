@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
@@ -57,6 +56,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -87,12 +87,17 @@ import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.PostContent
 import com.aazhou.mtforum.ui.common.UiState
+import com.aazhou.mtforum.ui.common.VideoPlayerScreen
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.collectImageUrls
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.plainTextOf
+import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.bodyTextColor
+import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -206,6 +211,9 @@ fun ThreadDetailScreen(
     val openImage: (List<String>, Int) -> Unit = { urls, index ->
         if (urls.isNotEmpty()) preview = urls to index
     }
+    // 点击正文视频一律进全屏播放页；正文滚动时不持播放器，避免多视频同时解码
+    var videoUrl by remember { mutableStateOf<String?>(null) }
+    val openVideo: (String) -> Unit = { url -> videoUrl = url }
     // 列表底部自动续拉：距离末尾还有约一屏（6 条）就开始预加载下一页，不等到划到底。
     // 只在 Idle 时触发（Retry 需用户手动点重试，否则会失败重试死循环）。
     val shouldLoadMore by remember {
@@ -237,14 +245,23 @@ fun ThreadDetailScreen(
 
     // 底栏两颗毛玻璃胶囊采样本页内容：只记录内容区，底栏作为兄弟层再采样，
     // 避免与底栏的 drawBackdrop 形成回环
+    // 主题色经 state 间接读取：rememberLayerBackdrop 以 onDraw lambda 为 remember key，
+    // 直接捕获 colors.topBar 会在换主题时重建 LayerBackdrop，而新实例的 layerCoordinates
+    // 只在布局变化时补，换主题不改布局，回复底栏的采样会一直为空
+    val replyBarTopBar = rememberUpdatedState(colors.topBar)
     val replyBarBackdrop = rememberLayerBackdrop {
-        drawRect(colors.topBar)
+        drawRect(replyBarTopBar.value)
         drawContent()
     }
 
     Scaffold(
         // 整页背景纯白（top_bar），不是灰色页面底
         containerColor = colors.topBar,
+        // containerColor 不是主题配色方案里的色（浅 #FFFFFF / 深 #161B22），M3 的
+        // contentColorFor 取不到对应前景色就退回当前 LocalContentColor —— 即上个主题的
+        // scaffold 内容色。深色切浅色时它会原样留下深色的正文色，正文就糊在深色底上；
+        // 反之亦然。这里显式给出当前主题的正文色。
+        contentColor = bodyTextColor(),
         topBar = {
             // 顶栏与首页同规格：状态栏避让 + 上下 10dp，自绘单行，不用 TopAppBar 的固定高
             // 作者信息整行搬进顶栏（头像/昵称/举报/赞赏/时间/地点/关注），标题区不再重复
@@ -340,6 +357,7 @@ fun ThreadDetailScreen(
                                     subject = data.subject,
                                     forumName = data.forumName,
                                     onImageClick = openImage,
+                                    onVideoClick = openVideo,
                                     pageImages = pageImages,
                                     onUnlock = {
                                         // 隐藏内容需回复后解锁：把回复目标复位到本帖，并提示到底部输入框回复
@@ -390,6 +408,7 @@ fun ThreadDetailScreen(
                                 onReply = { viewModel.setReplyTarget(reply) },
                                 onReplyTo = { viewModel.setReplyTarget(it) },
                                 onImageClick = openImage,
+                                onVideoClick = openVideo,
                                 onUserClick = onUserClick,
                                 pageImages = pageImages,
                                 onLongPress = { actionTarget = it },
@@ -423,7 +442,7 @@ fun ThreadDetailScreen(
                                     Text(
                                         "加载失败，点击重试",
                                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                                        color = MaterialTheme.colorScheme.primary,
+                                        color = accentTextColor(),
                                     )
                                 }
                                 else -> Unit
@@ -448,6 +467,10 @@ fun ThreadDetailScreen(
 
     preview?.let { (urls, index) ->
         ImagePreview(urls = urls, initialIndex = index, onDismiss = { preview = null })
+    }
+
+    videoUrl?.let { url ->
+        VideoPlayerScreen(url = url, onBack = { videoUrl = null })
     }
 
     if (rewardOpen) {
@@ -517,7 +540,7 @@ fun ThreadDetailScreen(
                                 Text(
                                     user.name,
                                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                                    color = colors.textPrimary,
+                                    color = bodyTextColor(),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -611,7 +634,7 @@ private fun ReportDialog(
                         Text(
                             option,
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                            color = colors.textPrimary,
+                            color = bodyTextColor(),
                         )
                     }
                 }
@@ -619,7 +642,7 @@ private fun ReportDialog(
                 BasicTextField(
                     value = message,
                     onValueChange = { message = it },
-                    textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
+                    textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     maxLines = 3,
                     modifier = Modifier
@@ -666,7 +689,7 @@ private fun RewardDialog(
                         Text(
                             value.toString(),
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                            color = if (active) Color.White else colors.textPrimary,
+                            color = if (active) Color.White else bodyTextColor(),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(50))
                                 .background(if (active) MaterialTheme.colorScheme.primary else colors.quoteBackground)
@@ -679,7 +702,7 @@ private fun RewardDialog(
                 BasicTextField(
                     value = message,
                     onValueChange = { message = it },
-                    textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
+                    textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     maxLines = 3,
                     modifier = Modifier
@@ -712,7 +735,7 @@ private fun MenuAction(label: String, onClick: () -> Unit) {
     Text(
         label,
         style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
-        color = colors.textPrimary,
+        color = bodyTextColor(),
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
@@ -758,13 +781,18 @@ private fun ThreadDetailTopBar(
             .fillMaxWidth()
             .background(colors.topBar)
             .statusBarsPadding()
-            .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+            .padding(
+                start = 12.dp,
+                end = 12.dp,
+                top = TopBarVerticalPadding,
+                bottom = TopBarVerticalPadding,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             painterResource(com.aazhou.mtforum.R.drawable.ic_back),
             contentDescription = "返回",
-            tint = colors.textPrimary,
+            tint = bodyTextColor(),
             modifier = Modifier
                 .size(36.dp)
                 .clip(CircleShape)
@@ -789,7 +817,7 @@ private fun ThreadDetailTopBar(
                 post.authorName.ifBlank { "匿名" },
                 style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp),
                 fontWeight = FontWeight.Bold,
-                color = colors.textPrimary,
+                color = bodyTextColor(),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.userClick(post.authorUid, onUserClick),
@@ -839,7 +867,7 @@ private fun ThreadDetailTopBar(
                 text = if (following) "已关注" else "关注",
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                 fontWeight = FontWeight.Bold,
-                color = if (following) colors.textSecondary else MaterialTheme.colorScheme.primary,
+                color = if (following) colors.textSecondary else accentTextColor(),
                 modifier = Modifier
                     .height(26.dp)
                     .clip(RoundedCornerShape(50))
@@ -861,6 +889,7 @@ private fun DetailHeader(
     subject: String,
     forumName: String?,
     onImageClick: (List<String>, Int) -> Unit,
+    onVideoClick: ((String) -> Unit)? = null,
     pageImages: List<String>,
     onUnlock: () -> Unit,
 ) {
@@ -870,7 +899,7 @@ private fun DetailHeader(
             text = subject,
             style = MaterialTheme.typography.headlineSmall.copy(fontSize = 20.sp, lineHeight = 29.sp),
             fontWeight = FontWeight.Bold,
-            color = colors.textPrimary,
+            color = bodyTextColor(),
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
         )
         // 编辑标记与版块 chip 同一行、同处细线上方：编辑标记靠左，chip 靠右；两者都无时不占行
@@ -919,6 +948,7 @@ private fun DetailHeader(
         PostContent(
             html = post.contentHtml,
             onImageClick = onImageClick,
+            onVideoClick = onVideoClick,
             pageImages = pageImages,
             bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 24.sp),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -964,7 +994,7 @@ private fun HiddenContentCard(onUnlock: () -> Unit) {
                 "包含隐藏内容",
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp),
                 fontWeight = FontWeight.Bold,
-                color = colors.textPrimary,
+                color = bodyTextColor(),
             )
             Spacer(Modifier.height(2.dp))
             Text(
@@ -1009,7 +1039,7 @@ private fun CommentHeader(
             "全部评论",
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.5.sp),
             fontWeight = FontWeight.Bold,
-            color = colors.textPrimary,
+            color = bodyTextColor(),
         )
         if (total != null) {
             Text(
@@ -1077,7 +1107,7 @@ private fun SegmentedControl(selected: Int, onSelect: (Int) -> Unit) {
                     label,
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                     fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                    color = if (active) colors.textPrimary else colors.textSecondary,
+                    color = if (active) bodyTextColor() else colors.textSecondary,
                 )
             }
         }
@@ -1097,6 +1127,7 @@ private fun ReplyBlock(
     onReply: () -> Unit,
     onReplyTo: (Post) -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
+    onVideoClick: ((String) -> Unit)? = null,
     onUserClick: (String) -> Unit,
     pageImages: List<String>,
     onLongPress: (Post) -> Unit,
@@ -1131,7 +1162,9 @@ private fun ReplyBlock(
                     Text(
                         reply.authorName.ifBlank { "匿名" },
                         style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp),
-                        color = colors.textPrimary.copy(alpha = 0.8f),
+                        // 昵称比正文低一档，但深色下已由 bodyTextColor 统一压到 69%,
+                        // 这里不再叠 alpha，否则会二次相乘到 55% 看不清
+                        color = bodyTextColor(),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.userClick(reply.authorUid, onUserClick),
@@ -1157,6 +1190,7 @@ private fun ReplyBlock(
                     html = reply.contentHtml,
                     quote = reply.quote,
                     onImageClick = onImageClick,
+                    onVideoClick = onVideoClick,
                     pageImages = pageImages,
                     bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp),
                     modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { onLongPress(reply) }),
@@ -1219,6 +1253,7 @@ private fun ReplyBlock(
                         inReplyTo = subReplyTo[child.pid],
                         onReply = { onReplyTo(child) },
                         onImageClick = onImageClick,
+                        onVideoClick = onVideoClick,
                         onUserClick = onUserClick,
                         pageImages = pageImages,
                         onLongPress = { onLongPress(child) },
@@ -1245,6 +1280,7 @@ private fun NestedReply(
     inReplyTo: String?,
     onReply: () -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
+    onVideoClick: ((String) -> Unit)? = null,
     onUserClick: (String) -> Unit,
     pageImages: List<String>,
     onLongPress: () -> Unit,
@@ -1269,7 +1305,8 @@ private fun NestedReply(
             Text(
                 child.authorName.ifBlank { "匿名" },
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                color = colors.textPrimary.copy(alpha = 0.8f),
+                // 同 ReplyBlock：深色下 bodyTextColor 已压到 69%，不再叠 alpha
+                color = bodyTextColor(),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.userClick(child.authorUid, onUserClick),
@@ -1311,6 +1348,7 @@ private fun NestedReply(
         PostContent(
             html = child.contentHtml,
             onImageClick = onImageClick,
+            onVideoClick = onVideoClick,
             pageImages = pageImages,
             bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 21.sp),
             inlinePrefix = replyPrefix,
@@ -1341,7 +1379,7 @@ private fun AuthorBadge(text: String, small: Boolean = false) {
         text,
         style = MaterialTheme.typography.bodySmall.copy(fontSize = if (small) 9.5.sp else 10.sp),
         fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.primary,
+        color = accentTextColor(),
         modifier = Modifier
             .clip(RoundedCornerShape(4.dp))
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
@@ -1391,9 +1429,10 @@ private fun ReplyBar(
     onShare: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    // 玻璃面色与全局玻璃底栏一致：浅色薄白、深色薄黑
+    // 玻璃面色与全局玻璃底栏一致：浅色薄白、深色薄黑；深浅同样看 LocalIsDarkTheme，
+    // 否则应用内切主题后会与全局底栏的膜色不一致
     val glassColor =
-        if (isSystemInDarkTheme()) Color(0xFF121212).copy(0.28f) else Color(0xFFFAFAFA).copy(0.28f)
+        if (LocalIsDarkTheme.current) Color(0xFF121212).copy(0.28f) else Color(0xFFFAFAFA).copy(0.28f)
     val glassShape = AbsoluteRoundedCornerShape(24.dp)
     Column(
         Modifier
@@ -1407,7 +1446,7 @@ private fun ReplyBar(
                 Text(
                     "回复 @${target.authorName}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = accentTextColor(),
                     modifier = Modifier.weight(1f),
                 )
                 Text(
@@ -1441,7 +1480,7 @@ private fun ReplyBar(
                     Icon(
                         painterResource(com.aazhou.mtforum.R.drawable.ic_comment_pen),
                         contentDescription = null,
-                        tint = colors.textPrimary,
+                        tint = bodyTextColor(),
                         modifier = Modifier.size(22.dp),
                     )
                     Spacer(Modifier.width(8.dp))
@@ -1454,13 +1493,13 @@ private fun ReplyBar(
                         Text(
                             "写评论",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = colors.textPrimary,
+                            color = bodyTextColor(),
                         )
                     }
                     BasicTextField(
                         value = value,
                         onValueChange = onValueChange,
-                        textStyle = TextStyle(color = colors.textPrimary, fontSize = 15.sp),
+                        textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         maxLines = 2,
                         modifier = Modifier.fillMaxWidth(),
@@ -1505,7 +1544,7 @@ private fun ReplyBar(
                             Icon(
                                 painterResource(com.aazhou.mtforum.R.drawable.ic_reply),
                                 contentDescription = "查看评论",
-                                tint = colors.textPrimary,
+                                tint = bodyTextColor(),
                                 modifier = Modifier.size(22.dp),
                             )
                         },
@@ -1519,7 +1558,7 @@ private fun ReplyBar(
                             Icon(
                                 painterResource(com.aazhou.mtforum.R.drawable.ic_like_thumb),
                                 contentDescription = "点赞",
-                                tint = if (liked) MaterialTheme.colorScheme.primary else colors.textPrimary,
+                                tint = if (liked) MaterialTheme.colorScheme.primary else bodyTextColor(),
                                 modifier = Modifier.size(22.dp),
                             )
                         },
@@ -1533,7 +1572,7 @@ private fun ReplyBar(
                             Icon(
                                 painterResource(com.aazhou.mtforum.R.drawable.ic_favorite_outline),
                                 contentDescription = "收藏",
-                                tint = if (favorited) MaterialTheme.colorScheme.primary else colors.textPrimary,
+                                tint = if (favorited) MaterialTheme.colorScheme.primary else bodyTextColor(),
                                 modifier = Modifier.size(22.dp),
                             )
                         },
@@ -1547,7 +1586,7 @@ private fun ReplyBar(
                             Icon(
                                 painterResource(com.aazhou.mtforum.R.drawable.ic_share),
                                 contentDescription = "分享",
-                                tint = colors.textPrimary,
+                                tint = bodyTextColor(),
                                 modifier = Modifier.size(22.dp),
                             )
                         },

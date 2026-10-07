@@ -6,6 +6,7 @@ import com.aazhou.mtforum.data.model.HomeData
 import com.aazhou.mtforum.data.model.LikeResult
 import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
+import com.aazhou.mtforum.data.model.NoticePage
 import com.aazhou.mtforum.data.model.SearchResult
 import com.aazhou.mtforum.data.model.ThreadPage
 import com.aazhou.mtforum.data.model.UserProfile
@@ -193,6 +194,11 @@ class ForumRepository(
     /** 当前登录用户的个人空间主页（统计/积分/金币等）。 */
     suspend fun me(): UserProfile = withContext(Dispatchers.IO) {
         ForumParser.parseUserProfile(http.get(http.url("home.php?mod=space&mobile=2")))
+    }
+
+    /** 消息提醒页（网页端「我的」→「消息提醒」）。 */
+    suspend fun notices(): NoticePage = withContext(Dispatchers.IO) {
+        ForumParser.parseNotices(http.get(http.url("home.php?mod=space&do=notice&mobile=2")))
     }
 
     /** 指定用户的个人空间（他人主页）。 */

@@ -45,6 +45,8 @@ import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.bodyTextColor
+import com.aazhou.mtforum.ui.theme.accentTextColor
 
 @Composable
 fun ProfileScreen(onLogin: () -> Unit, onSettings: () -> Unit) {
@@ -118,7 +120,7 @@ private fun InfoCard(
                     if (loggedIn) profile?.name.orEmpty().ifBlank { "未知用户" } else "未登录",
                     style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
                     fontWeight = FontWeight.Bold,
-                    color = colors.textPrimary,
+                    color = bodyTextColor(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.clickable(enabled = !loggedIn, onClick = onLogin),
@@ -134,7 +136,7 @@ private fun InfoCard(
                         Text(
                             profile.level.orEmpty(),
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = MaterialTheme.colorScheme.primary,
+                            color = accentTextColor(),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
                                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
@@ -147,7 +149,7 @@ private fun InfoCard(
                         profile.groupName.orEmpty(),
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = accentTextColor(),
                         modifier = Modifier.padding(top = 2.dp),
                     )
                 }
@@ -186,9 +188,9 @@ private fun CreditsCard(profile: UserProfile?) {
     val colors = LocalMtfColors.current
     ProfileCard {
         Row(Modifier.fillMaxWidth()) {
-            MetricColumn("积分", profile?.credits?.toString(), MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+            MetricColumn("积分", profile?.credits?.toString(), accentTextColor(), Modifier.weight(1f))
             MetricColumn("金币", profile?.gold?.toString(), colors.gold, Modifier.weight(1f))
-            MetricColumn("在线", profile?.onlineTime, colors.textPrimary, Modifier.weight(1f))
+            MetricColumn("在线", profile?.onlineTime, bodyTextColor(), Modifier.weight(1f))
         }
     }
 }
@@ -206,7 +208,7 @@ private fun MenuCard(onSettings: () -> Unit) {
             "功能",
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
             fontWeight = FontWeight.Bold,
-            color = colors.textPrimary,
+            color = bodyTextColor(),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
         )
         HorizontalDivider(color = colors.divider)
@@ -254,7 +256,7 @@ private fun StatColumn(label: String, value: Int?, modifier: Modifier = Modifier
             value?.toString() ?: "—",
             style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
             fontWeight = FontWeight.Bold,
-            color = colors.textPrimary,
+            color = bodyTextColor(),
         )
         Text(
             label,
@@ -308,7 +310,7 @@ private fun MenuRow(label: String, icon: Painter, onClick: () -> Unit) {
             Icon(
                 icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = accentTextColor(),
                 modifier = Modifier.size(20.dp),
             )
         }
@@ -316,7 +318,7 @@ private fun MenuRow(label: String, icon: Painter, onClick: () -> Unit) {
         Text(
             label,
             style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
-            color = colors.textPrimary,
+            color = bodyTextColor(),
             modifier = Modifier.weight(1f),
         )
         Icon(

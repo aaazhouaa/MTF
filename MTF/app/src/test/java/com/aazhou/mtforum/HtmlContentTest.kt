@@ -298,4 +298,75 @@ class HtmlContentTest {
             .filterIsInstance<ContentBlock.Text>().single()
         assertTrue(text.spans.all { it.linkUrl == null })
     }
+
+    @Test
+    fun videoTagBecomesVideoBlock() {
+        val html = "看视频<video src=\"https://cdn.binmt.cc/data/attachment/forum/v.mp4\" controls></video>"
+        val video = parseContentBlocks(html).filterIsInstance<ContentBlock.Video>().single()
+        assertEquals("https://cdn.binmt.cc/data/attachment/forum/v.mp4", video.url)
+        assertTrue(parseContentBlocks(html).none { it is ContentBlock.Image })
+    }
+
+    @Test
+    fun videoSourceTagIsUsedAsVideoUrl() {
+        // 移动端模板把真实地址放在内部 source 上，video 自身 src 为空
+        val html = "<video controls><source src=\"https://cdn.binmt.cc/a.mov\"></video>"
+        val video = parseContentBlocks(html).filterIsInstance<ContentBlock.Video>().single()
+        assertEquals("https://cdn.binmt.cc/a.mov", video.url)
+    }
+
+    @Test
+    fun anchorWithVideoHrefAndCoverImgBecomesVideoWithPoster() {
+        // 附件视频被包在链接里、封面是普通图；不能再额外产出一张静态图
+        val html = "<a href=\"https://cdn.binmt.cc/clip.mp4\">" +
+            "<img src=\"https://cdn.binmt.cc/cover.jpg\" /></a>"
+        val blocks = parseContentBlocks(html)
+        val video = blocks.filterIsInstance<ContentBlock.Video>().single()
+        assertEquals("https://cdn.binmt.cc/clip.mp4", video.url)
+        assertEquals("https://cdn.binmt.cc/cover.jpg", video.poster)
+        assertTrue(blocks.none { it is ContentBlock.Image })
+    }
+
+    @Test
+    fun bareVideoLinkWithoutPosterBecomesVideoBlock() {
+        val html = "下载<a href=\"https://bbs.binmt.cc/forum.php?mod=attachment&aid=9\">附件</a>" +
+            "<a href=\"https://cdn.binmt.cc/plain.mp4?token=1\">播放</a>"
+        val videos = parseContentBlocks(html).filterIsInstance<ContentBlock.Video>()
+        assertEquals(1, videos.size)
+        assertEquals("https://cdn.binmt.cc/plain.mp4?token=1", videos.single().url)
+        assertTrue(videos.single().poster == null)
+    }
+
+    @Test
+    fun embedLegacyAttachmentIsTreatedAsVideo() {
+        val html = "<embed src=\"https://cdn.binmt.cc/old.webm\" type=\"video/webm\"></embed>"
+        val video = parseContentBlocks(html).filterIsInstance<ContentBlock.Video>().single()
+        assertEquals("https://cdn.binmt.cc/old.webm", video.url)
+    }
+
+    @Test
+    fun relativeVideoUrlIsNormalizedToHttps() {
+        val html = "<video src=\"data/attachment/forum/rel.mp4\"></video>"
+        val video = parseContentBlocks(html).filterIsInstance<ContentBlock.Video>().single()
+        assertEquals("https://bbs.binmt.cc/data/attachment/forum/rel.mp4", video.url)
+    }
+
+    @Test
+    fun imageAttachmentListIsStillImagesNotVideos() {
+        val html = "<ul class=\"comiis_img_list\"><li>" +
+            "<a href=\"https://bbs.binmt.cc/forum.php?mod=attachment&aid=3\">" +
+            "<img src=\"none.gif\" file=\"https://cdn.binmt.cc/pic.jpg\" /></a></li></ul>"
+        val blocks = parseContentBlocks(html)
+        assertTrue(blocks.none { it is ContentBlock.Video })
+        assertEquals("https://cdn.binmt.cc/pic.jpg", blocks.filterIsInstance<ContentBlock.Image>().single().url)
+    }
+
+    @Test
+    fun videoInsideAttachmentListIsNotDroppedAsText() {
+        // 附件列表的 li 里是 video 时不能走列表文本化（否则视频整体丢失）
+        val html = "<ul class=\"comiis_img_list\"><li>" +
+            "<video src=\"https://cdn.binmt.cc/att.mp4\"></video></li></ul>"
+        val video = parseContentBlocks(html).filterIsInstance<ContentBlock.Video>().single()
+        assertEquals("https://cdn.binmt.cc/att.mp4", video.url)
+    }
 }

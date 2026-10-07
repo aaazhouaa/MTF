@@ -1,13 +1,10 @@
 package com.aazhou.mtforum.ui.common
 
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
-import android.os.Environment
-import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -63,16 +60,13 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.toBitmap
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /** 手势可缩放的上限。 */
 private const val MAX_SCALE = 5f
@@ -189,7 +183,7 @@ fun ImagePreview(
                 PreviewActionIcon(R.drawable.ic_download, "保存到相册", foreground, actionPill) {
                     runBusy(scope, { busy = it }, context, "保存失败") {
                         val url = urls[pagerState.currentPage]
-                        val bytes = downloadBytes(context, url)
+                        val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
                         withContext(Dispatchers.IO) { saveToGallery(context, url, bytes) } != null
                     }
                 }
@@ -197,7 +191,7 @@ fun ImagePreview(
                 PreviewActionIcon(R.drawable.ic_share, "分享", foreground, actionPill) {
                     runBusy(scope, { busy = it }, context, "分享失败") {
                         val url = urls[pagerState.currentPage]
-                        val bytes = downloadBytes(context, url)
+                        val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
                         val file = withContext(Dispatchers.IO) { writeCacheFile(context, url, bytes) }
                         shareImage(context, url, file)
                         true
@@ -218,22 +212,6 @@ fun ImagePreview(
                 modifier = Modifier.align(Alignment.Center).size(32.dp),
             )
         }
-    }
-}
-
-/** 执行一次耗时动作，期间显示进度；返回 false 或抛异常时统一提示 [errorMessage]。 */
-private fun runBusy(
-    scope: CoroutineScope,
-    setBusy: (Boolean) -> Unit,
-    context: Context,
-    errorMessage: String,
-    action: suspend () -> Boolean,
-) {
-    scope.launch {
-        setBusy(true)
-        val ok = runCatching { action() }.getOrDefault(false)
-        setBusy(false)
-        if (!ok) Toast.makeText(context, errorMessage, Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -414,63 +392,3 @@ private fun sampleAverageColor(drawable: Drawable): Color {
     return if (count == 0) Color.Black else Color(red / count, green / count, blue / count)
 }
 
-/** 经全局图片请求头（UA / Referer / Cookie）拉取原图字节。 */
-private suspend fun downloadBytes(context: Context, url: String): ByteArray =
-    withContext(Dispatchers.IO) {
-        context.container().httpClient.getBytes(url, referer = "https://bbs.binmt.cc/")
-    }
-
-private fun mimeOf(url: String): String = when {
-    url.contains(".png", true) -> "image/png"
-    url.contains(".gif", true) -> "image/gif"
-    url.contains(".webp", true) -> "image/webp"
-    else -> "image/jpeg"
-}
-
-private fun fileNameOf(url: String): String {
-    val name = url.substringBefore('?').substringAfterLast('/')
-    return if (name.contains('.')) name else "mtf_${System.currentTimeMillis()}.jpg"
-}
-
-/** 写入系统相册（API 29+ 走 MediaStore，无需存储权限）；失败返回 null。 */
-private fun saveToGallery(context: Context, url: String, bytes: ByteArray): Uri? {
-    val resolver = context.contentResolver
-    val values = ContentValues().apply {
-        put(MediaStore.Images.Media.DISPLAY_NAME, fileNameOf(url))
-        put(MediaStore.Images.Media.MIME_TYPE, mimeOf(url))
-        put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/MTF")
-        put(MediaStore.Images.Media.IS_PENDING, 1)
-    }
-    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
-    return try {
-        val out = resolver.openOutputStream(uri)
-        if (out == null) {
-            resolver.delete(uri, null, null)
-            return null
-        }
-        out.use { it.write(bytes) }
-        values.clear()
-        values.put(MediaStore.Images.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-        uri
-    } catch (_: Exception) {
-        resolver.delete(uri, null, null)
-        null
-    }
-}
-
-/** 把图片落到 cacheDir，供 FileProvider 分享。 */
-private fun writeCacheFile(context: Context, url: String, bytes: ByteArray): File {
-    val dir = File(context.cacheDir, "shared_images").apply { mkdirs() }
-    return File(dir, fileNameOf(url)).apply { writeBytes(bytes) }
-}
-
-private fun shareImage(context: Context, url: String, file: File) {
-    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = mimeOf(url)
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    context.startActivity(Intent.createChooser(intent, "分享图片"))
-}

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -29,6 +30,7 @@ import com.aazhou.mtforum.ui.screen.forumlist.ForumListScreen
 import com.aazhou.mtforum.ui.screen.guide.GuideScreen
 import com.aazhou.mtforum.ui.screen.home.HomeScreen
 import com.aazhou.mtforum.ui.screen.login.LoginScreen
+import com.aazhou.mtforum.ui.screen.notice.NoticeScreen
 import com.aazhou.mtforum.ui.screen.postedit.PostEditScreen
 import com.aazhou.mtforum.ui.screen.profile.ProfileScreen
 import com.aazhou.mtforum.ui.screen.search.SearchScreen
@@ -52,6 +54,7 @@ object Routes {
     const val THREAD = "thread/{tid}"
     const val USER = "user/{uid}"
     const val POST = "post/{fid}/{name}"
+    const val NOTICE = "notice"
 
     fun forum(fid: String, name: String) = "forum/$fid/${Uri.encode(name)}"
     fun thread(tid: String) = "thread/$tid"
@@ -89,15 +92,25 @@ fun AppRoot(onToggleTheme: () -> Unit) {
 
     Box(Modifier.fillMaxSize()) {
         val background = MaterialTheme.colorScheme.background
+        // 主题色必须经 state 间接读取再画进 backdrop：rememberLayerBackdrop 把 onDraw
+        // 这个 lambda 当 remember key，直接捕获背景色的话，一换主题 lambda 就变、
+        // LayerBackdrop 实例随之重建；新实例的 layerCoordinates 要等下一次布局才补上，
+        // 而换主题只改颜色不改布局，于是底栏采样一直拿到空、毛玻璃整个消失。
+        val backgroundState = rememberUpdatedState(background)
         val backdrop = rememberLayerBackdrop {
-            drawRect(background)
+            drawRect(backgroundState.value)
             drawContent()
         }
 
         NavHost(
             navController = navController,
             startDestination = Routes.HOME,
-            // 返回过渡必须为 None：NavHost 默认 popEnter/popExit 是 700ms 交叉淡入淡出，
+            // 进出过渡也必须为 None：NavHost 默认 enter/exit 是 700ms 交叉淡入淡出，
+            // 切 tab 时新旧两页同时在场淡入淡出，表现为整屏闪一下；玻璃底栏采样的是
+            // 这个 NavHost 的图层，双页同场时采样内容还会跳变，故一律即时切换。
+            enterTransition = { EnterTransition.None },
+            exitTransition = { ExitTransition.None },
+            // 返回过渡同样必须为 None：NavHost 默认 popEnter/popExit 是 700ms 交叉淡入淡出，
             // 期间被弹出的页面仍留在 composition 里淡出且 zIndex 高于下层页面，会先接到并
             // 消耗用户的手势，表现为「退出帖子后第一次滑动不生效」。淡出用 alpha 实现，
             // 命中测试不看 alpha，所以只能让旧页面在返回时立即移除。
@@ -111,6 +124,14 @@ fun AppRoot(onToggleTheme: () -> Unit) {
                 HomeScreen(
                     onSearch = { navController.navigate(Routes.SEARCH) },
                     onToggleTheme = onToggleTheme,
+                    // 消息提醒需登录态，未登录时先走登录页（与「我的」一致）
+                    onMessages = {
+                        if (container.httpClient.isLoggedIn()) {
+                            navController.navigate(Routes.NOTICE)
+                        } else {
+                            navController.navigate(Routes.LOGIN)
+                        }
+                    },
                     onForumClick = { fid, name -> navController.navigate(Routes.forum(fid, name)) },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                 )
@@ -139,6 +160,12 @@ fun AppRoot(onToggleTheme: () -> Unit) {
                 )
             }
             composable(Routes.SETTINGS) { SettingsScreen() }
+            composable(Routes.NOTICE) {
+                NoticeScreen(
+                    onBack = { navController.popBackStack() },
+                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                )
+            }
 
             composable(
                 Routes.FORUM,

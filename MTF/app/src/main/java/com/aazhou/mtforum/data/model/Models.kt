@@ -178,3 +178,22 @@ data class HomeData(
     val hotForums: List<Forum>,
     val hotThreads: List<Thread>,
 )
+
+/**
+ * 单条消息提醒（网页端「我的」→「消息提醒」）。
+ *
+ * [text] 为站点渲染的提醒正文，[timeText] 是页面上的相对/绝对时间文本；
+ * [tid] 为关联主题，站点未给帖子链接时为 null（该条不可点击）。
+ */
+data class Notice(
+    val id: String,
+    val text: String,
+    val timeText: String? = null,
+    val tid: String? = null,
+)
+
+/** 消息提醒页解析结果；[loggedOut] 为 true 表示页面被重定向到了登录表单。 */
+data class NoticePage(
+    val loggedOut: Boolean = false,
+    val notices: List<Notice> = emptyList(),
+)

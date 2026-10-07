@@ -28,6 +28,14 @@ fun MtfTheme(
     val preset = ThemePresets.getOrElse(themeIndex) { ThemePresets[DefaultThemeIndex] }
     val colors = if (darkTheme) DarkMtfColors else LightMtfColors
     val primary = if (darkTheme) preset.primaryNight else preset.primaryDay
+    // 深色下正文前景统一压低（见 DarkBrightTextAlpha）：onSurface 是所有不显式着色的
+    // Text/Icon/TextField 的默认色，在这里压一次，新页面不写 color 也自动跟上。
+    // 同时仍沿用 textPrimary 的语义色值，浅色模式完全不受影响。
+    val onSurface = if (darkTheme) {
+        colors.textPrimary.copy(alpha = DarkBrightTextAlpha)
+    } else {
+        colors.textPrimary
+    }
     val scheme = if (darkTheme) {
         darkColorScheme(
             primary = primary,
@@ -37,7 +45,7 @@ fun MtfTheme(
             background = colors.background,
             surface = colors.surface,
             surfaceVariant = colors.quoteBackground,
-            onSurface = colors.textPrimary,
+            onSurface = onSurface,
             onSurfaceVariant = colors.textSecondary,
             outlineVariant = colors.divider,
         )
@@ -50,7 +58,7 @@ fun MtfTheme(
             background = colors.background,
             surface = colors.surface,
             surfaceVariant = colors.quoteBackground,
-            onSurface = colors.textPrimary,
+            onSurface = onSurface,
             onSurfaceVariant = colors.textSecondary,
             outlineVariant = colors.divider,
         )
