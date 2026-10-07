@@ -38,7 +38,7 @@ import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
-import com.aazhou.mtforum.ui.common.animateToTop
+import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
@@ -59,7 +59,7 @@ fun GuideScreen(onThreadClick: (tid: String) -> Unit) {
             TopAppBar(
                 title = { Text("导读") },
                 modifier = Modifier.onDoubleTapToTop {
-                    scope.launch { listState.animateToTop() }
+                    scope.launch { listState.scrollToTop() }
                 },
                 expandedHeight = MtfTopBarHeight,
             )

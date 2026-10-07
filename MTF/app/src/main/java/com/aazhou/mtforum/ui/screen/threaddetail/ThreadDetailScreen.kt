@@ -88,7 +88,7 @@ import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.PostContent
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.VideoPlayerScreen
-import com.aazhou.mtforum.ui.common.animateToTop
+import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.collectImageUrls
 import com.aazhou.mtforum.ui.common.container
@@ -279,7 +279,7 @@ fun ThreadDetailScreen(
                 onReport = reportThread,
                 onReward = rewardThread,
                 onUserClick = onUserClick,
-                onDoubleTap = { scope.launch { listState.animateToTop() } },
+                onDoubleTap = { scope.launch { listState.scrollToTop() } },
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },

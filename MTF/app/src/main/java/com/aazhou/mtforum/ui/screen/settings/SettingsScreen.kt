@@ -33,7 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
-import com.aazhou.mtforum.ui.common.animateToTop
+import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.DefaultThemeIndex
@@ -59,7 +59,7 @@ fun SettingsScreen() {
             TopAppBar(
                 title = { Text("设置") },
                 modifier = Modifier.onDoubleTapToTop {
-                    scope.launch { scrollState.animateToTop() }
+                    scope.launch { scrollState.scrollToTop() }
                 },
                 expandedHeight = MtfTopBarHeight,
             )

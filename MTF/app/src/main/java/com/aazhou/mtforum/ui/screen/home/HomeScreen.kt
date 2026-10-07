@@ -52,8 +52,8 @@ import com.aazhou.mtforum.ui.common.RankCard
 import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
-import com.aazhou.mtforum.ui.common.animateToTop
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
@@ -87,7 +87,7 @@ fun HomeScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val scrollToTop: () -> Unit = {
-        scope.launch { listState.animateToTop() }
+        scope.launch { listState.scrollToTop() }
     }
 
     Scaffold(
