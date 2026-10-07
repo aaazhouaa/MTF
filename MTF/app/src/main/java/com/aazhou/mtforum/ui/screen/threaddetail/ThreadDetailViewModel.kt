@@ -411,16 +411,42 @@ class ThreadDetailViewModel(
         var newInBatch = 0
         var failed = false
         var lastFetched = 0
+        // 最近一个真实交付过楼层的页码：越界探测被站点夹成末页、什么也没带来时，
+        // 用它把 recordProgress 收回去，免得幻觉页码（如池里 58 楼却去敲第 178 页）
+        // 每次进帖都重放
+        var lastProductivePage = progressOf(authorId).maxPage
         try {
             while (pagesFetched < AUTO_LOAD_BATCH_PAGES &&
                 next <= totalPages &&
                 newInBatch < AUTO_LOAD_BATCH_REPLIES
             ) {
                 val data = repository.threadPage(tid, next, FETCH_ORDER, authorId)
-                totalPages = data.totalPages
-                newInBatch += mergeIntoPool(data)
-                recordProgress(authorId, next, data.totalPages)
+                // 空响应的总页数不可信（越界夹页/解析失败常给出离谱页数），拿它推进
+                // progress 会让 nextPageToFetch 一直去追不存在的页码
+                val saneTotalPages =
+                    if (data.posts.isEmpty() && data.totalPages > totalPages) totalPages
+                    else data.totalPages
+                totalPages = saneTotalPages
+                val added = mergeIntoPool(data)
+                newInBatch += added
                 lastFetched = next
+                if (added > 0) {
+                    // 本页有新楼层入库，才算「已拉到」
+                    recordProgress(authorId, next, saneTotalPages)
+                    lastProductivePage = next
+                } else if (next <= knownTotalPages) {
+                    // 范围内却没新楼层（重拉末页）：不推进页码，只更新总页数
+                    recordProgress(authorId, progressOf(authorId).maxPage, saneTotalPages)
+                } else {
+                    // 越界探测页什么都没带来：站点把它夹成了末页，解析出的页数跟着请求
+                    // 页码涨。把 maxPage/totalPages 收回到真实交付过楼层的最后一页，
+                    // 续拉才不会每次进入都去敲 178、179 这种不存在的页码；真正的新
+                    // 评论由末页重拉与站点计数变化发现。
+                    recordProgress(authorId, progressOf(authorId).maxPage, saneTotalPages)
+                    val healed = lastProductivePage.coerceAtLeast(1)
+                    viewProgress[progressKey(authorId)] =
+                        PageProgress(authorId = authorId, maxPage = healed, totalPages = healed)
+                }
                 next++
                 pagesFetched++
             }
@@ -447,6 +473,17 @@ class ThreadDetailViewModel(
         publish(startChain = false)
         _loadingMore.value = false
         return failed
+    }
+
+    /**
+     * 点「下载」那一刻的楼层快照：楼层池当前的内容整体冻结，按正序给出，不受
+     * 「只看楼主 / 倒序」筛选影响。只取这一帧、不补拉后续评论：自动续拉在界面侧
+     * 继续跑不影响这份快照，想收进新评论就等加载完再点一次下载，按 tid 覆盖旧副本。
+     * 详情首屏还没上屏时返回 null——那时连正文都没有，调用方应提示稍后再试。
+     */
+    fun snapshotForDownload(): ThreadPage? {
+        if (_state.value !is UiState.Success) return null
+        return viewPage().copy(posts = poolOrder())
     }
 
     /** [authorId] 口径已加载到的最大页（续拉位置）。 */
@@ -937,18 +974,6 @@ class ThreadDetailViewModel(
         )
     }
 
-    /** 归属树 + 默认折叠的灌水楼层 pid；带子回复的水帖不折，否则会连子回复一起藏掉。 */
-    private fun deriveTree(data: ThreadPage): Pair<ReplyTree, Set<String>> {
-        val op = data.posts.firstOrNull { it.isFirstPost } ?: data.posts.firstOrNull()
-        val replies = data.posts.filter { it !== op }
-        val built = buildReplyTree(replies)
-        val water = built.topLevel
-            .filter { isWaterReply(it.contentHtml) && built.children[it.pid].isNullOrEmpty() }
-            .map { it.pid }
-            .toSet()
-        return built to water
-    }
-
     /** 打赏（pid 为空为打赏首帖）。 */
     fun reward(pid: String?, amount: Int, message: String?) {
         val data = (_state.value as? UiState.Success)?.data ?: return
@@ -995,6 +1020,22 @@ private fun normalizeForMatch(s: String?): String = s.orEmpty()
 
 /** 引用块短于该长度（纯表情/单个词）时区分不了楼层，宁可不匹配。 */
 private const val MATCH_MIN_CHARS = 6
+
+/**
+ * 归属树 + 默认折叠的灌水楼层 pid；带子回复的水帖不折，否则会连子回复一起藏掉。
+ *
+ * 在线详情与已下载帖子的离线页共用同一套规则：两处看到的父子归属与折叠条数一致。
+ */
+internal fun deriveTree(data: ThreadPage): Pair<ReplyTree, Set<String>> {
+    val op = data.posts.firstOrNull { it.isFirstPost } ?: data.posts.firstOrNull()
+    val replies = data.posts.filter { it !== op }
+    val built = buildReplyTree(replies)
+    val water = built.topLevel
+        .filter { isWaterReply(it.contentHtml) && built.children[it.pid].isNullOrEmpty() }
+        .map { it.pid }
+        .toSet()
+    return built to water
+}
 
 /** 切换筛选前界面的滚动位置：首个可见项下标 + 该项被遮住的像素高度。 */
 data class ScrollAnchor(val index: Int, val offset: Int)

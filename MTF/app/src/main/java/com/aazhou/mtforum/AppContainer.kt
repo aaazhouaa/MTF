@@ -2,8 +2,10 @@ package com.aazhou.mtforum
 
 import android.app.Application
 import com.aazhou.mtforum.data.cache.ContentCache
+import com.aazhou.mtforum.data.download.ThreadArchiveStore
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.repo.ActionStore
+import com.aazhou.mtforum.data.repo.DownloadStore
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.SessionStore
 import com.aazhou.mtforum.data.repo.ThemeStore
@@ -21,6 +23,10 @@ class AppContainer(application: Application) {
     val sessionStore = SessionStore(application)
     val themeStore = ThemeStore(application)
     val actionStore = ActionStore(application)
+    /** 已下载帖子的登记表（列表、打开、手动删除）。 */
+    val downloadStore = DownloadStore(application)
+    /** 已下载帖子的应用内存档（快照 + 本地图片，供离线按原格式看帖）。 */
+    val archiveStore = ThreadArchiveStore(application)
     val httpClient = HttpClient()
     val repository = ForumRepository(httpClient)
 

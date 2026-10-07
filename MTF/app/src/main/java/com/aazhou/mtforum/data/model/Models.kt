@@ -142,6 +142,24 @@ data class ThreadSnapshot(
     val progress: List<PageProgress> = emptyList(),
 )
 
+/**
+ * 已下载帖子的一条登记：tid + 保存产物信息，供「已下载的帖子」列表展示与打开。
+ *
+ * 条目的删除只由用户在列表里手动触发（应用不做任何自动清理，也不设存储上限）；
+ * [uri] 是外置 HTML 文件在媒体库中的地址，[fileName] 即其在 Download/MTF 下的文件名。
+ */
+@Serializable
+data class DownloadedThread(
+    val tid: String,
+    val subject: String,
+    val forumName: String? = null,
+    val fileName: String,
+    val uri: String,
+    val savedAt: Long,
+    val replyCount: Int? = null,
+    val sizeBytes: Long = 0,
+)
+
 /** 楼层内的引用（回复某人时站点插入的引用块）。 */
 @Serializable
 data class PostQuote(

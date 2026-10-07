@@ -609,7 +609,7 @@ private fun isBlankOrNbsp(s: CharSequence): Boolean {
     return true
 }
 
-private fun imageUrl(img: Element): String? {
+internal fun imageUrl(img: Element): String? {
     // 站点图片懒加载：src 常是 none.png / imageloading.gif 占位，真实地址在后面几个属性里
     val raw = listOf(
         "zoomfile", "file", "comiis_loadimages", "data-original", "data-src",
@@ -654,7 +654,7 @@ private fun isVideoUrl(value: String): Boolean {
 private val VIDEO_EXTENSIONS = listOf("mp4", "mov", "m4v", "webm", "m3u8", "mkv")
 
 /** 媒体地址归一化：相对路径补站点域名，站内明文统一升到 https（与图片同规则）。 */
-private fun normalizeMediaUrl(raw: String): String {
+internal fun normalizeMediaUrl(raw: String): String {
     val absolute = when {
         raw.startsWith("http") -> raw
         raw.startsWith("//") -> "https:$raw"

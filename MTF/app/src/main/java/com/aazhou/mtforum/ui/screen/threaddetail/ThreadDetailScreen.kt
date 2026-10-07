@@ -36,6 +36,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -91,6 +93,7 @@ import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.image.ImageAspectCache
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.PostContent
+import com.aazhou.mtforum.ui.common.saveThreadDownload
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.VideoPlayerScreen
 import com.aazhou.mtforum.ui.common.scrollToTop
@@ -114,6 +117,7 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -257,9 +261,42 @@ fun ThreadDetailScreen(
     var reportTarget by remember { mutableStateOf<ReportTarget?>(null) }
     // 删除确认弹窗目标（删除不可撤销，需二次确认）
     var deleteTarget by remember { mutableStateOf<Post?>(null) }
-    // 举报/打赏入口已随作者栏移入顶栏，回调须提到 Scaffold 之外供 topBar 使用
+    // 举报/打赏入口已随作者栏移入「更多」菜单，回调须提到 Scaffold 之外供 topBar 使用
     val reportThread: () -> Unit = { reportTarget = ReportTarget(null) }
     val rewardThread: () -> Unit = { rewardOpen = true }
+    // 「更多」菜单的下载：只保存点击这一刻已加载的内容（正文必存，评论不补拉），
+    // 想收进后续评论就等加载完再点一次，按 tid 覆盖旧副本
+    var downloadBusy by remember { mutableStateOf(false) }
+    val onDownload: () -> Unit = {
+        // 快照在点击这一刻同步冻结：之后自动续拉进来的评论不进这次下载
+        val frame = viewModel.snapshotForDownload()
+        if (frame == null) {
+            hint = "帖子还没加载出来，稍后再试"
+        } else {
+            scope.launch {
+                downloadBusy = true
+                val entry = try {
+                    saveThreadDownload(
+                        context = context,
+                        page = frame,
+                        downloadStore = container.downloadStore,
+                        archiveStore = container.archiveStore,
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+                downloadBusy = false
+                val savedReplies = frame.posts.count { !it.isFirstPost }
+                hint = when {
+                    entry == null -> "保存失败，请稍后重试"
+                    savedReplies == 0 -> "已保存正文到 下载/MTF（暂无评论）"
+                    else -> "已保存到 下载/MTF（含已加载的 $savedReplies 楼评论）"
+                }
+            }
+        }
+    }
 
     // 底栏两颗毛玻璃胶囊采样本页内容：只记录内容区，底栏作为兄弟层再采样，
     // 避免与底栏的 drawBackdrop 形成回环
@@ -289,10 +326,13 @@ fun ThreadDetailScreen(
                 post = op,
                 following = following,
                 followEnabled = page?.opUid != null && page?.formhash != null,
+                showMore = true,
+                downloadBusy = downloadBusy,
                 onBack = onBack,
                 onFollow = { viewModel.toggleFollow() },
                 onReport = reportThread,
                 onReward = rewardThread,
+                onDownload = onDownload,
                 onUserClick = onUserClick,
                 onDoubleTap = { scope.launch { listState.scrollToTop() } },
             )
@@ -794,17 +834,21 @@ private fun shareThread(context: Context, subject: String?, tid: String) {
 
 /**
  * 顶栏：与首页顶栏同规格（状态栏避让 + 上下 10dp）的单行作者栏。
- * 返回 → 头像/昵称（昵称下方左对齐显示时间/属地）→ 举报/赞赏 → 关注；作者帖未就绪时只留返回键。
+ * 返回 → 头像/昵称（昵称下方左对齐显示时间/属地）→ 关注 → 更多；作者帖未就绪时只留返回键。
+ * 举报/赞赏/下载都收在「更多」菜单里（纯文字项），顶栏不再单独摆图标。
  */
 @Composable
-private fun ThreadDetailTopBar(
+internal fun ThreadDetailTopBar(
     post: Post?,
     following: Boolean,
     followEnabled: Boolean,
+    showMore: Boolean,
+    downloadBusy: Boolean,
     onBack: () -> Unit,
     onFollow: () -> Unit,
     onReport: () -> Unit,
     onReward: () -> Unit,
+    onDownload: () -> Unit,
     onUserClick: (String) -> Unit,
     onDoubleTap: () -> Unit,
 ) {
@@ -876,27 +920,6 @@ private fun ThreadDetailTopBar(
                 }
             }
         }
-        // 举报/打赏只针对楼主帖，随作者栏一并搬进顶栏，靠右排布
-        Icon(
-            painterResource(com.aazhou.mtforum.R.drawable.ic_report_shield),
-            contentDescription = "举报",
-            tint = colors.iconSecondary,
-            modifier = Modifier
-                .size(26.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onReport)
-                .padding(4.dp),
-        )
-        Icon(
-            painterResource(com.aazhou.mtforum.R.drawable.ic_reward_gift),
-            contentDescription = "赞赏",
-            tint = colors.iconSecondary,
-            modifier = Modifier
-                .size(26.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onReward)
-                .padding(4.dp),
-        )
         if (followEnabled) {
             Spacer(Modifier.width(8.dp))
             Text(
@@ -912,6 +935,71 @@ private fun ThreadDetailTopBar(
                     .padding(horizontal = 12.dp, vertical = 5.dp),
             )
         }
+        // 举报/赞赏只针对楼主帖，与下载一同收进「更多」菜单；下载期间菜单保持展开，
+        // 下载项显示「下载中…」并禁用，保存结束（downloadBusy 回落）自动收起
+        if (showMore) {
+            MoreMenu(
+                downloadBusy = downloadBusy,
+                onReport = onReport,
+                onReward = onReward,
+                onDownload = onDownload,
+            )
+        }
+    }
+}
+
+/** 「更多」竖展菜单：打赏 / 举报 / 下载，纯文字项。 */
+@Composable
+private fun MoreMenu(
+    downloadBusy: Boolean,
+    onReport: () -> Unit,
+    onReward: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    var wasBusy by remember { mutableStateOf(false) }
+    LaunchedEffect(downloadBusy) {
+        if (wasBusy && !downloadBusy) open = false
+        wasBusy = downloadBusy
+    }
+    Box {
+        Icon(
+            painterResource(com.aazhou.mtforum.R.drawable.ic_more),
+            contentDescription = "更多",
+            tint = LocalMtfColors.current.iconSecondary,
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .clickable(onClick = { open = true })
+                .padding(4.dp),
+        )
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+        ) {
+            val itemStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp)
+            DropdownMenuItem(
+                text = { Text("打赏", style = itemStyle) },
+                onClick = {
+                    open = false
+                    onReward()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("举报", style = itemStyle) },
+                onClick = {
+                    open = false
+                    onReport()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(if (downloadBusy) "下载中…" else "下载", style = itemStyle) },
+                enabled = !downloadBusy,
+                onClick = {
+                    onDownload()
+                },
+            )
+        }
     }
 }
 
@@ -920,7 +1008,7 @@ private fun ThreadDetailTopBar(
  * 作者信息栏已整体移入页面顶栏 ThreadDetailTopBar，此处不再重复。
  */
 @Composable
-private fun DetailHeader(
+internal fun DetailHeader(
     post: Post,
     subject: String?,
     forumName: String?,
@@ -1063,12 +1151,13 @@ private fun HiddenContentCard(onUnlock: () -> Unit) {
 
 /** 「全部评论 (N) [已折叠 N 条 / 收起已折叠]  [暂停/继续]  楼主 | 正序 | 倒序」。 */
 @Composable
-private fun CommentHeader(
+internal fun CommentHeader(
     total: Int?,
     folded: Int,
     foldExpanded: Boolean,
     opOnly: Boolean,
     orderType: Int,
+    sortable: Boolean = true,
     onToggleFold: () -> Unit,
     onOpOnly: (Boolean) -> Unit,
     onOrder: (Int) -> Unit,
@@ -1135,22 +1224,24 @@ private fun CommentHeader(
                     .clickable(onClick = onToggleAutoLoad)
                     .padding(1.dp),
             )
-            Spacer(Modifier.width(8.dp))
+            if (sortable) Spacer(Modifier.width(8.dp))
         }
-        SegmentedControl(
-            selected = when {
-                opOnly -> 0
-                orderType == 1 -> 2
-                else -> 1
-            },
-            onSelect = { index ->
-                when (index) {
-                    0 -> onOpOnly(true)
-                    1 -> onOrder(0)
-                    else -> onOrder(1)
-                }
-            },
-        )
+        if (sortable) {
+            SegmentedControl(
+                selected = when {
+                    opOnly -> 0
+                    orderType == 1 -> 2
+                    else -> 1
+                },
+                onSelect = { index ->
+                    when (index) {
+                        0 -> onOpOnly(true)
+                        1 -> onOrder(0)
+                        else -> onOrder(1)
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -1191,7 +1282,7 @@ private fun SegmentedControl(selected: Int, onSelect: (Int) -> Unit) {
 /** 顶层回复：头像 30dp、楼层号 11sp、昵称 14sp、引用卡、正文 15sp、底栏时间与操作。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ReplyBlock(
+internal fun ReplyBlock(
     reply: Post,
     children: List<Post>,
     subReplyTo: Map<String, String>,

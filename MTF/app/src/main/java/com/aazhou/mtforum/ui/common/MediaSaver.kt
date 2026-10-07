@@ -51,6 +51,19 @@ internal fun fileNameOf(url: String, fallbackExtension: String = "jpg"): String 
 internal fun saveToGallery(context: Context, url: String, bytes: ByteArray): Uri? =
     saveBytes(context, url, bytes, imagesDir(), mimeOf(url))
 
+/**
+ * 保存导出的帖子 HTML 到「下载/MTF」目录（API 29+ 无需存储权限）；失败返回 null。
+ * 媒体库的 RELATIVE_PATH 会自动创建目录，无需应用自己建文件夹。
+ */
+internal fun saveDocument(context: Context, fileName: String, bytes: ByteArray): Uri? =
+    saveBytes(context, fileName, bytes, "${Environment.DIRECTORY_DOWNLOADS}/MTF", "text/html")
+
+/** 删除一个已写入的媒体库文件（用户手动删除已下载帖子时调用）。 */
+internal fun deleteDocument(context: Context, uri: Uri?) {
+    if (uri == null) return
+    runCatching { context.contentResolver.delete(uri, null, null) }
+}
+
 private fun saveBytes(
     context: Context,
     url: String,

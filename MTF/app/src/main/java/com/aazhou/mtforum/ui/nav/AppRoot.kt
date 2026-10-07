@@ -27,6 +27,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.screen.forumlist.ForumListScreen
+import com.aazhou.mtforum.ui.screen.downloads.DownloadsScreen
 import com.aazhou.mtforum.ui.screen.guide.GuideScreen
 import com.aazhou.mtforum.ui.screen.home.HomeScreen
 import com.aazhou.mtforum.ui.screen.login.LoginScreen
@@ -36,6 +37,7 @@ import com.aazhou.mtforum.ui.screen.profile.ProfileScreen
 import com.aazhou.mtforum.ui.screen.search.SearchScreen
 import com.aazhou.mtforum.ui.screen.settings.SettingsScreen
 import com.aazhou.mtforum.ui.screen.threaddetail.ThreadDetailScreen
+import com.aazhou.mtforum.ui.screen.threaddetail.DownloadedThreadScreen
 import com.aazhou.mtforum.ui.screen.threadlist.ThreadListScreen
 import com.aazhou.mtforum.ui.screen.user.UserProfileScreen
 import com.aazhou.mtforum.ui.screen.verify.WafVerificationScreen
@@ -55,11 +57,14 @@ object Routes {
     const val USER = "user/{uid}"
     const val POST = "post/{fid}/{name}"
     const val NOTICE = "notice"
+    const val DOWNLOADS = "downloads"
+    const val DOWNLOADED_THREAD = "downloaded/{tid}"
 
     fun forum(fid: String, name: String) = "forum/$fid/${Uri.encode(name)}"
     fun thread(tid: String) = "thread/$tid"
     fun user(uid: String) = "user/$uid"
     fun post(fid: String, name: String) = "post/$fid/${Uri.encode(name)}"
+    fun downloadedThread(tid: String) = "downloaded/$tid"
 }
 
 @Composable
@@ -148,6 +153,7 @@ fun AppRoot(onToggleTheme: () -> Unit) {
                 ProfileScreen(
                     onLogin = { navController.navigate(Routes.LOGIN) },
                     onSettings = { navController.navigate(Routes.SETTINGS) },
+                    onDownloads = { navController.navigate(Routes.DOWNLOADS) },
                 )
             }
             composable(Routes.SEARCH) {
@@ -163,6 +169,23 @@ fun AppRoot(onToggleTheme: () -> Unit) {
             composable(Routes.NOTICE) {
                 NoticeScreen(
                     onBack = { navController.popBackStack() },
+                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                )
+            }
+            composable(Routes.DOWNLOADS) {
+                DownloadsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenThread = { tid -> navController.navigate(Routes.downloadedThread(tid)) },
+                )
+            }
+            composable(
+                Routes.DOWNLOADED_THREAD,
+                arguments = listOf(navArgument("tid") { type = NavType.StringType }),
+            ) { entry ->
+                DownloadedThreadScreen(
+                    tid = entry.arguments?.getString("tid").orEmpty(),
+                    onBack = { navController.popBackStack() },
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                 )
             }

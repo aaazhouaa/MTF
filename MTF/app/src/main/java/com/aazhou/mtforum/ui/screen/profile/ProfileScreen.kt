@@ -50,7 +50,7 @@ import com.aazhou.mtforum.ui.theme.dimImageInDark
 import com.aazhou.mtforum.ui.theme.accentTextColor
 
 @Composable
-fun ProfileScreen(onLogin: () -> Unit, onSettings: () -> Unit) {
+fun ProfileScreen(onLogin: () -> Unit, onSettings: () -> Unit, onDownloads: () -> Unit) {
     val context = LocalContext.current
     val colors = LocalMtfColors.current
     val viewModel: ProfileViewModel = appViewModel { ProfileViewModel(it.repository) }
@@ -93,6 +93,69 @@ fun ProfileScreen(onLogin: () -> Unit, onSettings: () -> Unit) {
             CreditsCard(profile)
         }
         MenuCard(onSettings = onSettings)
+        // 已下载的帖子：入口 + 保存位置说明（固定落在下载目录的 MTF 文件夹）
+        val downloadCount by context.container().downloadStore.items
+            .collectAsStateWithLifecycle(initialValue = emptyList())
+        DownloadsCard(onOpen = onDownloads, count = downloadCount.size)
+    }
+}
+
+/** 底部卡片：「已下载的帖子」入口，行下小字标明保存位置；副本只可手动删除。 */
+@Composable
+private fun DownloadsCard(onOpen: () -> Unit, count: Int) {
+    val colors = LocalMtfColors.current
+    ProfileCard(contentPadding = 0.dp) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .clickable(onClick = onOpen)
+                .padding(horizontal = 16.dp),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colors.quoteBackground),
+            ) {
+                Icon(
+                    painterResource(com.aazhou.mtforum.R.drawable.ic_download),
+                    contentDescription = null,
+                    tint = accentTextColor(),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Text(
+                "已下载的帖子",
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                color = bodyTextColor(),
+                modifier = Modifier.weight(1f),
+            )
+            if (count > 0) {
+                Text(
+                    "$count 个",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = colors.textSecondary,
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Icon(
+                painterResource(com.aazhou.mtforum.R.drawable.ic_arrow_right),
+                contentDescription = null,
+                tint = colors.textHint,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        HorizontalDivider(color = colors.divider, modifier = Modifier.padding(start = 66.dp))
+        Text(
+            "保存位置：手机下载目录 / MTF 文件夹（自动创建），只能手动删除，不占应用缓存",
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+            color = colors.textHint,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        )
     }
 }
 
