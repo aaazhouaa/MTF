@@ -33,7 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
+import com.aazhou.mtforum.ui.common.animateToTop
 import com.aazhou.mtforum.ui.common.container
+import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.DefaultThemeIndex
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -50,10 +52,17 @@ fun SettingsScreen() {
     val dimImagesInDark by themeStore.dimImagesInDark
         .collectAsStateWithLifecycle(initialValue = true)
     val colors = LocalMtfColors.current
+    val scrollState = rememberScrollState()
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("设置") }, expandedHeight = MtfTopBarHeight)
+            TopAppBar(
+                title = { Text("设置") },
+                modifier = Modifier.onDoubleTapToTop {
+                    scope.launch { scrollState.animateToTop() }
+                },
+                expandedHeight = MtfTopBarHeight,
+            )
         },
         containerColor = colors.background,
         // 见 UserProfileScreen：语义色取不到 contentColorFor 时会退回旧值
@@ -63,7 +72,7 @@ fun SettingsScreen() {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -24,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,11 +41,14 @@ import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
+import com.aazhou.mtforum.ui.common.animateToTop
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.accentTextColor
+import kotlinx.coroutines.launch
 
 /** 消息提醒页：对应网页端「我的」→「消息提醒」。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,6 +59,8 @@ fun NoticeScreen(
 ) {
     val viewModel: NoticeViewModel = appViewModel { NoticeViewModel(it.repository) }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -67,6 +74,9 @@ fun NoticeScreen(
                         )
                     }
                 },
+                modifier = Modifier.onDoubleTapToTop {
+                    scope.launch { listState.animateToTop() }
+                },
                 expandedHeight = MtfTopBarHeight,
             )
         },
@@ -79,6 +89,7 @@ fun NoticeScreen(
                     EmptyBox("暂无消息提醒", Modifier.padding(padding))
                 } else {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize().padding(padding),
                         contentPadding = PaddingValues(
                             top = 4.dp,

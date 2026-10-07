@@ -2,7 +2,6 @@ package com.aazhou.mtforum.ui.screen.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -39,8 +38,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,11 +48,14 @@ import com.aazhou.mtforum.data.model.Thread
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.LoadingBox
+import com.aazhou.mtforum.ui.common.RankCard
 import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.animateToTop
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
+import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -87,7 +87,7 @@ fun HomeScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val scrollToTop: () -> Unit = {
-        scope.launch { listState.animateScrollToItem(0) }
+        scope.launch { listState.animateToTop() }
     }
 
     Scaffold(
@@ -130,7 +130,7 @@ fun HomeScreen(
                     ) {
                         hot?.takeIf { it.hotThreads.isNotEmpty() }?.let { data ->
                             item(key = "hot-rank") {
-                                HotRankCard(data.hotThreads, onThreadClick)
+                                RankCard("热帖排行", data.hotThreads, onThreadClick)
                             }
                         }
                         items(current.data, key = { it.tid }) { thread ->
@@ -173,7 +173,7 @@ private fun HomeTopBar(
             .background(colors.topBar)
             .statusBarsPadding()
             // 子控件（搜索胶囊/图标）自己消费手势，故双击只会命中顶栏空白处
-            .pointerInput(Unit) { detectTapGestures(onDoubleTap = { onDoubleTap() }) }
+            .onDoubleTapToTop { onDoubleTap() }
             .padding(
                 start = 16.dp,
                 end = 12.dp,
@@ -245,68 +245,5 @@ private fun HomeTopBar(
                 .padding(7.dp),
         )
     }
-}
-
-/** 热帖排行卡片：15dp 圆角，彩色序号 + 单行标题 + 内部分隔线。 */
-@Composable
-private fun HotRankCard(threads: List<Thread>, onThreadClick: (String) -> Unit) {
-    val colors = LocalMtfColors.current
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 5.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(colors.surface)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-    ) {
-        Text(
-            "热帖排行",
-            style = MaterialTheme.typography.titleMedium.copy(fontSize = 19.sp),
-            fontWeight = FontWeight.Bold,
-            color = bodyTextColor(),
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-        )
-        threads.forEachIndexed { index, thread ->
-            val rank = index + 1
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { onThreadClick(thread.tid) }
-                    .padding(vertical = 8.dp),
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(rankColor(rank)),
-                ) {
-                    Text(
-                        rank.toString(),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                        color = Color.White,
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    thread.subject,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                    color = bodyTextColor(),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-}
-
-/** 序号底色：1 红 / 2 黄 / 3 绿 / 其余灰。 */
-private fun rankColor(rank: Int): Color = when (rank) {
-    1 -> Color(0xFFFF705E)
-    2 -> Color(0xFFFFB900)
-    3 -> Color(0xFFA8C500)
-    else -> Color(0xFFCCCCCC)
 }
 

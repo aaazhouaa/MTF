@@ -46,6 +46,7 @@ import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
+import com.aazhou.mtforum.ui.theme.dimImageInDark
 import com.aazhou.mtforum.ui.theme.accentTextColor
 
 @Composable
@@ -112,7 +113,8 @@ private fun InfoCard(
                 modifier = Modifier
                     .size(72.dp)
                     .clip(CircleShape)
-                    .background(colors.quoteBackground),
+                    .background(colors.quoteBackground)
+                    .dimImageInDark(),
             )
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {

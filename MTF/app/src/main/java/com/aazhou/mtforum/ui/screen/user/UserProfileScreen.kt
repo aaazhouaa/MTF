@@ -26,6 +26,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,10 +43,14 @@ import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
+import com.aazhou.mtforum.ui.common.animateToTop
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.accentTextColor
+import com.aazhou.mtforum.ui.theme.dimImageInDark
+import kotlinx.coroutines.launch
 
 /** 他人个人空间：头像/昵称/等级/用户组 + 五列统计 + 积分金币在线。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,6 +59,8 @@ fun UserProfileScreen(uid: String, onBack: () -> Unit) {
     val colors = LocalMtfColors.current
     val viewModel: UserProfileViewModel = appViewModel { UserProfileViewModel(uid, it.repository) }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val scrollState = rememberScrollState()
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         containerColor = colors.background,
@@ -82,6 +89,9 @@ fun UserProfileScreen(uid: String, onBack: () -> Unit) {
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
+                modifier = Modifier.onDoubleTapToTop {
+                    scope.launch { scrollState.animateToTop() }
+                },
                 expandedHeight = MtfTopBarHeight,
             )
         },
@@ -93,7 +103,7 @@ fun UserProfileScreen(uid: String, onBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(scrollState)
                     .padding(top = 12.dp),
             ) {
                 InfoCard(current.data)
@@ -115,7 +125,8 @@ private fun InfoCard(profile: UserProfile) {
                 modifier = Modifier
                     .size(72.dp)
                     .clip(CircleShape)
-                    .background(colors.quoteBackground),
+                    .background(colors.quoteBackground)
+                    .dimImageInDark(),
             )
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {

@@ -88,16 +88,19 @@ import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.PostContent
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.VideoPlayerScreen
+import com.aazhou.mtforum.ui.common.animateToTop
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.collectImageUrls
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.plainTextOf
+import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.accentTextColor
+import com.aazhou.mtforum.ui.theme.dimImageInDark
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -276,6 +279,7 @@ fun ThreadDetailScreen(
                 onReport = reportThread,
                 onReward = rewardThread,
                 onUserClick = onUserClick,
+                onDoubleTap = { scope.launch { listState.animateToTop() } },
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -534,7 +538,11 @@ fun ThreadDetailScreen(
                                 AsyncImage(
                                     model = user.avatarUrl,
                                     contentDescription = null,
-                                    modifier = Modifier.size(32.dp).clip(CircleShape).background(colors.quoteBackground),
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(colors.quoteBackground)
+                                        .dimImageInDark(),
                                 )
                                 Spacer(Modifier.width(10.dp))
                                 Text(
@@ -774,12 +782,15 @@ private fun ThreadDetailTopBar(
     onReport: () -> Unit,
     onReward: () -> Unit,
     onUserClick: (String) -> Unit,
+    onDoubleTap: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(colors.topBar)
+            // 子控件（返回/头像/关注等）自己消费手势，故双击只会命中顶栏空白处
+            .onDoubleTapToTop(onDoubleTap)
             .statusBarsPadding()
             .padding(
                 start = 12.dp,
@@ -808,6 +819,7 @@ private fun ThreadDetailTopBar(
                 .size(30.dp)
                 .clip(CircleShape)
                 .background(colors.quoteBackground)
+                .dimImageInDark()
                 .userClick(post.authorUid, onUserClick),
         )
         Spacer(Modifier.width(8.dp))
@@ -1004,14 +1016,19 @@ private fun HiddenContentCard(onUnlock: () -> Unit) {
             )
         }
         Spacer(Modifier.width(8.dp))
+        // 与标题同款文本：深色下原先的实心主色胶囊过亮，改成主题色描边、无底色
         Text(
             "去回复",
-            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp),
             fontWeight = FontWeight.Bold,
-            color = Color.White,
+            color = bodyTextColor(),
             modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.primary)
+                .clip(RoundedCornerShape(50))
+                .border(
+                    0.1.dp,
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.69f),
+                    RoundedCornerShape(50),
+                )
                 .clickable(onClick = onUnlock)
                 .padding(horizontal = 12.dp, vertical = 6.dp),
         )
@@ -1146,6 +1163,7 @@ private fun ReplyBlock(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
+                    .dimImageInDark()
                     .userClick(reply.authorUid, onUserClick),
             )
             Spacer(Modifier.width(9.dp))
@@ -1299,6 +1317,7 @@ private fun NestedReply(
                 modifier = Modifier
                     .size(22.dp)
                     .clip(CircleShape)
+                    .dimImageInDark()
                     .userClick(child.authorUid, onUserClick),
             )
             Spacer(Modifier.width(8.dp))

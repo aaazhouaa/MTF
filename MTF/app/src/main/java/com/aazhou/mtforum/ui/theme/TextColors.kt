@@ -44,19 +44,20 @@ private fun Color.dimmedForDark(): Color =
     if (LocalIsDarkTheme.current) copy(alpha = DarkBrightTextAlpha) else this
 
 /**
- * 深色模式是否压暗内容图片（帖子配图、全屏查看），可在设置页关闭。
+ * 深色模式是否压暗站点图片（头像、正文配图、封面、全屏查看），可在设置页关闭。
  * 与深浅模式一样经主题层灌注，页面直接读本地取用。
  */
 val LocalDimImagesInDark = staticCompositionLocalOf { true }
 
 /**
- * 给内容图片压一层背景色膜：浅色模式，或用户在设置里关掉压暗时原样返回。
+ * 给站点图片压一层背景色膜：浅色模式，或用户在设置里关掉压暗时原样返回。
  *
- * 膜色取页面底色，浅色截图的高亮区被拉向页面底色而不是统一发灰，色相与细节保留。
+ * 论坛里的头像与配图多为浅色截图，纯亮面在深色底上很刺眼；膜色取页面底色，
+ * 高亮区被拉向底色而不是统一发灰，色相与细节保留。行内表情尺寸太小，不压。
  * 修饰符必须排在 clip 之后、border 之前：圆角内才裁得干净，描边也不会被膜盖暗。
  */
 @Composable
-fun Modifier.dimContentImage(): Modifier {
+fun Modifier.dimImageInDark(): Modifier {
     if (!LocalIsDarkTheme.current || !LocalDimImagesInDark.current) return this
     val scrim = LocalMtfColors.current.background
     return drawWithContent {

@@ -6,6 +6,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/** 站点标题锚点里的图标字体字符：私用区 U+E64E，无字形不打印，但会占一个字符宽度。 */
+private const val ICON_FONT_CHAR = "\uE64E"
+
 class ForumParserTest {
 
     private val forumListHtml = """
@@ -426,6 +429,41 @@ class ForumParserTest {
         """.trimIndent()
         val thread = ForumParser.parseForumPage(html, 1).threads.single()
         assertTrue(thread.imageUrls.isEmpty())
+    }
+
+    @Test
+    fun cardTitleDropsInvisibleIconFontChar() {
+        // 站点在标题锚点里塞图标字体字符：<span class="bg_a f_f"> 装着私用区 U+E64E。
+        // Jsoup 的 text() 会把子元素文本拼进标题，trim() 去不掉；它在 Compose 里占一个
+        // 字符宽度，标题就比同一张卡的正文多缩进。详情页标题取 document.title()，不受影响。
+        val html = """
+            <div class="comiis_forumlist comiis_xznlist mb0 cl"><ul>
+            <li class="forumlist_li comiis_znalist bg_f b_t b_b">
+              <div class="forumlist_li_top cl">
+                <a href="https://bbs.binmt.cc/home.php?mod=space&uid=1" class="wblist_tximg"><img class="top_tximg" src="https://avatar.mt2.cn/avatar.php?uid=1"></a>
+                <h2><a href="https://bbs.binmt.cc/home.php?mod=space&uid=1" class="top_user">someone</a></h2>
+                <div class="forumlist_li_time"><span class="f_d">1 小时前</span></div>
+              </div>
+              <div class="mmlist_li_box cl">
+                <h2><a href="https://bbs.binmt.cc/thread-400001-1-1.html">
+                  <span class="bg_a f_f">{{ICON}}</span>
+                  MT论坛1.08</a></h2>
+                <div class="list_body cl"><a href="https://bbs.binmt.cc/thread-400001-1-1.html" class="f_b">
+                  <span class="bg_a f_f">{{ICON}}</span>
+                  【新增】留言板功能</a></div>
+              </div>
+              <div class="comiis_xznalist_bottom cl"><ul class="cl">
+                <li><span class="comiis_tm">1</span></li>
+                <li><span class="comiis_tm">2</span></li>
+                <li><span class="comiis_tm">3</span></li>
+              </ul></div>
+            </li>
+            </ul></div>
+        """.trimIndent().replace("{{ICON}}", ICON_FONT_CHAR)
+        val thread = ForumParser.parseForumPage(html, 1).threads.single()
+        assertEquals("400001", thread.tid)
+        assertEquals("MT论坛1.08", thread.subject)
+        assertEquals("【新增】留言板功能", thread.excerpt)
     }
 
     @Test

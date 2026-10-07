@@ -1,25 +1,31 @@
 package com.aazhou.mtforum.ui.screen.search
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,24 +39,36 @@ import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
+import com.aazhou.mtforum.ui.common.animateToTop
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.common.onDoubleTapToTop
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(onThreadClick: (tid: String) -> Unit) {
     val viewModel: SearchViewModel = appViewModel { SearchViewModel(it.repository) }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
     var input by remember { mutableStateOf("") }
     // 点击卡片配图一律进内置全屏查看器；urls 为本卡全部配图，便于左右翻页
     var preview by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
     val openImage: (List<String>, Int) -> Unit = { urls, index ->
         if (urls.isNotEmpty()) preview = urls to index
     }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("搜索") }, expandedHeight = MtfTopBarHeight)
+            TopAppBar(
+                title = { Text("搜索") },
+                modifier = Modifier.onDoubleTapToTop {
+                    scope.launch { listState.animateToTop() }
+                },
+                expandedHeight = MtfTopBarHeight,
+            )
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
@@ -83,7 +101,19 @@ fun SearchScreen(onThreadClick: (tid: String) -> Unit) {
                     if (result.threads.isEmpty()) {
                         EmptyBox("没有找到相关主题")
                     } else {
+                        // 滑到接近末尾时自动追加下一页
+                        val shouldLoadMore by remember {
+                            derivedStateOf {
+                                val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                                val total = listState.layoutInfo.totalItemsCount
+                                total > 0 && last >= total - 3
+                            }
+                        }
+                        LaunchedEffect(shouldLoadMore) {
+                            if (shouldLoadMore) viewModel.loadMore()
+                        }
                         LazyColumn(
+                            state = listState,
                             contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
                             modifier = Modifier.fillMaxSize(),
                         ) {
@@ -94,20 +124,14 @@ fun SearchScreen(onThreadClick: (tid: String) -> Unit) {
                                     onImageClick = openImage,
                                 )
                             }
-                            item {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    TextButton(
-                                        onClick = { viewModel.search(viewModel.keyword, viewModel.page - 1) },
-                                        enabled = viewModel.page > 1,
-                                    ) { Text("上一页") }
-                                    Text("第 ${viewModel.page} 页", modifier = Modifier.padding(horizontal = 8.dp))
-                                    TextButton(
-                                        onClick = { viewModel.search(viewModel.keyword, viewModel.page + 1) },
-                                        enabled = result.hasNext,
-                                    ) { Text("下一页") }
+                            if (loadingMore) {
+                                item(key = "loading-more") {
+                                    Box(
+                                        Modifier.fillMaxWidth().padding(16.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        CircularProgressIndicator(Modifier.size(22.dp))
+                                    }
                                 }
                             }
                         }

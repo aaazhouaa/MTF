@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -18,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -29,25 +31,37 @@ import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
+import com.aazhou.mtforum.ui.common.animateToTop
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.accentTextColor
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ForumListScreen(onForumClick: (fid: String, name: String) -> Unit) {
     val viewModel: ForumListViewModel = appViewModel { ForumListViewModel(it.repository) }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("MT论坛") }, expandedHeight = MtfTopBarHeight)
+            TopAppBar(
+                title = { Text("MT论坛") },
+                modifier = Modifier.onDoubleTapToTop {
+                    scope.launch { listState.animateToTop() }
+                },
+                expandedHeight = MtfTopBarHeight,
+            )
         },
     ) { padding ->
         when (val current = state) {
             is UiState.Loading -> LoadingBox(Modifier.padding(padding))
             is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.padding(padding))
             is UiState.Success -> LazyColumn(
+                state = listState,
                 contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
                 modifier = Modifier
                     .fillMaxSize()

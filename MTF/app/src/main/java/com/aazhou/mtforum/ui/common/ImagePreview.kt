@@ -70,7 +70,7 @@ import com.aazhou.mtforum.ui.theme.DarkImageDimAlpha
 import com.aazhou.mtforum.ui.theme.LocalDimImagesInDark
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
-import com.aazhou.mtforum.ui.theme.dimContentImage
+import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -338,7 +338,7 @@ private fun ZoomableImage(
                     translationY = offset.y
                 }
                 // 压暗膜排在变换之后：跟着图片一起缩放，放大后不会停在原处
-                .dimContentImage(),
+                .dimImageInDark(),
         )
         if (loading) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(32.dp))
         if (failed) {

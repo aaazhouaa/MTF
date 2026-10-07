@@ -100,6 +100,28 @@ object ForumParser {
 
     private fun doc(html: String): Document = Jsoup.parse(html, BASE)
 
+    /**
+     * 剥掉不可见字符后再 trim。
+     *
+     * 站点往列表文本里混图标字体字符：标题锚点里有 `<span class="bg_a f_f">` 装着私用区
+     * 字符（实测 U+E64E），`Element.text()` 会把子元素文本一并拼进标题，而 `trim()` 只去
+     * 空白、去不掉它。该字符无字形、不打印，在 Compose 里却仍占一个字符宽度，于是标题比
+     * 同一张卡的正文多缩进一点，且只发生在带这类标记的帖子上——详情页标题取自
+     * `document.title()`、不含它，所以详情页看着是左对齐的。
+     */
+    private fun String.stripInvisibleChars(): String = filterNot { it.isInvisibleChar() }.trim()
+
+    /**
+     * 不可见但占位的字符：Unicode 私用区（站点图标字体都落在这里）与零宽连接符、软连字符等
+     * 无字形格式字符。注意 `Char.isWhitespace()` 对它们一律返回 false，`trim()` 拦不住。
+     */
+    private fun Char.isInvisibleChar(): Boolean {
+        val cp = code
+        return cp in 0xE000..0xF8FF ||
+            cp == 0x200B || cp == 0x200C || cp == 0x200D || cp == 0x2060 ||
+            cp == 0xFEFF || cp == 0x00AD || cp == 0x180E
+    }
+
     /** 编辑标记保留「时间 编辑」同行小字；取不到时间则返回 null，不显示。 */
     private fun editedBadge(marker: String?): String? =
         RE_EDIT_TIME.find(marker.orEmpty())?.value?.let { "$it 编辑" }
@@ -135,7 +157,7 @@ object ForumParser {
             announcements.add(
                 Thread(
                     tid = tid,
-                    subject = a.text().trim().removePrefix("置顶").trim(),
+                    subject = a.text().stripInvisibleChars().removePrefix("置顶").trim(),
                     isAnnouncement = true,
                 )
             )
@@ -149,7 +171,7 @@ object ForumParser {
                 threads.add(
                 Thread(
                     tid = tid,
-                    subject = titleA.text().trim(),
+                    subject = titleA.text().stripInvisibleChars(),
                     authorName = authorA?.text()?.trim(),
                     authorUid = RE_UID.find(authorA?.attr("href") ?: "")?.groupValues?.get(1),
                     avatarUrl = li.selectFirst("img.top_tximg")?.attr("src"),
@@ -157,7 +179,7 @@ object ForumParser {
                     timeText = li.selectFirst("div.forumlist_li_time span")?.text()?.trim(),
                     replyCount = li.selectFirst("div.comiis_xznalist_bottom li a[href*=thread-] span.comiis_tm")?.text()?.trim(),
                     viewCount = li.select("div.comiis_xznalist_bottom li span.comiis_tm").lastOrNull()?.text()?.trim(),
-                    excerpt = li.selectFirst("div.list_body a")?.text()?.trim(),
+                    excerpt = li.selectFirst("div.list_body a")?.text()?.stripInvisibleChars(),
                     forumName = li.selectFirst("div.comiis_xznalist_bk a[href*=forum-]")?.let { a ->
                         a.ownText().trim().ifEmpty { a.text().trim() }
                     }?.ifEmpty { null },

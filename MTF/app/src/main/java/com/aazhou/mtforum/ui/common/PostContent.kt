@@ -67,7 +67,7 @@ import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.DarkBrightTextAlpha
 import com.aazhou.mtforum.ui.theme.bodyTextColor
-import com.aazhou.mtforum.ui.theme.dimContentImage
+import com.aazhou.mtforum.ui.theme.dimImageInDark
 import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.MtfColors
 
@@ -440,7 +440,7 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
                 .aspectRatio(aspectRatio)
                 .clip(RoundedCornerShape(6.dp))
                 .background(colors.quoteBackground)
-                .dimContentImage()
+                .dimImageInDark()
                 .then(
                     if (onImageClick != null) Modifier.clickable { onImageClick() } else Modifier
                 ),
@@ -483,7 +483,7 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
                             onError = { state ->
                                 android.util.Log.e("MTF-IMG", "grid fail url=$url", state.result.throwable)
                             },
-                            modifier = Modifier.fillMaxSize().dimContentImage(),
+                            modifier = Modifier.fillMaxSize().dimImageInDark(),
                         )
                         // 「+N」遮罩压在压暗膜之上：角标与计数不被图片亮度影响
                         if (overflow > 0 && rowIndex * columns + columnIndex == 8) {
@@ -535,7 +535,7 @@ private fun InlineVideo(url: String, poster: String?, onPlay: (() -> Unit)?) {
                     onError = { state ->
                         android.util.Log.e("MTF-IMG", "video poster fail url=$poster", state.result.throwable)
                     },
-                    modifier = Modifier.fillMaxSize().dimContentImage(),
+                    modifier = Modifier.fillMaxSize().dimImageInDark(),
                 )
             }
             Box(
@@ -652,7 +652,9 @@ internal fun smileyInlineContent(smiles: Map<Char, String>): Map<String, InlineT
                 model = url,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
+                // 表情与配图/头像同套深色压暗：站点表情多为浅色线条画，深色底上很跳。
+                // 膜色即页面底色，emo 四周的透明区不会被看出方块
+                modifier = Modifier.fillMaxSize().dimImageInDark(),
             )
         }
     }

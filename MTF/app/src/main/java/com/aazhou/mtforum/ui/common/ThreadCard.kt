@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -39,7 +40,7 @@ import com.aazhou.mtforum.data.model.Thread
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.MtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
-import com.aazhou.mtforum.ui.theme.dimContentImage
+import com.aazhou.mtforum.ui.theme.dimImageInDark
 
 /**
  * 帖子卡片流：作者行（头像/昵称/等级/时间/版块）+ 标题 + 摘要 + 封面图 + 三项统计。
@@ -47,6 +48,7 @@ import com.aazhou.mtforum.ui.theme.dimContentImage
  * 首页、版块内主题列表、搜索结果三处列表共用同一套卡片，保证不同入口的帖子观感一致。
  * [showForumName] 为 false 时不显示作者行右端的版块 chip——列表本身已限定在单个版块内时，
  * 每张卡都重复同一个版块名没有信息量。
+ * 作者行内只有昵称/时间列吃 weight：chip 取自身宽度才落在右端，并与昵称同行（见下方注释）。
  */
 @Composable
 fun ThreadCard(
@@ -63,13 +65,16 @@ fun ThreadCard(
             .clip(RoundedCornerShape(12.dp))
             .background(colors.surface)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 13.dp),
+            // 内容左界必须落在 16dp（6dp 外边距 + 10dp 内边距）：与详情页标题/正文、
+            // 评论列表、首页顶栏的 16dp 是同一条线；此前 14dp 内边距会把卡片内容
+            // 整体推到 20dp，同一帖子在列表里比详情页标题多缩进 4dp
+            .padding(horizontal = 10.dp, vertical = 13.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
                 model = thread.avatarUrl,
                 contentDescription = null,
-                modifier = Modifier.size(38.dp).clip(CircleShape),
+                modifier = Modifier.size(38.dp).clip(CircleShape).dimImageInDark(),
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
@@ -89,11 +94,20 @@ fun ThreadCard(
                     )
                 }
             }
-            // 版块 chip 靠作者行右端：靠 fill=false 只压缩自己（长版名省略号），
-            // 昵称列始终占满剩余空间，不会再被挤到第二行
+            // 版块 chip 贴作者行右端、与昵称同高：
+            // 1) 该行只给昵称/时间列 weight，chip 取自身宽度，才能真的落到右端——
+            //    给 chip 也加 weight(fill=false) 时，它让出的剩余空间不会回流给前面的列，
+            //    胶囊会停在卡片中间，右侧空一片；
+            // 2) align(Top) 覆盖行的 CenterVertically，否则 24dp 的胶囊会被压到
+            //    昵称与时间两行之间；
+            // 3) 96dp 上限兜住超长版名（省略号截断），昵称列始终留有空间。
             if (showForumName && !thread.forumName.isNullOrBlank()) {
                 Spacer(Modifier.width(8.dp))
-                ForumNameChip(thread.forumName, colors, Modifier.weight(1f, fill = false))
+                ForumNameChip(
+                    thread.forumName,
+                    colors,
+                    Modifier.align(Alignment.Top).widthIn(max = 96.dp),
+                )
             }
         }
         Text(
@@ -165,7 +179,7 @@ private fun CardSingleImage(url: String, onClick: () -> Unit) {
             .height(155.dp)
             .clip(shape)
             .background(colors.quoteBackground)
-            .dimContentImage()
+            .dimImageInDark()
             .border(1.dp, colors.divider, shape)
             .clickable(onClick = onClick),
     )
@@ -277,7 +291,7 @@ private fun CardImage(url: String, modifier: Modifier) {
         onError = { state ->
             android.util.Log.e("MTF-IMG", "card fail url=$url", state.result.throwable)
         },
-        modifier = modifier.dimContentImage(),
+        modifier = modifier.dimImageInDark(),
     )
 }
 

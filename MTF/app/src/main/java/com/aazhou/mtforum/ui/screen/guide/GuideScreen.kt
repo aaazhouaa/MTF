@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -23,6 +24,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,8 +38,12 @@ import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
+import com.aazhou.mtforum.ui.common.animateToTop
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.common.onDoubleTapToTop
+import com.aazhou.mtforum.ui.theme.dimImageInDark
+import kotlinx.coroutines.launch
 
 /** 导读-最新发表。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,10 +51,18 @@ import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 fun GuideScreen(onThreadClick: (tid: String) -> Unit) {
     val viewModel: GuideViewModel = appViewModel { GuideViewModel(it.repository) }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("导读") }, expandedHeight = MtfTopBarHeight)
+            TopAppBar(
+                title = { Text("导读") },
+                modifier = Modifier.onDoubleTapToTop {
+                    scope.launch { listState.animateToTop() }
+                },
+                expandedHeight = MtfTopBarHeight,
+            )
         },
     ) { padding ->
         when (val current = state) {
@@ -60,6 +74,7 @@ fun GuideScreen(onThreadClick: (tid: String) -> Unit) {
                     EmptyBox("暂无主题", Modifier.padding(padding))
                 } else {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize().padding(padding),
                         contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
                     ) {
@@ -101,7 +116,7 @@ private fun GuideRow(thread: Thread, onClick: () -> Unit) {
         AsyncImage(
             model = thread.avatarUrl,
             contentDescription = null,
-            modifier = Modifier.size(36.dp).clip(CircleShape),
+            modifier = Modifier.size(36.dp).clip(CircleShape).dimImageInDark(),
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {

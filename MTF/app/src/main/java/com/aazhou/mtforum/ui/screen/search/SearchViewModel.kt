@@ -17,6 +17,9 @@ class SearchViewModel(
     private val _state = MutableStateFlow<UiState<SearchResult>?>(null)
     val state: StateFlow<UiState<SearchResult>?> = _state.asStateFlow()
 
+    private val _loadingMore = MutableStateFlow(false)
+    val loadingMore: StateFlow<Boolean> = _loadingMore.asStateFlow()
+
     var keyword: String = ""
         private set
     var page: Int = 1
@@ -33,6 +36,27 @@ class SearchViewModel(
             } catch (e: Exception) {
                 UiState.Error(e.message ?: "搜索失败")
             }
+        }
+    }
+
+    /** 滑到底部时追加下一页；失败即停止继续请求。 */
+    fun loadMore() {
+        if (_loadingMore.value) return
+        val current = (_state.value as? UiState.Success)?.data ?: return
+        if (!current.hasNext) return
+        _loadingMore.value = true
+        viewModelScope.launch {
+            runCatching { repository.search(keyword, page + 1) }
+                .onSuccess { next ->
+                    page += 1
+                    _state.value = UiState.Success(
+                        SearchResult(current.threads + next.threads, next.hasNext),
+                    )
+                }
+                .onFailure {
+                    _state.value = UiState.Success(current.copy(hasNext = false))
+                }
+            _loadingMore.value = false
         }
     }
 }
