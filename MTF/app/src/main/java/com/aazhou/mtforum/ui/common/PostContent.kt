@@ -29,6 +29,7 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,6 +66,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.PostQuote
+import com.aazhou.mtforum.image.ImageAspectCache
+import com.aazhou.mtforum.image.imageAspectRatio
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.DarkBrightTextAlpha
@@ -427,8 +430,14 @@ private fun PostTableRow(
 @Composable
 private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modifier = Modifier) {
     val colors = LocalMtfColors.current
-    // 宽高比在图片加载完成后才可知，先给 4:3 占位避免布局跳动
-    var aspectRatio by remember(url) { mutableStateOf(4f / 3f) }
+    // 宽高比预取命中时首次测量即终态：滚动途中图片加载完成不会再撑高所在 item，
+    // LazyColumn 的滚动锚点失配导致的跳屏随之消失；未命中仍回落 4:3 占位
+    val cachedAspect = ImageAspectCache.aspectOf(url)
+    var aspectRatio by remember(url) { mutableStateOf(cachedAspect ?: 4f / 3f) }
+    // 预取在本项组合之后才完成时，缓存写入会触发重组，此时按缓存校正一次
+    LaunchedEffect(url, cachedAspect) {
+        if (cachedAspect != null && aspectRatio != cachedAspect) aspectRatio = cachedAspect
+    }
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val maxImageWidth = maxWidth * 0.92f
         AsyncImage(
@@ -437,10 +446,8 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
             contentScale = ContentScale.Fit,
             onSuccess = { state ->
                 val drawable = state.result.drawable
-                if (drawable.intrinsicWidth > 0 && drawable.intrinsicHeight > 0) {
-                    // 限制最大高宽比为 1.25，竖长图不占满多屏
-                    aspectRatio = (drawable.intrinsicWidth.toFloat() / drawable.intrinsicHeight)
-                        .coerceAtLeast(0.8f)
+                imageAspectRatio(drawable.intrinsicWidth, drawable.intrinsicHeight)?.let {
+                    aspectRatio = it
                 }
             },
             onError = { state ->

@@ -81,12 +81,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.imageLoader
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.ui.common.BottomBarBottomMargin
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.HintToast
 import com.aazhou.mtforum.ui.common.ImagePreview
+import com.aazhou.mtforum.image.ImageAspectCache
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.PostContent
 import com.aazhou.mtforum.ui.common.UiState
@@ -339,9 +341,13 @@ fun ThreadDetailScreen(
                     // 楼层会在后台一批批变多，全量解析正文挪出主线程，否则每批
                     // 新增楼层都要在组合时重解析全部正文，长帖直接掉帧。
                     val pageImages by produceState(initialValue = emptyList<String>(), data.posts) {
-                        value = withContext(Dispatchers.Default) {
+                        val urls = withContext(Dispatchers.Default) {
                             data.posts.flatMap { collectImageUrls(it.contentHtml) }
                         }
+                        value = urls
+                        // 配图真实宽高比随楼层数据一并预取：正文单图首次组合即按终态
+                        // 测量，快速滑动时不会因图片加载完成而撑高所在 item、列表跳屏
+                        ImageAspectCache.prefetch(context, context.imageLoader, urls)
                     }
                     // 楼中楼树与灌水集合在 ViewModel 后台算好，这里只消费，
                     // 避免主线程做 O(n²) 引用匹配与逐楼层 Jsoup 判定
