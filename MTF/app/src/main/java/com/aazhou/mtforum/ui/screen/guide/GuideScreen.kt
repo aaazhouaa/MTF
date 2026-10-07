@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.ui.screen.guide
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.Thread
+import com.aazhou.mtforum.ui.common.ActionHint
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
@@ -49,12 +54,24 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GuideScreen(onThreadClick: (tid: String) -> Unit) {
-    val viewModel: GuideViewModel = appViewModel { GuideViewModel(it.repository) }
+    val viewModel: GuideViewModel = appViewModel { GuideViewModel(it.repository, it.contentCache) }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
+
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
     Scaffold(
+        // 提示走中偏上的轻卡片：应用底栏是浮层，贴底的 Snackbar 会被它整块压住
+        snackbarHost = {
+            Box(Modifier.fillMaxSize()) {
+                ActionHint(
+                    actionMessage,
+                    { viewModel.consumeActionMessage() },
+                    Modifier.align(BiasAlignment(0f, -0.45f)),
+                )
+            }
+        },
         topBar = {
             TopAppBar(
                 title = { Text("导读") },

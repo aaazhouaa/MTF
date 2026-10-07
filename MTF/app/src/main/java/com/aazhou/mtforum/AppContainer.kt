@@ -1,6 +1,7 @@
 package com.aazhou.mtforum
 
 import android.app.Application
+import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.ForumRepository
@@ -22,6 +23,9 @@ class AppContainer(application: Application) {
     val actionStore = ActionStore(application)
     val httpClient = HttpClient()
     val repository = ForumRepository(httpClient)
+
+    /** 本地内容缓存：一个 key 一个 JSON 文件，置于 cacheDir（临时性质，系统空间紧张可回收）。 */
+    val contentCache = ContentCache(java.io.File(application.cacheDir, "mtf_content"))
 
     init {
         appScope.launch {

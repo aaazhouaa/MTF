@@ -61,6 +61,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -84,6 +85,7 @@ import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.ui.common.BottomBarBottomMargin
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
+import com.aazhou.mtforum.ui.common.HintToast
 import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.PostContent
@@ -126,7 +128,7 @@ fun ThreadDetailScreen(
     val colors = LocalMtfColors.current
     val container = context.container()
     val viewModel: ThreadDetailViewModel = appViewModel {
-        ThreadDetailViewModel(tid, it.repository, it.actionStore, it.sessionStore.uid)
+        ThreadDetailViewModel(tid, it.repository, it.actionStore, it.contentCache, it.sessionStore.uid)
     }
     val myUid by viewModel.myUid.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -197,11 +199,14 @@ fun ThreadDetailScreen(
             else -> Unit
         }
     }
+    // 加载/操作类提示改走中偏上的轻卡片：这类提示出现时内容往往还在（如只剩缓存），
+    // 必须盖在内容之上，底部 Snackbar 会被底栏与长列表挤没。
+    var hint by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(actionMessage) {
-        actionMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.consumeActionMessage()
-        }
+        val message = actionMessage ?: return@LaunchedEffect
+        hint = message
+        // 熄灭由 HintToast 自己计时；这里立刻清掉 ViewModel 那条，下一条消息才能重新触发
+        viewModel.consumeActionMessage()
     }
 
     LaunchedEffect(pendingScrollAnchor) {
@@ -320,6 +325,7 @@ fun ThreadDetailScreen(
                 .fillMaxSize()
                 .layerBackdrop(replyBarBackdrop),
         ) {
+        // 轻提示浮在内容之上，位置中偏上：既压得住正文，又不遮顶部作者栏
         when (val current = state) {
             is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
             is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.fillMaxSize())
@@ -472,6 +478,12 @@ fun ThreadDetailScreen(
                 }
             }
         }
+        // 轻提示必须最后画：Box 按子项顺序绘制，放在前面会被 LazyColumn 的楼层盖住
+        HintToast(
+            message = hint,
+            onDismiss = { hint = null },
+            modifier = Modifier.align(BiasAlignment(0f, -0.5f)),
+        )
         }
     }
 
@@ -904,7 +916,7 @@ private fun ThreadDetailTopBar(
 @Composable
 private fun DetailHeader(
     post: Post,
-    subject: String,
+    subject: String?,
     forumName: String?,
     onImageClick: (List<String>, Int) -> Unit,
     onVideoClick: ((String) -> Unit)? = null,
@@ -915,7 +927,7 @@ private fun DetailHeader(
     val colors = LocalMtfColors.current
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
         Text(
-            text = subject,
+            text = subject.orEmpty(),
             style = MaterialTheme.typography.headlineSmall.copy(fontSize = 20.sp, lineHeight = 29.sp),
             fontWeight = FontWeight.Bold,
             color = bodyTextColor(),

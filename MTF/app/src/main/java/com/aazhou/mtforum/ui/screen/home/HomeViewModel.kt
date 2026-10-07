@@ -2,6 +2,8 @@ package com.aazhou.mtforum.ui.screen.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aazhou.mtforum.data.cache.CacheKeys
+import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.model.HomeData
 import com.aazhou.mtforum.data.model.Thread
 import com.aazhou.mtforum.data.repo.ForumRepository
@@ -10,9 +12,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 class HomeViewModel(
     private val repository: ForumRepository,
+    private val contentCache: ContentCache,
 ) : ViewModel() {
 
     /** 顶部热帖排行（毛玻璃卡片头部用）。 */
@@ -33,17 +38,35 @@ class HomeViewModel(
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
+    /** 一次性提示（如「新数据获取失败」）；界面展示后调 [consumeActionMessage] 清掉。 */
+    private val _actionMessage = MutableStateFlow<String?>(null)
+    val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
+
+    fun consumeActionMessage() {
+        _actionMessage.value = null
+    }
+
     private var page = 1
+
+    private val cacheJson = Json { ignoreUnknownKeys = true }
 
     init {
         load()
     }
 
     fun load() {
-        page = 1
-        _state.value = UiState.Loading
         _hasNext.value = true
         viewModelScope.launch {
+            // 有缓存就先摆出来（不走全屏 Loading），网络回来再原地替换
+            val cached = contentCache.read(CacheKeys.home(), CacheKeys.LIST_TTL) {
+                cacheJson.decodeFromString<CachedFeed>(it)
+            }
+            if (cached != null) {
+                _hot.value = cached.hot
+                _state.value = UiState.Success(cached.threads)
+            } else if (_state.value !is UiState.Success) {
+                _state.value = UiState.Loading
+            }
             reload()
         }
     }
@@ -70,9 +93,17 @@ class HomeViewModel(
             val first = repository.homeFeed(1)
             page = 1
             _hasNext.value = first.hasNext
-            UiState.Success(first.threads)
+            _state.value = UiState.Success(first.threads)
+            saveFeedToCache()
+            _state.value
         } catch (e: Exception) {
-            if (_state.value is UiState.Success) _state.value else UiState.Error(e.message ?: "加载失败")
+            // 有缓存就留着旧内容，只提示这次没拿到新的
+            if (_state.value is UiState.Success) {
+                _actionMessage.value = "新数据获取失败"
+                _state.value
+            } else {
+                UiState.Error(e.message ?: "加载失败")
+            }
         }
     }
 
@@ -89,9 +120,27 @@ class HomeViewModel(
                     _state.value = UiState.Success(current + pageData.threads)
                     page = next
                     _hasNext.value = pageData.hasNext
+                    saveFeedToCache()
                 }
                 .onFailure { _hasNext.value = false }
             _loadingMore.value = false
         }
     }
+
+    /** 首页缓存 = 热帖排行 + 当前已加载的帖子流（含翻页追加的部分）。 */
+    private suspend fun saveFeedToCache() {
+        val threads = (_state.value as? UiState.Success)?.data ?: return
+        contentCache.write(
+            key = CacheKeys.home(),
+            value = CachedFeed(hot = _hot.value, threads = threads),
+            encode = { cacheJson.encodeToString(CachedFeed.serializer(), it) },
+        )
+    }
 }
+
+/** 首页缓存内容：排行与帖子流一起存，命中时两处同时上屏。 */
+@Serializable
+private data class CachedFeed(
+    val hot: HomeData? = null,
+    val threads: List<Thread> = emptyList(),
+)

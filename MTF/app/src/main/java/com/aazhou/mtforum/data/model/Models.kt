@@ -1,12 +1,16 @@
 package com.aazhou.mtforum.data.model
 
+import kotlinx.serialization.Serializable
+
 /** 版块分组（如「MT专区」「交流与讨论」）。 */
+@Serializable
 data class ForumGroup(
     val name: String,
     val forums: List<Forum>,
 )
 
 /** 单个版块。 */
+@Serializable
 data class Forum(
     val fid: String,
     val name: String,
@@ -14,6 +18,7 @@ data class Forum(
 )
 
 /** 帖子摘要，用于列表页。 */
+@Serializable
 data class Thread(
     val tid: String,
     val subject: String,
@@ -37,6 +42,7 @@ data class Thread(
 )
 
 /** 版块页（帖子列表）。 */
+@Serializable
 data class ForumPage(
     val forumName: String?,
     val announcements: List<Thread>,
@@ -46,9 +52,10 @@ data class ForumPage(
 )
 
 /** 帖子详情页。 */
+@Serializable
 data class ThreadPage(
     val tid: String,
-    val subject: String,
+    val subject: String?,
     val forumName: String?,
     val posts: List<Post>,
     val page: Int,
@@ -75,6 +82,7 @@ data class ThreadPage(
 )
 
 /** 单个楼层/回复。 */
+@Serializable
 data class Post(
     val pid: String,
     val authorName: String,
@@ -99,7 +107,43 @@ data class Post(
     val hasHiddenContent: Boolean = false,
 )
 
+/**
+ * 某个拉取口径（全部评论 / 只看楼主）已加载到第几页。
+ *
+ * 楼层一律按「正序」拉：楼主过滤只是站点参数，倒序由客户端排，所以口径只此两种。
+ * 页码只决定「还要不要再拉」，不影响已加载楼层本身。
+ */
+@Serializable
+data class PageProgress(
+    val authorId: String? = null,
+    val maxPage: Int = 0,
+    val totalPages: Int = 0,
+)
+
+/**
+ * 供落盘的详情快照：楼主 / 正序 / 倒序共用一份。
+ *
+ * 三种视图只是同一批楼层的不同看法，缓存就不该按排序与楼主过滤分开存：分开存会让
+ * 「正序加载完，切倒序还得整帖重拉」，而且某个视图只加载到一半就切走时，另一份
+ * 缓存里就躺着半份数据。
+ * [posts] 是已加载楼层按 pid 去重后的合集，[progress] 记每种口径各拉到第几页。
+ * 会话态（formhash / replyUrl / 点赞收藏）一律不入缓存：一次性令牌与账号会话
+ * 缓存住会在下次进入时用过期的令牌发请求、显示错的点赞态。
+ */
+@Serializable
+data class ThreadSnapshot(
+    val subject: String? = null,
+    val forumName: String? = null,
+    val opUid: String? = null,
+    val fid: String? = null,
+    /** 站点给出的全部评论数（不含首帖）；用于判断楼层池是否已收齐。 */
+    val totalReplies: Int? = null,
+    val posts: List<Post> = emptyList(),
+    val progress: List<PageProgress> = emptyList(),
+)
+
 /** 楼层内的引用（回复某人时站点插入的引用块）。 */
+@Serializable
 data class PostQuote(
     /** 被引用者昵称。 */
     val author: String? = null,
@@ -168,12 +212,14 @@ data class UserProfile(
 }
 
 /** 搜索结果。 */
+@Serializable
 data class SearchResult(
     val threads: List<Thread>,
     val hasNext: Boolean,
 )
 
 /** 首页数据：热版推荐 + 热帖排行。 */
+@Serializable
 data class HomeData(
     val hotForums: List<Forum>,
     val hotThreads: List<Thread>,
@@ -185,6 +231,7 @@ data class HomeData(
  * [text] 为站点渲染的提醒正文，[timeText] 是页面上的相对/绝对时间文本；
  * [tid] 为关联主题，站点未给帖子链接时为 null（该条不可点击）。
  */
+@Serializable
 data class Notice(
     val id: String,
     val text: String,

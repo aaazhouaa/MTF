@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aazhou.mtforum.data.model.Thread
+import com.aazhou.mtforum.ui.common.ActionHint
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.LoadingBox
@@ -72,12 +74,14 @@ fun HomeScreen(
     onThreadClick: (tid: String) -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    val viewModel: HomeViewModel = appViewModel { HomeViewModel(it.repository) }
+    val viewModel: HomeViewModel = appViewModel { HomeViewModel(it.repository, it.contentCache) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val hot by viewModel.hot.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
     val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+    val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
+
     // 点击卡片配图一律进内置全屏查看器；urls 为本卡全部配图，便于左右翻页
     var preview by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
     val openImage: (List<String>, Int) -> Unit = { urls, index ->
@@ -94,6 +98,18 @@ fun HomeScreen(
         containerColor = colors.background,
         // 见 UserProfileScreen：语义色取不到 contentColorFor 时会退回旧值
         contentColor = bodyTextColor(),
+        // 提示走中偏上的轻卡片：应用底栏（首页/板块/导读/我的）是浮层，
+        // 贴在 Scaffold 底部的 Snackbar 会被它整块压住
+        snackbarHost = {
+            // 宿主槽是个铺满内容区的 Box，正好拿来承载中偏上的提示卡片
+            Box(Modifier.fillMaxSize()) {
+                ActionHint(
+                    actionMessage,
+                    { viewModel.consumeActionMessage() },
+                    Modifier.align(BiasAlignment(0f, -0.45f)),
+                )
+            }
+        },
         topBar = {
             HomeTopBar(
                 onSearch = onSearch,

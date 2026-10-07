@@ -235,24 +235,35 @@ object ForumParser {
         val document = doc(html)
         val subject = document.title().removeSuffix("- MT论坛").trim()
         val postNodes = document.select("div.comiis_postli[id^=pid]")
-        // 楼层号是帖子内绝对楼层（首页为「沙发」等称谓），而标题栏给的是作者 uid，
-        // 故楼层号只能由 JS 变量 + 本页首个楼层的编号共同推出。
-        val floorBase = postNodes.firstOrNull()?.let { floorNumberOf(it.selectFirst("span.f_d.y")?.text()?.trim()) }
+        // 楼层号是帖子内绝对楼层（第 2 页起是「11#」这类数字标签，第 1 页常整页不给标签），
+        // 而标题栏给的是作者 uid，故只能由「本页第一个带楼层标签的节点 + 页内偏移」推出。
+        // 锚点取第一个带标签的节点而非首个节点：首帖没有楼层标签，拿它当锚点会整页都推不出楼层号。
+        val anchorIndex = postNodes.indexOfFirst {
+            floorNumberOf(it.selectFirst("span.f_d.y")?.text()?.trim()) != null
+        }
+        val anchorFloor = anchorIndex.takeIf { it >= 0 }?.let {
+            floorNumberOf(postNodes[it].selectFirst("span.f_d.y")?.text()?.trim())
+        }
         val authorId = JS_AUTHOR_ID.find(html)?.groupValues?.get(1)
         val firstPostIndex = postNodes.indexOfFirst { it.selectFirst("div.comiis_postli_topv1") != null }
-        val posts = postNodes.map { li ->
+        val posts = postNodes.mapIndexed { index, li ->
             val post = parsePost(li, authorId)
-            val explicit = floorNumberOf(li.selectFirst("span.f_d.y")?.text()?.trim())
+            val label = li.selectFirst("span.f_d.y")?.text()?.trim()
+            val explicit = floorNumberOf(label)
             val floor = when {
                 post.isFirstPost -> 0
+                // 站点给了楼层标签（「沙发」「11#」）就直接换算成楼层号
                 explicit != null -> explicit
-                floorBase != null && firstPostIndex >= 0 ->
-                    floorBase + (postNodes.indexOf(li) - firstPostIndex)
+                // 第 1 页整页没标签时按页内序号推：站点第一条回复恒为沙发（2 楼）
+                page == 1 && firstPostIndex >= 0 -> FIRST_REPLY_FLOOR + index - firstPostIndex - 1
+                // 其余页从第一个带标签的楼层往后推
+                anchorFloor != null -> anchorFloor + (index - anchorIndex)
                 else -> null
             }
             post.copy(
                 floor = floor,
-                floorLabel = floorName(li.selectFirst("span.f_d.y")?.text()?.trim(), floor),
+                // 楼层显示统一成 «N#»：站点第 1 页不给标签，给了也是「沙发」这类称谓
+                floorLabel = floor?.let { "$it#" },
             )
         }
         // 「全部评论」只计回复，首帖不计入
@@ -448,12 +459,12 @@ object ForumParser {
         return FLOOR_NAMES[text]
     }
 
-    private fun floorName(label: String?, floor: Int?): String? {
-        if (label.isNullOrBlank() || floor == null) return null
-        // 数字型标签统一成 «N#»；「沙发」等中文称谓按站点原文保留
-        if (RE_FLOOR_NUMBER.containsMatchIn(label)) return "$floor#"
-        return label
-    }
+    /**
+     * 第 1 条回复的楼层号：站点把它称作「沙发」，与下方 [FLOOR_NAMES] 的映射一致。
+     * 第 1 页整页不给楼层标签时按它逐条往下推。
+     */
+    private const val FIRST_REPLY_FLOOR = 2
+
 
     /** 表单 hash，发帖/回复接口必需。页面中存在 input 属性与 JS 赋值两种形式。 */
     fun parseFormhash(html: String): String? =

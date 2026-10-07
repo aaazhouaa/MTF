@@ -187,7 +187,8 @@ class ForumParserTest {
         assertEquals(0, op.floor)
 
         val first = page.posts[1]
-        assertEquals("沙发", first.floorLabel)
+        // 楼层显示统一成 «N#»：站点第 1 页给的是「沙发」这类称谓，换算成楼层号
+        assertEquals("2#", first.floorLabel)
         assertEquals(2, first.floor)
         assertEquals("秋枫Mod", first.authorName)
         assertEquals("河南", first.location)
