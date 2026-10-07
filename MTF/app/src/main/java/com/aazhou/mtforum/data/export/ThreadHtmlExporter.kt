@@ -3,6 +3,7 @@ package com.aazhou.mtforum.data.export
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.model.ThreadPage
 import com.aazhou.mtforum.ui.common.imageUrl
+import com.aazhou.mtforum.ui.common.isSmiley
 import java.text.SimpleDateFormat
 import java.util.Base64
 import java.util.Date
@@ -104,12 +105,22 @@ internal fun sanitizeContentHtml(html: String, localSrc: (String) -> String?): S
     doc.select("script,style,iframe,object,embed,form,input,button,link,meta").remove()
     stripEventAttributes(doc)
     doc.select("img").forEach { img ->
+        val smiley = isSmiley(img)
         val original = img.attr("src")
         val realUrl = imageUrl(img)
         val replacement = realUrl?.let(localSrc)
+        val hadSmilieId = img.hasAttr("smilieid")
         img.clearAttributes()
         img.attr("src", replacement ?: original)
-        img.attr("alt", "")
+        if (smiley) {
+            // 表情按行内小图排版：加 class 供 CSS 限死尺寸（否则被 .content img 的
+            // max-width:100% 按自然尺寸撑成占满宽度的大图）；smilieid 保留，应用内
+            // 渲染仍能认出行内占位（本地 file:// 地址里没有 /smiley/ 可判）
+            img.addClass("smiley")
+            if (hadSmilieId) img.attr("smilieid", "1")
+        } else {
+            img.attr("alt", "")
+        }
     }
     doc.select("a[href]").forEach { a ->
         val href = a.attr("href")
@@ -122,8 +133,11 @@ internal fun sanitizeContentHtml(html: String, localSrc: (String) -> String?): S
 }
 
 /**
- * 正文里全部真实图片地址（含表情小图）：与 [sanitizeContentHtml] 同一套懒加载
- * 优先级解析，供下载侧按同一批地址取字节，保证改写后的 src 都能本地化。
+ * 正文里全部图片地址（含表情小图）：与 [sanitizeContentHtml] 同一套懒加载优先级解析，
+ * 供下载侧按同一批地址取字节，保证改写后的 src 都能本地化。
+ *
+ * 表情也一起取：体积极小，换来的离线完整；它不会被当成大图，尺寸由 CSS 的
+ * `.smiley` 规则限死（见 [sanitizeContentHtml] 里打的 class）。
  */
 internal fun collectContentImageUrls(html: String): List<String> {
     if (html.isBlank()) return emptyList()
@@ -184,6 +198,7 @@ private val PAGE_CSS = """
     .edited { color: #475569; font-size: 11px; font-style: italic; margin-bottom: 4px; }
     .content { word-break: break-word; }
     .content img { max-width: 100%; height: auto; border-radius: 6px; vertical-align: middle; }
+    .content img.smiley { width: 1.4em; height: 1.4em; max-width: 1.4em; border-radius: 0; vertical-align: -0.2em; }
     .content table { border-collapse: collapse; max-width: 100%; }
     .content td, .content th { border: 1px solid #e2e8f0; padding: 4px 8px; font-size: 13px; }
     blockquote { margin: 8px 0; padding: 8px 10px; background: #f1f5f9; border-radius: 6px;

@@ -23,6 +23,34 @@ class HtmlContentTest {
     }
 
     @Test
+    fun smileyIsDownloadedButMarkedForInlineSize() {
+        // 表情也要下载（离线完整），但必须打上 smiley class，CSS 才能把它限成行内小图；
+        // smilieid 要保留，应用内渲染才认得出它是表情
+        val html = "<img src=\"https://cdn.binmt.cc/static/image/smiley/doge/7.png\" smilieid=\"1359\" />"
+        val out = com.aazhou.mtforum.data.export.sanitizeContentHtml(html) { "file:///x.jpg" }
+        assertTrue("应打上 smiley class: $out", out.contains("class=\"smiley\""))
+        assertTrue("应保留 smilieid: $out", out.contains("smilieid=\"1\""))
+        assertTrue("src 应改写成本地地址: $out", out.contains("src=\"file:///x.jpg\""))
+        // 普通配图不带 smiley class
+        val plain = com.aazhou.mtforum.data.export.sanitizeContentHtml(
+            "<img src=\"https://cdn.binmt.cc/data/attachment/forum/x.png\" />",
+        ) { "file:///y.jpg" }
+        assertTrue("普通配图不应有 smiley class: $plain", !plain.contains("smiley"))
+    }
+
+    @Test
+    fun localFileImageStaysLocalAddress() {
+        // 已下载帖子的离线图：src 是 file:// 本地地址，不能拼成站点域名
+        val html = "<img src=\"file:///data/user/0/com.aazhou.mtforum/files/thread_downloads/174181/images/abc.jpg\" />"
+        val blocks = parseContentBlocks(html)
+        val image = blocks.filterIsInstance<ContentBlock.Image>().single()
+        assertEquals(
+            "file:///data/user/0/com.aazhou.mtforum/files/thread_downloads/174181/images/abc.jpg",
+            image.url,
+        )
+    }
+
+    @Test
     fun lazyLoadedAttachmentIsStillAnImage() {
         val html = "看图<br /><img src=\"none.gif\" file=\"https://cdn.binmt.cc/data/attachment/forum/x.png\" />"
         val blocks = parseContentBlocks(html)

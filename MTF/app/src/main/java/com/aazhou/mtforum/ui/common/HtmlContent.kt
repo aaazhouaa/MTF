@@ -513,8 +513,6 @@ private class BlocksBuilder {
         return ContentBlock.Table(header = header, rows = body)
     }
 
-    private fun isSmiley(img: Element): Boolean =
-        img.hasAttr("smilieid") || img.attr("src").contains("/smiley/")
 }
 
 /**
@@ -609,6 +607,15 @@ private fun isBlankOrNbsp(s: CharSequence): Boolean {
     return true
 }
 
+/**
+ * 表情判定：站点用 smilieid 属性标记表情，URL 里也带 /smiley/。
+ *
+ * 渲染层把表情当行内小图、下载层必须排除它（不当成配图存盘），两边共用同一判定，
+ * 否则下载离线页里表情会变成占满宽度的大图。
+ */
+internal fun isSmiley(img: Element): Boolean =
+    img.hasAttr("smilieid") || img.attr("src").contains("/smiley/")
+
 internal fun imageUrl(img: Element): String? {
     // 站点图片懒加载：src 常是 none.png / imageloading.gif 占位，真实地址在后面几个属性里
     val raw = listOf(
@@ -655,6 +662,14 @@ private val VIDEO_EXTENSIONS = listOf("mp4", "mov", "m4v", "webm", "m3u8", "mkv"
 
 /** 媒体地址归一化：相对路径补站点域名，站内明文统一升到 https（与图片同规则）。 */
 internal fun normalizeMediaUrl(raw: String): String {
+    // 本地文件（已下载帖子的离线图）与 data URI 是完整地址，不能拼站点域名：
+    // 拼出来是 https://bbs.binmt.cc/file:///...，离线页的图一张都加载不出来
+    if (raw.startsWith("file:", ignoreCase = true) ||
+        raw.startsWith("content:", ignoreCase = true) ||
+        raw.startsWith("data:", ignoreCase = true)
+    ) {
+        return raw
+    }
     val absolute = when {
         raw.startsWith("http") -> raw
         raw.startsWith("//") -> "https:$raw"

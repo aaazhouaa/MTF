@@ -54,7 +54,7 @@ import com.aazhou.mtforum.ui.theme.accentTextColor
 import kotlinx.coroutines.launch
 
 /** 「已下载的帖子」：保存位置固定为下载目录下的 MTF 文件夹（写入时自动创建）。 */
-private const val SAVE_LOCATION_NOTE = "保存位置：手机下载目录 / MTF 文件夹"
+private const val SAVE_LOCATION_NOTE = "保存位置：Download / MTF 目录下"
 
 /**
  * 已下载帖子列表页。
