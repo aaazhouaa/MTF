@@ -2,6 +2,9 @@ package com.aazhou.mtforum.ui.theme
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -10,6 +13,12 @@ import androidx.compose.ui.graphics.Color
  * 主题色本身偏亮，直接当文字在深色底上过抢眼，与压低后的正文色也脱节。
  */
 const val DarkBrightTextAlpha = 0.69f
+
+/**
+ * 深色模式给内容图片压暗的膜强度：论坛配图多为浅色截图，纯亮面在深色底上很刺眼。
+ * 与 [DarkBrightTextAlpha] 同属深色模式的统一适配。
+ */
+const val DarkImageDimAlpha = 0.32f
 
 /**
  * 文字用的正文前景色：浅色模式原样，深色模式按 [DarkBrightTextAlpha] 压低。
@@ -33,3 +42,25 @@ fun accentTextColor(): Color =
 @Composable
 private fun Color.dimmedForDark(): Color =
     if (LocalIsDarkTheme.current) copy(alpha = DarkBrightTextAlpha) else this
+
+/**
+ * 深色模式是否压暗内容图片（帖子配图、全屏查看），可在设置页关闭。
+ * 与深浅模式一样经主题层灌注，页面直接读本地取用。
+ */
+val LocalDimImagesInDark = staticCompositionLocalOf { true }
+
+/**
+ * 给内容图片压一层背景色膜：浅色模式，或用户在设置里关掉压暗时原样返回。
+ *
+ * 膜色取页面底色，浅色截图的高亮区被拉向页面底色而不是统一发灰，色相与细节保留。
+ * 修饰符必须排在 clip 之后、border 之前：圆角内才裁得干净，描边也不会被膜盖暗。
+ */
+@Composable
+fun Modifier.dimContentImage(): Modifier {
+    if (!LocalIsDarkTheme.current || !LocalDimImagesInDark.current) return this
+    val scrim = LocalMtfColors.current.background
+    return drawWithContent {
+        drawContent()
+        drawRect(color = scrim, alpha = DarkImageDimAlpha)
+    }
+}

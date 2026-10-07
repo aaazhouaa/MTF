@@ -29,10 +29,16 @@ class MainActivity : ComponentActivity() {
             // darkOverride 为 null 时跟随系统
             val darkOverride by themeStore.darkOverride.collectAsStateWithLifecycle(initialValue = null)
             val darkTheme = darkOverride ?: isSystemInDarkTheme()
+            val dimImagesInDark by themeStore.dimImagesInDark
+                .collectAsStateWithLifecycle(initialValue = true)
             // 拉伸式 overscroll 会在到达端点后先吃掉反向位移用于收回拉伸，
             // 造成「刚到顶/底就反向滑」不动；置空工厂即彻底关闭该效果。
             CompositionLocalProvider(LocalOverscrollFactory provides null) {
-                MtfTheme(themeIndex = themeIndex, darkTheme = darkTheme) {
+                MtfTheme(
+                    themeIndex = themeIndex,
+                    darkTheme = darkTheme,
+                    dimImagesInDark = dimImagesInDark,
+                ) {
                     AppRoot(onToggleTheme = {
                         scope.launch { themeStore.setDarkOverride(!darkTheme) }
                     })

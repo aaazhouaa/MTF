@@ -50,6 +50,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
@@ -60,9 +61,16 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.core.graphics.drawable.toBitmap
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
+import com.aazhou.mtforum.ui.theme.DarkImageDimAlpha
+import com.aazhou.mtforum.ui.theme.LocalDimImagesInDark
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
+import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.dimContentImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -124,93 +132,104 @@ fun ImagePreview(
 
     BackHandler(onBack = onDismiss)
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-            ZoomableImage(
-                url = urls[page],
-                active = pagerState.currentPage == page,
-                onBackgroundColor = { color -> pageColors[page] = color },
-                onTap = onDismiss,
-                onInteraction = { interactionTick++ },
-            )
-        }
+    // 预览必须盖住玻璃底栏：底栏与 NavHost 同在 AppRoot 的 Box 里、且绘制在 NavHost 之后，
+    // 作为页面内 composable 的预览无论 fillMaxSize 到哪都被它压住。Popup 挂在窗口装饰层，
+    // 绘制层级高于整个窗口内容；返回键交给内容里的 BackHandler，故关掉 popup 自身的返回拦截。
+    Popup(
+        onDismissRequest = null,
+        properties = PopupProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+        ),
+    ) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                ZoomableImage(
+                    url = urls[page],
+                    active = pagerState.currentPage == page,
+                    onBackgroundColor = { color -> pageColors[page] = color },
+                    onTap = onDismiss,
+                    onInteraction = { interactionTick++ },
+                )
+            }
 
-        val foreground = foregroundFor(background)
-        val pill = pillFor(background)
-        // 操作图标底衬比正文底衬更实一些，图标在图上更分明
-        val actionPill = elevatedPill(pill)
+            val foreground = foregroundFor(background)
+            val pill = pillFor(background)
+            // 操作图标底衬比正文底衬更实一些，图标在图上更分明
+            val actionPill = elevatedPill(pill)
 
-        AnimatedVisibility(
-            visible = controlsVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = fadeIn(),
+                exit = fadeOut(),
             ) {
-                Box(
+                Row(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(pill)
-                        .clickable(onClick = onDismiss),
-                    contentAlignment = Alignment.Center,
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        painterResource(R.drawable.ic_back),
-                        contentDescription = "返回",
-                        tint = foreground,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                if (urls.size > 1) {
-                    Text(
-                        "${pagerState.currentPage + 1} / ${urls.size}",
-                        color = foreground,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                    Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(50))
+                            .size(36.dp)
+                            .clip(CircleShape)
                             .background(pill)
-                            .padding(horizontal = 10.dp, vertical = 3.dp),
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                PreviewActionIcon(R.drawable.ic_download, "保存到相册", foreground, actionPill) {
-                    runBusy(scope, { busy = it }, context, "保存失败") {
-                        val url = urls[pagerState.currentPage]
-                        val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
-                        withContext(Dispatchers.IO) { saveToGallery(context, url, bytes) } != null
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painterResource(R.drawable.ic_back),
+                            contentDescription = "返回",
+                            tint = foreground,
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
-                }
-                Spacer(Modifier.width(8.dp))
-                PreviewActionIcon(R.drawable.ic_share, "分享", foreground, actionPill) {
-                    runBusy(scope, { busy = it }, context, "分享失败") {
-                        val url = urls[pagerState.currentPage]
-                        val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
-                        val file = withContext(Dispatchers.IO) { writeCacheFile(context, url, bytes) }
-                        shareImage(context, url, file)
-                        true
+                    Spacer(Modifier.width(10.dp))
+                    if (urls.size > 1) {
+                        Text(
+                            "${pagerState.currentPage + 1} / ${urls.size}",
+                            color = foreground,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(pill)
+                                .padding(horizontal = 10.dp, vertical = 3.dp),
+                        )
                     }
-                }
-                Spacer(Modifier.width(8.dp))
-                PreviewActionIcon(R.drawable.ic_browser, "浏览器打开", foreground, actionPill) {
-                    runCatching {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(urls[pagerState.currentPage])))
-                    }.onFailure { Toast.makeText(context, "没有可打开该链接的应用", Toast.LENGTH_SHORT).show() }
+                    Spacer(Modifier.weight(1f))
+                    PreviewActionIcon(R.drawable.ic_download, "保存到相册", foreground, actionPill) {
+                        runBusy(scope, { busy = it }, context, "保存失败") {
+                            val url = urls[pagerState.currentPage]
+                            val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
+                            withContext(Dispatchers.IO) { saveToGallery(context, url, bytes) } != null
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    PreviewActionIcon(R.drawable.ic_share, "分享", foreground, actionPill) {
+                        runBusy(scope, { busy = it }, context, "分享失败") {
+                            val url = urls[pagerState.currentPage]
+                            val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
+                            val file = withContext(Dispatchers.IO) { writeCacheFile(context, url, bytes) }
+                            shareImage(context, url, file)
+                            true
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    PreviewActionIcon(R.drawable.ic_browser, "浏览器打开", foreground, actionPill) {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(urls[pagerState.currentPage])))
+                        }.onFailure { Toast.makeText(context, "没有可打开该链接的应用", Toast.LENGTH_SHORT).show() }
+                    }
                 }
             }
-        }
 
-        if (busy) {
-            CircularProgressIndicator(
-                color = foreground,
-                modifier = Modifier.align(Alignment.Center).size(32.dp),
-            )
+            if (busy) {
+                CircularProgressIndicator(
+                    color = foreground,
+                    modifier = Modifier.align(Alignment.Center).size(32.dp),
+                )
+            }
         }
     }
 }
@@ -238,6 +257,13 @@ private fun ZoomableImage(
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     var loading by remember(url) { mutableStateOf(true) }
     var failed by remember(url) { mutableStateOf(false) }
+    // 压暗开启时，前景色按「膜覆盖后的实际亮度」判定：采样拿的是原图均值，
+    // 直接按它选前景会让压暗后的浅图配深字，对比度失衡
+    val dimScrim = if (LocalIsDarkTheme.current && LocalDimImagesInDark.current) {
+        LocalMtfColors.current.background
+    } else {
+        null
+    }
 
     Box(
         modifier = Modifier
@@ -299,7 +325,7 @@ private fun ZoomableImage(
                 val drawable = state.result.drawable
                 scope.launch {
                     val color = withContext(Dispatchers.Default) { sampleAverageColor(drawable) }
-                    onBackgroundColor(color)
+                    onBackgroundColor(dimScrim?.let { lerp(color, it, DarkImageDimAlpha) } ?: color)
                 }
             },
             onError = { loading = false; failed = true },
@@ -310,7 +336,9 @@ private fun ZoomableImage(
                     scaleY = scale
                     translationX = offset.x
                     translationY = offset.y
-                },
+                }
+                // 压暗膜排在变换之后：跟着图片一起缩放，放大后不会停在原处
+                .dimContentImage(),
         )
         if (loading) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(32.dp))
         if (failed) {

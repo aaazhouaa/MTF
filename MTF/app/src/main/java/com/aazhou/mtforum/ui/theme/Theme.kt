@@ -23,6 +23,8 @@ private fun containerOf(primary: Color) = Color(
 fun MtfTheme(
     themeIndex: Int = DefaultThemeIndex,
     darkTheme: Boolean = isSystemInDarkTheme(),
+    /** 深色模式是否压暗内容图片，取自设置；缺省压暗。 */
+    dimImagesInDark: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val preset = ThemePresets.getOrElse(themeIndex) { ThemePresets[DefaultThemeIndex] }
@@ -66,6 +68,7 @@ fun MtfTheme(
     CompositionLocalProvider(
         LocalMtfColors provides colors,
         LocalIsDarkTheme provides darkTheme,
+        LocalDimImagesInDark provides dimImagesInDark,
     ) {
         MaterialTheme(colorScheme = scheme, content = content)
     }

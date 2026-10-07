@@ -67,6 +67,7 @@ import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.DarkBrightTextAlpha
 import com.aazhou.mtforum.ui.theme.bodyTextColor
+import com.aazhou.mtforum.ui.theme.dimContentImage
 import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.MtfColors
 
@@ -439,6 +440,7 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
                 .aspectRatio(aspectRatio)
                 .clip(RoundedCornerShape(6.dp))
                 .background(colors.quoteBackground)
+                .dimContentImage()
                 .then(
                     if (onImageClick != null) Modifier.clickable { onImageClick() } else Modifier
                 ),
@@ -481,8 +483,9 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
                             onError = { state ->
                                 android.util.Log.e("MTF-IMG", "grid fail url=$url", state.result.throwable)
                             },
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().dimContentImage(),
                         )
+                        // 「+N」遮罩压在压暗膜之上：角标与计数不被图片亮度影响
                         if (overflow > 0 && rowIndex * columns + columnIndex == 8) {
                             Box(
                                 modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.47f)),
@@ -532,7 +535,7 @@ private fun InlineVideo(url: String, poster: String?, onPlay: (() -> Unit)?) {
                     onError = { state ->
                         android.util.Log.e("MTF-IMG", "video poster fail url=$poster", state.result.throwable)
                     },
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().dimContentImage(),
                 )
             }
             Box(

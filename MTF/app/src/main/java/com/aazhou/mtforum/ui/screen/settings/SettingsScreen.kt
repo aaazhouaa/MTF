@@ -47,6 +47,8 @@ fun SettingsScreen() {
     val scope = rememberCoroutineScope()
     val themeIndex by themeStore.themeIndex.collectAsStateWithLifecycle(initialValue = DefaultThemeIndex)
     val darkOverride by themeStore.darkOverride.collectAsStateWithLifecycle(initialValue = null)
+    val dimImagesInDark by themeStore.dimImagesInDark
+        .collectAsStateWithLifecycle(initialValue = true)
     val colors = LocalMtfColors.current
 
     Scaffold(
@@ -97,6 +99,21 @@ fun SettingsScreen() {
                 Switch(
                     checked = darkOverride == null,
                     onCheckedChange = { follow -> scope.launch { themeStore.setDarkOverride(if (follow) null else false) } },
+                )
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("深色模式压暗图片", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "关闭后帖子配图与全屏查看按原始亮度显示",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.textSecondary,
+                    )
+                }
+                Switch(
+                    checked = dimImagesInDark,
+                    onCheckedChange = { dim -> scope.launch { themeStore.setDimImagesInDark(dim) } },
                 )
             }
 
