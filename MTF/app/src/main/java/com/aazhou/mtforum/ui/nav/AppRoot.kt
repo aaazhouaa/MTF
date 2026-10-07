@@ -190,6 +190,8 @@ fun AppRoot(onToggleTheme: () -> Unit) {
                     tid = entry.arguments?.getString("tid").orEmpty(),
                     onBack = { navController.popBackStack() },
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    // 正文里的站内帖子链接在 App 内继续看帖，不进浏览器
+                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                 )
             }
 

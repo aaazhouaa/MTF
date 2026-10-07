@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +45,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.LinkInteractionListener
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
@@ -108,13 +110,15 @@ private fun readableSiteColor(color: Color, background: Color, darkTheme: Boolea
     return anchor
 }
 
-/** 渲染帖子正文，图文按原顺序展示；图片点击回调交给上层做大图查看。 */
+/** 渲染帖子正文，图文按原顺序展示；图片/视频/链接点击回调交给上层处理。 */
 @Composable
 fun PostContent(
     html: String,
     quote: PostQuote? = null,
     onImageClick: ((urls: List<String>, index: Int) -> Unit)? = null,
     onVideoClick: ((url: String) -> Unit)? = null,
+    /** 正文链接点击：站内帖子链接交由上层跳到原生详情页，其余走系统浏览器。 */
+    onLinkClick: ((url: String) -> Unit)? = null,
     pageImages: List<String> = emptyList(),
     bodyStyle: TextStyle = MaterialTheme.typography.bodyMedium,
     modifier: Modifier = Modifier,
@@ -155,6 +159,9 @@ fun PostContent(
                         val linkColor = accentTextColor()
                         val codeBg = colors.quoteBackground
                         val style = remember(block, bodyStyle) { block.derivedStyle(bodyStyle) }
+                        // 回调经 state 间接引用：链接注解串按正文缓存，重组不会重建，
+                        // 而 onLinkClick 每次重组都是新实例，直接进 key 会让长文反复重建
+                        val linkClick by rememberUpdatedState(onLinkClick)
                         val body = remember(
                             text,
                             block.smiles,
@@ -172,6 +179,7 @@ fun PostContent(
                                 codeBackground = codeBg,
                                 background = colors.background,
                                 darkTheme = darkTheme,
+                                onLinkClick = linkClick,
                             )
                         }
                         Text(
@@ -224,6 +232,7 @@ private fun buildBodyText(
     codeBackground: Color,
     background: Color,
     darkTheme: Boolean,
+    onLinkClick: ((url: String) -> Unit)? = null,
 ): AnnotatedString {
     if (spans.isEmpty()) return text.toAnnotatedString(smiles)
     return buildAnnotatedString {
@@ -263,6 +272,9 @@ private fun buildBodyText(
                         styles = TextLinkStyles(
                             style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
                         ),
+                        linkInteractionListener = onLinkClick?.let { click ->
+                            LinkInteractionListener { click(url) }
+                        },
                     ),
                     start,
                     end,

@@ -92,6 +92,7 @@ import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.collectImageUrls
 import com.aazhou.mtforum.ui.common.container
+import com.aazhou.mtforum.ui.common.openForumLink
 import com.aazhou.mtforum.ui.common.plainTextOf
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
@@ -116,6 +117,7 @@ fun ThreadDetailScreen(
     tid: String,
     onBack: () -> Unit,
     onUserClick: (String) -> Unit,
+    onThreadClick: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val colors = LocalMtfColors.current
@@ -368,6 +370,9 @@ fun ThreadDetailScreen(
                                         viewModel.setReplyTarget(null)
                                         todo("回复本帖后刷新即可解锁")
                                     },
+                                    onLinkClick = { url ->
+                                        openForumLink(context, url, container.httpClient.host, onThreadClick)
+                                    },
                                 )
                             }
                         }
@@ -416,6 +421,7 @@ fun ThreadDetailScreen(
                                 onUserClick = onUserClick,
                                 pageImages = pageImages,
                                 onLongPress = { actionTarget = it },
+                                onThreadClick = onThreadClick,
                             )
                         }
                         item(key = "pager") {
@@ -816,7 +822,7 @@ private fun ThreadDetailTopBar(
             model = post.avatarUrl,
             contentDescription = null,
             modifier = Modifier
-                .size(30.dp)
+                .size(36.dp)
                 .clip(CircleShape)
                 .background(colors.quoteBackground)
                 .dimImageInDark()
@@ -904,6 +910,7 @@ private fun DetailHeader(
     onVideoClick: ((String) -> Unit)? = null,
     pageImages: List<String>,
     onUnlock: () -> Unit,
+    onLinkClick: ((url: String) -> Unit)? = null,
 ) {
     val colors = LocalMtfColors.current
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -964,6 +971,7 @@ private fun DetailHeader(
             pageImages = pageImages,
             bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 24.sp),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            onLinkClick = onLinkClick,
         )
         if (post.hasHiddenContent) {
             HiddenContentCard(onUnlock = onUnlock)
@@ -1131,7 +1139,7 @@ private fun SegmentedControl(selected: Int, onSelect: (Int) -> Unit) {
     }
 }
 
-/** 顶层回复：头像 36dp、楼层号 11sp、昵称 14sp、引用卡、正文 15sp、底栏时间与操作。 */
+/** 顶层回复：头像 30dp、楼层号 11sp、昵称 14sp、引用卡、正文 15sp、底栏时间与操作。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ReplyBlock(
@@ -1148,8 +1156,11 @@ private fun ReplyBlock(
     onUserClick: (String) -> Unit,
     pageImages: List<String>,
     onLongPress: (Post) -> Unit,
+    onThreadClick: (String) -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val context = LocalContext.current
+    val siteHost = context.container().httpClient.host
     Column(
         Modifier
             .fillMaxWidth()
@@ -1161,7 +1172,7 @@ private fun ReplyBlock(
                 model = reply.avatarUrl,
                 contentDescription = null,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(30.dp)
                     .clip(CircleShape)
                     .dimImageInDark()
                     .userClick(reply.authorUid, onUserClick),
@@ -1212,6 +1223,7 @@ private fun ReplyBlock(
                     pageImages = pageImages,
                     bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp),
                     modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { onLongPress(reply) }),
+                    onLinkClick = { url -> openForumLink(context, url, siteHost, onThreadClick) },
                 )
             }
         }
@@ -1275,6 +1287,7 @@ private fun ReplyBlock(
                         onUserClick = onUserClick,
                         pageImages = pageImages,
                         onLongPress = { onLongPress(child) },
+                        onThreadClick = onThreadClick,
                     )
                 }
             }
@@ -1302,8 +1315,11 @@ private fun NestedReply(
     onUserClick: (String) -> Unit,
     pageImages: List<String>,
     onLongPress: () -> Unit,
+    onThreadClick: (String) -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val context = LocalContext.current
+    val siteHost = context.container().httpClient.host
     Column(
         Modifier
             .fillMaxWidth()
@@ -1375,6 +1391,7 @@ private fun NestedReply(
                 .padding(start = 30.dp, top = 3.dp)
                 .fillMaxWidth()
                 .combinedClickable(onClick = {}, onLongClick = onLongPress),
+            onLinkClick = { url -> openForumLink(context, url, siteHost, onThreadClick) },
         )
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 30.dp, top = 4.dp)) {
             TimeLine(child)
