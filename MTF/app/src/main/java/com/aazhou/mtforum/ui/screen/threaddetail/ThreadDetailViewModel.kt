@@ -12,6 +12,8 @@ import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.isWaterReply
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -93,7 +95,7 @@ class ThreadDetailViewModel(
     private val _hasNext = MutableStateFlow(false)
     val hasNext: StateFlow<Boolean> = _hasNext.asStateFlow()
 
-    /** 列表底部状态：Idle 不显示，Loading 转圈，End 到底，Retry 加载失败可点重试。 */
+    /** 列表底部状态：Idle 不显示，Loading 转圈，End 到底。 */
     private val _loadMoreState = MutableStateFlow<LoadMoreState>(LoadMoreState.Idle)
     val loadMoreState: StateFlow<LoadMoreState> = _loadMoreState.asStateFlow()
 
@@ -112,6 +114,22 @@ class ThreadDetailViewModel(
     val likeUsersLoading: StateFlow<Boolean> = _likeUsersLoading.asStateFlow()
 
     private var treeJob: Job? = null
+
+    /** 自动续拉链；暂停/切换筛选时取消，进入帖子与刷新后重新拉起。 */
+    private var autoLoadJob: Job? = null
+
+    /** 自动续拉链是否在跑（界面据此切换暂停/继续图标，并让开滚动触发的续拉）。 */
+    private val _autoLoadRunning = MutableStateFlow(false)
+    val autoLoadRunning: StateFlow<Boolean> = _autoLoadRunning.asStateFlow()
+
+    /** 用户按了暂停；刷新、切排序都不自动恢复，只能手动点继续。 */
+    private val _autoLoadPaused = MutableStateFlow(false)
+    val autoLoadPaused: StateFlow<Boolean> = _autoLoadPaused.asStateFlow()
+
+    /**
+     * 自动续拉链标识：暂停后紧接着又开始的新链，不能被旧链收尾时置回「未在跑」。
+     */
+    private var autoLoadChainId = 0
 
     /** 切换排序/只看楼主时界面传来的滚动锚点，新楼层上屏时才交给界面。 */
     private var requestedAnchor: ScrollAnchor? = null
@@ -208,64 +226,127 @@ class ThreadDetailViewModel(
                 _pendingScrollAnchor.value = it
                 requestedAnchor = null
             }
+            // 首页楼层上屏后再起自动链：首屏先出来，后续页在后台限速补齐
+            syncAutoLoad()
         }
     }
 
     /**
-     * 追加下一页评论：把新页的楼层并入当前列表（而非切页重置），
-     * 失败时保持原状并提示。
+     * 追加下一页评论：把新页的楼层并入当前列表（而非切页重置）。
+     * 由界面滚动到底触发；自动续拉见 [startAutoLoad]。
      */
     fun loadMore() {
-        if (_loadingMore.value || !_hasNext.value) return
-        val current = _state.value as? UiState.Success ?: return
+        viewModelScope.launch {
+            val failed = fetchNextBatch()
+            // 手动续拉成功后把自动链接上（用户没暂停时），把剩下的页拉完
+            if (!failed && !_autoLoadPaused.value) syncAutoLoad()
+        }
+    }
+
+    /**
+     * 拉取一批楼层并入当前列表。
+     *
+     * @return true 表示这批一条都没拿到（网络失败）。此时 [loadMoreState] 停在 Idle、
+     * 不做提示也不自动重试，用户滑动到底会再次触发 [loadMore]。
+     */
+    private suspend fun fetchNextBatch(): Boolean {
+        if (_loadingMore.value || !_hasNext.value) return false
+        val current = _state.value as? UiState.Success ?: return false
         val generation = dataGeneration
         val currentPage = page
         _loadingMore.value = true
         _loadMoreState.value = LoadMoreState.Loading
-        viewModelScope.launch {
-            val accumulated = mutableListOf<Post>()
-            val known = current.data.posts.mapTo(mutableSetOf()) { it.pid }
-            var next = page + 1
-            var totalPages = current.data.totalPages
-            var pagesFetched = 0
-            var failed = false
-            // 一次连拉多页凑满一屏：论坛每页条数不定，只拉一页会“一次没几条”，观感卡顿
-            try {
-                while (pagesFetched < LOAD_PAGE_BATCH && next <= totalPages && accumulated.size < REPLIES_PER_PAGE) {
-                    val data = repository.threadPage(tid, next, _orderType.value, null)
-                    totalPages = data.totalPages
-                    for (p in data.posts) {
-                        if (known.add(p.pid)) accumulated.add(p)
-                    }
-                    page = next
-                    next++
-                    pagesFetched++
+        val accumulated = mutableListOf<Post>()
+        val known = current.data.posts.mapTo(mutableSetOf()) { it.pid }
+        var next = page + 1
+        var totalPages = current.data.totalPages
+        var pagesFetched = 0
+        var failed = false
+        // 一次连拉多页凑满一屏：论坛每页条数不定，只拉一页会“一次没几条”，观感卡顿
+        try {
+            while (pagesFetched < AUTO_LOAD_BATCH_PAGES && next <= totalPages && accumulated.size < AUTO_LOAD_BATCH_REPLIES) {
+                val data = repository.threadPage(tid, next, _orderType.value, authorIdForRequest())
+                totalPages = data.totalPages
+                for (p in data.posts) {
+                    if (known.add(p.pid)) accumulated.add(p)
                 }
-            } catch (e: Exception) {
-                failed = true
-                if (generation != dataGeneration) return@launch
-                // 已有部分页拿到时仍先展示，避免白等一下全丢；完全没拿到才提示
-                if (accumulated.isEmpty()) _actionMessage.value = e.message ?: "加载更多失败"
+                page = next
+                next++
+                pagesFetched++
             }
-            // 期间又切换了排序/只看楼主：这批旧数据已无意义，丢弃并还原页码与加载态
-            if (generation != dataGeneration) {
-                page = currentPage
-                _loadingMore.value = false
-                return@launch
-            }
-            val merged = current.data.copy(
-                posts = current.data.posts + accumulated,
-                totalPages = totalPages,
-            )
-            _state.value = UiState.Success(merged)
-            _hasNext.value = page < totalPages
-            _loadMoreState.value = when {
-                failed && accumulated.isEmpty() -> LoadMoreState.Retry
-                page < totalPages -> LoadMoreState.Idle
-                else -> LoadMoreState.End
-            }
-            refreshDerived(merged)
+        } catch (e: Exception) {
+            failed = true
+        }
+        // 期间又切换了排序/只看楼主：这批旧数据已无意义，丢弃并还原页码与加载态
+        if (generation != dataGeneration) {
+            page = currentPage
             _loadingMore.value = false
+            return failed
+        }
+        val merged = current.data.copy(
+            posts = current.data.posts + accumulated,
+            totalPages = totalPages,
+        )
+        _state.value = UiState.Success(merged)
+        _hasNext.value = page < totalPages
+        _loadMoreState.value =
+            if (page < totalPages) LoadMoreState.Idle else LoadMoreState.End
+        refreshDerived(merged)
+        _loadingMore.value = false
+        return failed
+    }
+
+    /** 续拉时的楼主过滤参数：只看楼主必须带上，否则会把别人的楼层混进来。 */
+    private fun authorIdForRequest(): String? =
+        if (_opOnly.value) (_state.value as? UiState.Success)?.data?.opUid else null
+
+    /**
+     * 自动把评论分批拉完：批间 [AUTO_LOAD_DELAY_MS] 限速，避免连续请求触发站点风控。
+     *
+     * 失败时在失败处（[page] + 1）再试一次，仍失败就停下：底部停在 Idle，
+     * 之后用户滑动到底会再次触发 [loadMore]，不做无休止的自动重试。
+     * 切换排序/只看楼主会让 [dataGeneration] 变化，旧链据此自行退出。
+     */
+    private fun startAutoLoad() {
+        autoLoadJob?.cancel()
+        if (!_hasNext.value) return
+        val dataGen = dataGeneration
+        val chainId = ++autoLoadChainId
+        _autoLoadPaused.value = false
+        _autoLoadRunning.value = true
+        autoLoadJob = viewModelScope.launch {
+            try {
+                while (isActive) {
+                    delay(AUTO_LOAD_DELAY_MS)
+                    if (dataGen != dataGeneration || !_hasNext.value) break
+                    if (fetchNextBatch()) {
+                        delay(AUTO_LOAD_DELAY_MS)
+                        if (dataGen != dataGeneration || !_hasNext.value) break
+                        if (fetchNextBatch()) break
+                    }
+                }
+            } finally {
+                if (chainId == autoLoadChainId) _autoLoadRunning.value = false
+            }
+        }
+    }
+
+    /** 有后续页、用户没暂停、且链没在跑时，把自动链接上。 */
+    private fun syncAutoLoad() {
+        if (_hasNext.value && !_autoLoadPaused.value && autoLoadJob?.isActive != true) {
+            startAutoLoad()
+        }
+    }
+
+    /** 暂停/继续自动续拉；只在还有后续页时由界面调。 */
+    fun toggleAutoLoad() {
+        if (_autoLoadRunning.value) {
+            _autoLoadPaused.value = true
+            // 先翻转图标再取消协程：取消后 finally 要等下一轮主线程消息才跑
+            _autoLoadRunning.value = false
+            autoLoadJob?.cancel()
+        } else {
+            startAutoLoad()
         }
     }
 
@@ -295,6 +376,7 @@ class ThreadDetailViewModel(
             _hasNext.value = page < totalPages
             _loadMoreState.value =
                 if (page < totalPages) LoadMoreState.Idle else LoadMoreState.End
+            syncAutoLoad()
         }
     }
 
@@ -509,12 +591,11 @@ class ThreadDetailViewModel(
         data class Error(val message: String) : ReplyState
     }
 
-    /** 列表底部加载状态。 */
+    /** 列表底部状态：Idle 不显示，Loading 转圈，End 到底。 */
     sealed interface LoadMoreState {
         data object Idle : LoadMoreState
         data object Loading : LoadMoreState
         data object End : LoadMoreState
-        data object Retry : LoadMoreState
     }
 
     /**
@@ -547,6 +628,7 @@ class ThreadDetailViewModel(
                     _state.value = UiState.Success(merged)
                     _hasNext.value = page < totalPages
                     refreshDerived(merged)
+                    syncAutoLoad()
                 }
             } catch (e: Exception) {
                 if (generation == dataGeneration) _actionMessage.value = e.message ?: "刷新失败"
@@ -750,8 +832,16 @@ private fun longestCommonSubstring(a: String, b: String): Int {
     return best
 }
 
-/** 单次「加载更多」最多连拉的页数。 */
-private const val LOAD_PAGE_BATCH = 3
+/**
+ * 每批楼层条数：论坛每页条数不定，一次多拉几页凑满一屏，避免只拉一页太少、观感卡顿。
+ */
+private const val AUTO_LOAD_BATCH_REPLIES = 10
 
-/** 单次「加载更多」凑够多少条就停（论坛每页条数不定，用于避免只拉一页太少）。 */
-private const val REPLIES_PER_PAGE = 20
+/** 每批最多连拉的页数，与 [AUTO_LOAD_BATCH_REPLIES] 共同决定一批的量。 */
+private const val AUTO_LOAD_BATCH_PAGES = 2
+
+/**
+ * 自动续拉的批间隔（首批同样等这么久，让首屏先渲染完）。
+ * 翻页是纯 GET，但连续请求可能触发站点/WAF 的风控挑战，故统一限速。
+ */
+private const val AUTO_LOAD_DELAY_MS = 800L

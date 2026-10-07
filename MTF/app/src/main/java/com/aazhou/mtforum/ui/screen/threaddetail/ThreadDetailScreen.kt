@@ -57,6 +57,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -109,7 +110,9 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -146,6 +149,7 @@ fun ThreadDetailScreen(
     val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     val foldExpanded by viewModel.foldExpanded.collectAsStateWithLifecycle()
+    val autoLoadRunning by viewModel.autoLoadRunning.collectAsStateWithLifecycle()
 
     var replyText by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -220,13 +224,15 @@ fun ThreadDetailScreen(
     var videoUrl by remember { mutableStateOf<String?>(null) }
     val openVideo: (String) -> Unit = { url -> videoUrl = url }
     // 列表底部自动续拉：距离末尾还有约一屏（6 条）就开始预加载下一页，不等到划到底。
-    // 只在 Idle 时触发（Retry 需用户手动点重试，否则会失败重试死循环）。
+    // 只在 Idle 时触发（加载失败也停在 Idle，用户继续滑动即可再次尝试）。
     val shouldLoadMore by remember {
         derivedStateOf {
             val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
             val total = listState.layoutInfo.totalItemsCount
+            // autoLoadRunning 时不让开：批间隔里 loadMoreState 是 Idle，
+            // 底部预加载会和自动续拉链抢同一批请求
             hasNext && loadMoreState is ThreadDetailViewModel.LoadMoreState.Idle &&
-                !loadingMore && total > 0 && last >= total - 6
+                !loadingMore && !autoLoadRunning && total > 0 && last >= total - 6
         }
     }
     // key 用 shouldLoadMore 本身：布局完成（false→true）与每拉完一页（Loading→Idle）都会重启
@@ -323,9 +329,13 @@ fun ThreadDetailScreen(
                     EmptyBox("没有内容", Modifier.fillMaxSize())
                 } else {
                     val op = data.posts.firstOrNull { it.isFirstPost } ?: data.posts.firstOrNull()
-                    // 全帖图片序列：单图与图组共用，供全屏查看左右翻页
-                    val pageImages = remember(data.posts) {
-                        data.posts.flatMap { collectImageUrls(it.contentHtml) }
+                    // 全帖图片序列：单图与图组共用，供全屏查看左右翻页。
+                    // 楼层会在后台一批批变多，全量解析正文挪出主线程，否则每批
+                    // 新增楼层都要在组合时重解析全部正文，长帖直接掉帧。
+                    val pageImages by produceState(initialValue = emptyList<String>(), data.posts) {
+                        value = withContext(Dispatchers.Default) {
+                            data.posts.flatMap { collectImageUrls(it.contentHtml) }
+                        }
                     }
                     // 楼中楼树与灌水集合在 ViewModel 后台算好，这里只消费，
                     // 避免主线程做 O(n²) 引用匹配与逐楼层 Jsoup 判定
@@ -390,6 +400,9 @@ fun ThreadDetailScreen(
                                 onOrder = {
                                     viewModel.setReplyFilter(false, it, anchorNow())
                                 },
+                                showAutoLoadToggle = hasNext,
+                                autoLoadRunning = autoLoadRunning,
+                                onToggleAutoLoad = { viewModel.toggleAutoLoad() },
                             )
                             HorizontalDivider(color = colors.divider)
                         }
@@ -440,19 +453,6 @@ fun ThreadDetailScreen(
                                         "已经到底了",
                                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                                         color = colors.textHint,
-                                    )
-                                }
-                                is ThreadDetailViewModel.LoadMoreState.Retry -> Box(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clickable { viewModel.loadMore() }
-                                        .padding(20.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(
-                                        "加载失败，点击重试",
-                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                                        color = accentTextColor(),
                                     )
                                 }
                                 else -> Unit
@@ -1043,7 +1043,7 @@ private fun HiddenContentCard(onUnlock: () -> Unit) {
     }
 }
 
-/** 「全部评论 (N) [已折叠 N 条 / 收起已折叠]  楼主 | 正序 | 倒序」。 */
+/** 「全部评论 (N) [已折叠 N 条 / 收起已折叠]  [暂停/继续]  楼主 | 正序 | 倒序」。 */
 @Composable
 private fun CommentHeader(
     total: Int?,
@@ -1054,40 +1054,71 @@ private fun CommentHeader(
     onToggleFold: () -> Unit,
     onOpOnly: (Boolean) -> Unit,
     onOrder: (Int) -> Unit,
+    showAutoLoadToggle: Boolean = false,
+    autoLoadRunning: Boolean = false,
+    onToggleAutoLoad: () -> Unit = {},
 ) {
     val colors = LocalMtfColors.current
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            "全部评论",
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.5.sp),
-            fontWeight = FontWeight.Bold,
-            color = bodyTextColor(),
-        )
-        if (total != null) {
+        // 左侧一组占满剩余空间：窄屏时标题先省略，计数、折叠胶囊与右侧控件不动
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                "($total)",
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
-                color = colors.textSecondary,
-                modifier = Modifier.padding(start = 4.dp),
+                "全部评论",
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.5.sp),
+                fontWeight = FontWeight.Bold,
+                color = bodyTextColor(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
+            if (total != null) {
+                Text(
+                    "($total)",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+            if (folded > 0) {
+                Text(
+                    if (foldExpanded) "收起已折叠" else "已折叠 $folded 条",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(colors.quoteBackground)
+                        .clickable(onClick = onToggleFold)
+                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                )
+            }
         }
-        if (folded > 0) {
-            Text(
-                if (foldExpanded) "收起已折叠" else "已折叠 $folded 条",
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                color = colors.textSecondary,
+        if (showAutoLoadToggle) {
+            Icon(
+                painter = painterResource(
+                    if (autoLoadRunning) {
+                        com.aazhou.mtforum.R.drawable.ic_load_pause
+                    } else {
+                        com.aazhou.mtforum.R.drawable.ic_load_resume
+                    },
+                ),
+                contentDescription = if (autoLoadRunning) "暂停加载" else "继续加载",
+                tint = colors.iconSecondary,
                 modifier = Modifier
-                    .padding(start = 8.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(colors.quoteBackground)
-                    .clickable(onClick = onToggleFold)
-                    .padding(horizontal = 7.dp, vertical = 2.dp),
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = onToggleAutoLoad)
+                    .padding(1.dp),
             )
+            Spacer(Modifier.width(8.dp))
         }
-        Spacer(Modifier.weight(1f))
         SegmentedControl(
             selected = when {
                 opOnly -> 0
