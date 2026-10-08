@@ -359,6 +359,8 @@ private class BlocksBuilder {
         // “吃掉行首空白”的渲染不一致，会让同一篇正文里有的段落缩进、有的不缩进
         val start = if (lead < 0) 0 else lead
         val end = if (tail < 0) raw.length else tail + 1
+        // 作者手打的裸地址没有 <a> 包裹，补成链接 span，否则整段只是纯文本、点不开
+        detectBareLinks(raw, start, end, spans)
         blocks.add(
             ContentBlock.Text(
                 text = raw.substring(start, end),
@@ -539,6 +541,30 @@ private fun normalizeSpans(spans: List<StyleSpan>, start: Int, end: Int): List<S
 
 private fun sameStyle(a: StyleSpan, b: StyleSpan): Boolean = a.copy(start = 0, end = 0) == b.copy(start = 0, end = 0)
 
+/** 裸地址形态：http/https 开头，遇空白、引号、尖括号或表情占位字符（私用区）即止。 */
+private val BARE_URL = Regex("https?://[^\\s\\u00A0\\u3000\\uE000-\\uF8FF<>\"']+")
+
+/** 句读标点不属于地址：中英标点混排时字符类排除不干净，命中后再修掉尾巴。 */
+private const val URL_TAIL_CHARS = ".,;:!?，。；、！？…～~）)】]〉》\"'”’"
+
+/**
+ * 把 [raw] 里 [start, end) 区间中的裸地址补成链接 span（下标与 [raw] 对齐）。
+ *
+ * 站点用户贴图床直链时常常不加链接标签，网页上浏览器会自动识别，客户端不补就点不开。
+ * 已被 <a> 覆盖的区间跳过，避免同一段文字叠两个链接注解。
+ */
+private fun detectBareLinks(raw: String, start: Int, end: Int, spans: MutableList<StyleSpan>) {
+    for (match in BARE_URL.findAll(raw)) {
+        val url = match.value.trimEnd(*URL_TAIL_CHARS.toCharArray())
+        val from = match.range.first
+        val to = from + url.length
+        if (to - from <= "https://".length) continue
+        if (from < start || to > end) continue
+        if (spans.any { it.linkUrl != null && it.start < to && from < it.end }) continue
+        spans.add(StyleSpan(start = from, end = to, linkUrl = url))
+    }
+}
+
 private val HEX_COLOR = Regex("#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})")
 private val RGB_COLOR = Regex("rgb\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)")
 
@@ -628,15 +654,16 @@ internal fun imageUrl(img: Element): String? {
     return normalizeMediaUrl(raw)
 }
 
-/** 站内静态资源服务器均支持 https；明文地址会被系统当不安全流量处理，这里统一升到 https。 */
+/**
+ * 媒体地址一律升到 https。
+ *
+ * 网络策略只对站内域名（binmt.cc / mt2.cn）放开明文，其余 http 直链会被系统直接拦掉，
+ * 图片显示成空白占位（站点正文里的图片常是用户贴的站外图床直链，如 B 站 i0.hdslb.com）。
+ * 这些图床都支持 https，升级后不依赖明文放行；升不上去的地址与现状一样是加载失败，不会更差。
+ */
 private fun upgradeToHttps(url: String): String {
-    if (!url.startsWith("http://")) return url
-    val lower = url.lowercase()
-    return if ("binmt.cc" in lower || "mt2.cn" in lower) {
-        "https://" + url.substring("http://".length)
-    } else {
-        url
-    }
+    if (!url.startsWith("http://", ignoreCase = true)) return url
+    return "https://" + url.substring("http://".length)
 }
 
 /** 占位图不是真实内容：懒加载预置的透明图与内联 data URI。 */

@@ -486,40 +486,76 @@ class ForumParserTest {
 
     @Test
     fun userSpaceStatsParsed() {
+        // 结构取自站点真实的个人中心页（home.php?mod=space&uid=X&do=profile&mobile=2）：
+        // kmlevs 是等级、kmlev 是用户组；五项统计是 «span: 帖子 94»，积分/金币是
+        // «span: 1626»积分，在线时长在第二张 .comiis_space_profile 的 .profile_rs 里
+        val html = """
+            <html><body>
+            <script>var discuz_uid = '156549';</script>
+            <div class="comiis_space_tx comiis_space_txv1">
+              <div class="comiis_space_flw"><a id="followmod" href="home.php?mod=spacecp&amp;ac=follow&amp;op=add&amp;fuid=156549" class="bg_a f_f dialog"><i class="comiis_font"></i>关注</a></div>
+              <div class="user_img"><img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=156549&amp;size=middle"></div>
+              <h2 class="fyy">feelingboy11</h2>
+              <p><span class="z f14 fyy">516 人气</span><span class="z comiis_tm kmx fyy">|</span><span class="z f14 fyy">0 关注</span><span class="z comiis_tm kmx fyy">|</span><span class="z f14 fyy">57 粉丝</span></p>
+              <p><span class="kmlevs bg_0 kmlv f_f">Lv.4</span><span class="kmlev f_f">高中生</span></p>
+            </div>
+            <div class="comiis_space_profileico bg_f b_t b_b mt10 cl"><ul>
+              <li><a href="home.php?mod=space&amp;uid=156549&amp;do=thread&amp;view=me&amp;type=thread"><i class="comiis_font"></i><span>帖子 94</span></a></li>
+              <li><a href="home.php?mod=space&amp;uid=156549&amp;do=thread&amp;view=me&amp;type=reply"><i class="comiis_font"></i><span>回复 165</span></a></li>
+              <li><a href="javascript:;"><i class="comiis_font"></i><span>好友 3</span></a></li>
+              <li><a href="home.php?mod=follow&amp;do=follower&amp;uid=156549"><i class="comiis_font"></i><span>粉丝 57</span></a></li>
+              <li><a href="javascript:;"><i class="comiis_font"></i><span>人气 516</span></a></li>
+            </ul></div>
+            <div class="comiis_space_profilejf bg_f b_t b_b mt10 cl"><ul>
+              <li class="b_t b_r"><span class="f_0">1626</span>积分</li>
+              <li class="b_t b_r"><span class="f_0">7 </span>好评</li>
+              <li class="b_t b_r"><span class="f_0">479</span>金币</li>
+              <li class="b_t b_r"><span class="f_0">100 </span>信誉</li>
+            </ul></div>
+            <div class="comiis_space_profile bg_f b_t b_b mt10 cl"><ul>
+              <li class="b_t"><a href="home.php?mod=spacecp&amp;ac=usergroup" class="profile_a"><div class="profile_r"><span class="kmlev bg_0 f_f f12">Lv.4</span><span class="f14">高中生</span></div><span>用户组</span></a></li>
+              <li class="b_t"><a href="home.php?mod=spacecp&amp;ac=profile&amp;op=info" class="profile_a"><div class="profile_rs">添加签名</div><span>个人签名</span></a></li>
+            </ul></div>
+            <div class="comiis_space_profile bg_f b_t b_b mt10 cl"><ul>
+              <li class="b_t"><div class="profile_rs f_c">156549</div><span>用户ID</span></li>
+              <li class="b_t"><div class="profile_rs f_c">广东省</div><span>出生地</span></li>
+              <li class="b_t"><div class="profile_rs f_c">207 小时</div><span>在线时间</span></li>
+              <li class="b_t"><div class="profile_rs f_c">2026-5-4 23:04</div><span>注册时间</span></li>
+              <li class="b_t"><div class="profile_rs f_c">2026-10-8 00:40</div><span>最后访问</span></li>
+            </ul></div>
+            </body></html>
+        """.trimIndent()
+        val p = ForumParser.parseUserProfile(html)
+        assertEquals("156549", p.uid)
+        assertEquals("feelingboy11", p.name)
+        assertEquals("https://avatar.mt2.cn/uc_server/avatar.php?uid=156549&size=middle", p.avatarUrl)
+        assertEquals("Lv.4", p.level)
+        assertEquals("高中生", p.groupName)
+        assertEquals(94, p.threads)
+        assertEquals(165, p.posts)
+        assertEquals(3, p.friends)
+        assertEquals(0, p.following)
+        assertEquals(57, p.followers)
+        assertEquals(1626, p.credits)
+        assertEquals(479, p.gold)
+        assertEquals("207 小时", p.onlineTime)
+    }
+
+    @Test
+    fun userNameDropsLevelGluedIntoHeading() {
+        // 个别模板把等级头衔嵌在 h2 里，整取 text 会粘成「昵称Lv.4」
         val html = """
             <html><body>
             <script>var discuz_uid = '159705';</script>
             <div class="comiis_space_tx">
-              <h2>randian</h2><span class="kmlev">硕士生</span>
-              <div class="user_img"><img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=159705"></div>
+              <div class="user_img"><img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=159705&size=middle"></div>
+              <h2>randian<span class="kmlevs">Lv.4</span></h2>
             </div>
-            <div class="comiis_space_profileico"><ul>
-              <li>帖子 <span>42</span></li>
-              <li>回复 <span>318</span></li>
-              <li>好友 <span>7</span></li>
-              <li>关注 <span>12</span></li>
-              <li>粉丝 <span>55</span></li>
-            </ul></div>
-            <div class="comiis_space_profilejf"><ul>
-              <li>积分 <span class="f_0">1234</span></li>
-              <li>威望 <span class="f_0">10</span></li>
-              <li>金币 <span class="f_0">88</span></li>
-            </ul></div>
-            <div class="comiis_space_profile"><ul><li>在线时间 <span class="profile_rs">156 小时</span></li></ul></div>
             </body></html>
         """.trimIndent()
         val p = ForumParser.parseUserProfile(html)
-        assertEquals("159705", p.uid)
         assertEquals("randian", p.name)
-        assertEquals("硕士生", p.groupName)
-        assertEquals(42, p.threads)
-        assertEquals(318, p.posts)
-        assertEquals(7, p.friends)
-        assertEquals(12, p.following)
-        assertEquals(55, p.followers)
-        assertEquals(1234, p.credits)
-        assertEquals(88, p.gold)
-        assertEquals("156 小时", p.onlineTime)
+        assertEquals("Lv.4", p.level)
     }
 
     @Test
@@ -582,5 +618,143 @@ class ForumParserTest {
         val reply = page.posts[1]
         assertTrue(reply.contentHtml.contains("楼层正文"))
         assertTrue(reply.contentHtml.contains("c.jpg"))
+    }
+
+    @Test
+    fun parsesFollowStateFromThreadPage() {
+        // 站点用关注控件的 op 参数区分关注态；退出重进要靠它恢复「已关注」
+        fun threadWithFollowLink(href: String, text: String) = """
+            <html><head><title>关注态 - MT论坛</title>
+            <link rel="canonical" href="https://bbs.binmt.cc/thread-174050-1-1.html"></head>
+            <body>
+              <script>var replyreload, tid = '174050', authorid = '156549', formhash = 'b6a540bd';</script>
+              <div class="comiis_postlist">
+                <div class="comiis_postli" id="pid1">
+                  <div class="comiis_postli_top comiis_postli_topv1"></div>
+                  <div class="comiis_message view_one"><div class="comiis_a">正文</div></div>
+                </div>
+              </div>
+              <a href="$href" class="follow_btn">$text</a>
+            </body></html>
+        """.trimIndent()
+
+        val notFollowing = ForumParser.parseThreadPage(
+            threadWithFollowLink("home.php?mod=spacecp&ac=follow&op=add&fuid=156549", "关注"),
+            1,
+        )
+        assertTrue(notFollowing.followingStateKnown)
+        assertTrue(!notFollowing.isFollowingOp)
+
+        val following = ForumParser.parseThreadPage(
+            threadWithFollowLink("home.php?mod=spacecp&ac=follow&op=del&fuid=156549", "已关注"),
+            1,
+        )
+        assertTrue(following.followingStateKnown)
+        assertTrue(following.isFollowingOp)
+
+        // 没有关注控件（未登录/站点改版）时状态未知，界面应回落到本地记录
+        val unknown = ForumParser.parseThreadPage(threadHtml, 1)
+        assertTrue(!unknown.followingStateKnown)
+    }
+
+    @Test
+    fun noticesParsedFromNoticesBox() {
+        // 结构取自站点真实的提醒页（do=notice&view=mypost）：容器 .comiis_notices_box，
+        // 正文在 .ntc_body，时间在 h2，主题链接是 redirect&goto=findpost&ptid=TID
+        val html = """
+            <html><body>
+            <a href="member.php?mod=logging&amp;action=logout&amp;formhash=abc">退出</a>
+            <div class="comiis_notices_box">
+              <div class="comiis_notice_list b_t mt12">
+                <ul>
+                  <li class="b_b bg_f cl">
+                    <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=151212&amp;do=profile" class="notice_img"><img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=151212&amp;size=middle"></a>
+                    <div class="ntc_body"><a href="https://bbs.binmt.cc/space-uid-151212.html">rsuyeug</a> 回复了您的帖子
+                      <a href="https://bbs.binmt.cc/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=174032&amp;pid=11921862">(停更)MT论坛app(液态玻璃)</a> &nbsp;
+                      <a href="https://bbs.binmt.cc/forum.php?mod=redirect&amp;goto=findpost&amp;pid=11921862&amp;ptid=174032" class="lit">查看</a></div>
+                    <h2 class="f_d"><a class="dialog y" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore">忽略</a> 昨天 15:22</h2>
+                  </li>
+                  <li class="b_b bg_f cl">
+                    <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=151213&amp;do=profile" class="notice_img"><img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=151213&amp;size=middle"></a>
+                    <div class="ntc_body"><a href="https://bbs.binmt.cc/space-uid-151213.html">Kdian</a> 回复了您的帖子
+                      <a href="https://bbs.binmt.cc/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=174032&amp;pid=11921863">(停更)MT论坛app(液态玻璃)</a></div>
+                    <h2 class="f_d">昨天 14:46</h2>
+                  </li>
+                </ul>
+              </div>
+            </div>
+            </body></html>
+        """.trimIndent()
+        val notices = ForumParser.parseNotices(html)
+        assertTrue(!notices.loggedOut)
+        assertEquals(2, notices.notices.size)
+        val first = notices.notices[0]
+        assertEquals("174032", first.tid)
+        assertEquals("昨天 15:22", first.timeText)
+        // 正文含发帖人与主题名，行尾的「查看」是操作链接、不进正文
+        assertTrue(first.text.contains("rsuyeug 回复了您的帖子"))
+        assertTrue(first.text.contains("(停更)MT论坛app(液态玻璃)"))
+        assertTrue(!first.text.contains("查看"))
+        assertTrue(!first.text.contains("忽略"))
+    }
+
+    @Test
+    fun noticesCategoryMenuIsNotTreatedAsNotice() {
+        // 默认页（不带 view）只有类别菜单，没有任何提醒内容
+        val html = """
+            <html><body>
+            <div class="comiis_userlist bg_f cl"><ul>
+              <li class="b_b"><a href="home.php?mod=space&amp;do=pm" class="kmdbt">我的消息</a></li>
+              <li class="b_b mypost"><a href="home.php?mod=space&amp;do=notice&amp;view=mypost" class="kmdbt">我的帖子</a></li>
+            </ul></div>
+            </body></html>
+        """.trimIndent()
+        val notices = ForumParser.parseNotices(html)
+        assertTrue(!notices.loggedOut)
+        assertTrue(notices.notices.isEmpty())
+    }
+
+    @Test
+    fun userProfileSplitsNameFromLevelAndReadsNumbersByLabel() {
+        // 等级头衔是 h2 内的子元素，整取 text 会粘在昵称后；标签与数值分列两个节点
+        val html = """
+            <html><body>
+              <script>var discuz_uid = '156549';</script>
+              <div class="comiis_space_tx">
+                <div class="user_img"><img src="https://avatar.mt2.cn/a.png"></div>
+                <h2>ChenHao<span class="kmlevs">Lv.3</span><span class="kmlev">初中生</span></h2>
+              </div>
+              <div class="comiis_space_profileico">
+                <ul>
+                  <li><span>帖子</span><span>12</span></li>
+                  <li><span>回复</span><span>340</span></li>
+                  <li><span>好友</span><span>5</span></li>
+                  <li><span>关注</span><span>7</span></li>
+                  <li><span>粉丝</span><span>9</span></li>
+                </ul>
+              </div>
+              <div class="comiis_space_profilejf"><ul>
+                <li><span>积分</span><span>1024</span></li>
+                <li><span>威望</span><span>3</span></li>
+                <li><span>金币</span><span>88</span></li>
+              </ul></div>
+              <div class="comiis_space_profile"><ul>
+                <li>在线时间<span class="profile_rs">128 小时</span></li>
+              </ul></div>
+            </body></html>
+        """.trimIndent()
+        val profile = ForumParser.parseUserProfile(html)
+        assertTrue(profile.isLoggedIn)
+        assertEquals("ChenHao", profile.name)
+        assertEquals("Lv.3", profile.level)
+        assertEquals("初中生", profile.groupName)
+        assertEquals(12, profile.threads)
+        assertEquals(340, profile.posts)
+        assertEquals(5, profile.friends)
+        assertEquals(7, profile.following)
+        assertEquals(9, profile.followers)
+        assertEquals(1024, profile.credits)
+        assertEquals(88, profile.gold)
+        assertEquals("128 小时", profile.onlineTime)
     }
 }

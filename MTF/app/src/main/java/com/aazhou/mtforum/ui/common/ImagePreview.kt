@@ -135,11 +135,16 @@ fun ImagePreview(
     // 预览必须盖住玻璃底栏：底栏与 NavHost 同在 AppRoot 的 Box 里、且绘制在 NavHost 之后，
     // 作为页面内 composable 的预览无论 fillMaxSize 到哪都被它压住。Popup 挂在窗口装饰层，
     // 绘制层级高于整个窗口内容；返回键交给内容里的 BackHandler，故关掉 popup 自身的返回拦截。
+    // excludeFromSystemGesture 必须为 false：Popup 默认把整块弹窗区域登记成系统手势排除区，
+    // 而系统对每侧的排除上限只有 200dp，超限时自屏幕底部往上生效——于是边侧上滑在屏幕
+    // 下半段（约底部 200dp）被弹窗吃掉，系统返回手势不再触发，表现为「侧滑返回时好时坏」
+    // （从屏幕上半段滑才生效）。这里放开排除区，让边滑回到 BackHandler。
     Popup(
         onDismissRequest = null,
         properties = PopupProperties(
             dismissOnBackPress = false,
             dismissOnClickOutside = false,
+            excludeFromSystemGesture = false,
         ),
     ) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {

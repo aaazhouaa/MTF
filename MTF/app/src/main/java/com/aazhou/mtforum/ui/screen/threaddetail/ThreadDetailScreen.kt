@@ -199,8 +199,9 @@ fun ThreadDetailScreen(
     }
     LaunchedEffect(followState) {
         when (val f = followState) {
+            // 进帖时同步来的初始态不弹提示，只有用户点了关注/取消关注才反馈
             is ThreadDetailViewModel.FollowState.Done ->
-                snackbarHostState.showSnackbar(if (f.following) "已关注" else "已取消关注")
+                if (f.fromUser) snackbarHostState.showSnackbar(if (f.following) "已关注" else "已取消关注")
             is ThreadDetailViewModel.FollowState.Error -> snackbarHostState.showSnackbar(f.message)
             else -> Unit
         }
@@ -325,7 +326,9 @@ fun ThreadDetailScreen(
             ThreadDetailTopBar(
                 post = op,
                 following = following,
-                followEnabled = page?.opUid != null && page?.formhash != null,
+                // 胶囊只取决于「知道楼主是谁」：formhash 是一次性令牌，缓存上屏时它要等
+                // 补拉的第 1 页才回来，拿它当可见条件会让头像昵称都出来了、关注慢一拍
+                followEnabled = page?.opUid != null,
                 showMore = true,
                 downloadBusy = downloadBusy,
                 onBack = onBack,

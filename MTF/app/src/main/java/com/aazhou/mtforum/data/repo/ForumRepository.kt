@@ -6,6 +6,7 @@ import com.aazhou.mtforum.data.model.HomeData
 import com.aazhou.mtforum.data.model.LikeResult
 import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
+import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticePage
 import com.aazhou.mtforum.data.model.SearchResult
 import com.aazhou.mtforum.data.model.ThreadPage
@@ -29,6 +30,9 @@ private val REPORT_ERROR_PATTERN = Regex("举报理由|action=login|请先登录
 /** 删除未生效：返回的仍是编辑表单（含 editsubmit）或跳登录页。
  * 不能拿 name="message" 判定——删除成功后重定向到的帖子页也带快速回复框。 */
 private val DELETE_STILL_FORM_PATTERN = Regex("editsubmit|action=login")
+
+/** 消息提醒的内容类别（默认页只是类别菜单，没有提醒内容）。 */
+private val NOTICE_VIEWS = listOf("mypost", "interactive", "system", "app")
 
 /** 打赏成功标识。 */
 private val REWARD_SUCCESS_PATTERN =
@@ -191,19 +195,43 @@ class ForumRepository(
         )
     }
 
-    /** 当前登录用户的个人空间主页（统计/积分/金币等）。 */
+    /**
+     * 当前登录用户的个人中心（统计/积分/金币/在线时长等）。
+     *
+     * 必须带 do=profile：不带的地址在 comiis 模板下是「广播」动态页，整页没有
+     * 头像、统计与积分，只有昵称/uid 这类每个页面都有的 JS 变量。
+     */
     suspend fun me(): UserProfile = withContext(Dispatchers.IO) {
-        ForumParser.parseUserProfile(http.get(http.url("home.php?mod=space&mobile=2")))
+        ForumParser.parseUserProfile(http.get(http.url("home.php?mod=space&do=profile&mobile=2")))
     }
 
-    /** 消息提醒页（网页端「我的」→「消息提醒」）。 */
+    /**
+     * 消息提醒：网页端「我的」→「消息提醒」。
+     *
+     * 默认地址只是类别菜单（我的消息/我的帖子/坛友互动/系统提醒/应用提醒），
+     * 提醒内容按类别分页，故把四个内容类别各拉一份合并成一条列表。未登录时
+     * 第一份就被换成登录表单，直接返回 loggedOut，不再多打请求。
+     */
     suspend fun notices(): NoticePage = withContext(Dispatchers.IO) {
-        ForumParser.parseNotices(http.get(http.url("home.php?mod=space&do=notice&mobile=2")))
+        val merged = mutableListOf<Notice>()
+        for (view in NOTICE_VIEWS) {
+            val page = ForumParser.parseNotices(
+                http.get(http.url("home.php?mod=space&do=notice&view=$view&mobile=2")),
+            )
+            if (page.loggedOut) return@withContext NoticePage(loggedOut = true)
+            // id 带上类别与序号：同一帖子可能同时出现在多个类别里，key 必须唯一
+            page.notices.forEachIndexed { index, notice ->
+                merged += notice.copy(id = "$view-$index")
+            }
+        }
+        NoticePage(notices = merged)
     }
 
-    /** 指定用户的个人空间（他人主页）。 */
+    /** 指定用户的个人中心（他人主页）。 */
     suspend fun userProfile(uid: String): UserProfile = withContext(Dispatchers.IO) {
-        ForumParser.parseUserProfile(http.get(http.url("home.php?mod=space&uid=$uid&mobile=2")))
+        ForumParser.parseUserProfile(
+            http.get(http.url("home.php?mod=space&uid=$uid&do=profile&mobile=2")),
+        )
     }
 
     /** 举报本帖（[pid] 为空）或某条回复；理由与说明由弹窗传入。 */

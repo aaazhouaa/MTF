@@ -39,12 +39,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.Thread
 import com.aazhou.mtforum.ui.common.ActionHint
 import com.aazhou.mtforum.ui.common.ErrorBox
@@ -55,15 +57,17 @@ import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
+import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.launch
 
-/** 首页：顶栏（应用名 + 搜索胶囊 + 主题切换 + 消息）、热帖排行头部、帖子卡片流。 */
+/** 首页：顶栏（头像/应用名 + 搜索胶囊 + 主题切换 + 消息）、热帖排行头部、帖子卡片流。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -72,8 +76,10 @@ fun HomeScreen(
     onMessages: () -> Unit,
     onForumClick: (fid: String, name: String) -> Unit,
     onThreadClick: (tid: String) -> Unit,
+    onProfileClick: (uid: String) -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val container = LocalContext.current.container()
     val viewModel: HomeViewModel = appViewModel { HomeViewModel(it.repository, it.contentCache) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val hot by viewModel.hot.collectAsStateWithLifecycle()
@@ -81,6 +87,8 @@ fun HomeScreen(
     val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
+    // 当前登录用户：已登录时顶栏左侧用头像替代「MTF」，点击进个人主页
+    val me by container.currentUser.collectAsStateWithLifecycle()
 
     // 点击卡片配图一律进内置全屏查看器；urls 为本卡全部配图，便于左右翻页
     var preview by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
@@ -112,6 +120,8 @@ fun HomeScreen(
         },
         topBar = {
             HomeTopBar(
+                avatarUrl = me?.avatarUrl,
+                onProfileClick = { me?.uid?.let(onProfileClick) },
                 onSearch = onSearch,
                 onToggleTheme = onToggleTheme,
                 onMessages = onMessages,
@@ -174,9 +184,11 @@ fun HomeScreen(
     }
 }
 
-/** 顶栏：「MTF」应用名 + 搜索胶囊 + 主题切换 + 消息提醒；双击顶栏空白处回顶部。 */
+/** 顶栏：已登录显示头像（点击进个人主页）、否则应用名 + 搜索胶囊 + 主题切换 + 消息提醒；双击顶栏空白处回顶部。 */
 @Composable
 private fun HomeTopBar(
+    avatarUrl: String?,
+    onProfileClick: () -> Unit,
     onSearch: () -> Unit,
     onToggleTheme: () -> Unit,
     onMessages: () -> Unit,
@@ -198,12 +210,25 @@ private fun HomeTopBar(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            "MTF",
-            style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
-            fontWeight = FontWeight.Bold,
-            color = bodyTextColor(),
-        )
+        if (avatarUrl.isNullOrBlank()) {
+            Text(
+                "MTF",
+                style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
+                fontWeight = FontWeight.Bold,
+                color = bodyTextColor(),
+            )
+        } else {
+            AsyncImage(
+                model = avatarUrl,
+                contentDescription = "个人主页",
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(colors.quoteBackground)
+                    .dimImageInDark()
+                    .clickable(onClick = onProfileClick),
+            )
+        }
         Spacer(Modifier.width(12.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,

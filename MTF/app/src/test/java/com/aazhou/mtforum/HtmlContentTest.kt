@@ -328,6 +328,41 @@ class HtmlContentTest {
     }
 
     @Test
+    fun bareUrlInPlainTextBecomesLink() {
+        // 用户贴图床直链时常不加链接标签，网页靠浏览器自动识别，客户端必须自己补
+        val url = "http://i0.hdslb.com/bfs/new_dyn/be7adf.png?bili_only=0"
+        val text = parseContentBlocks("B站加图测试：$url 为什么打不开。")
+            .filterIsInstance<ContentBlock.Text>().single()
+        val span = text.spans.single { it.linkUrl != null }
+        assertEquals(url, span.linkUrl)
+        assertEquals(url, text.text.substring(span.start, span.end))
+    }
+
+    @Test
+    fun bareUrlTailPunctuationIsNotPartOfLink() {
+        val text = parseContentBlocks("看图（http://i0.hdslb.com/x.png）。")
+            .filterIsInstance<ContentBlock.Text>().single()
+        assertEquals("http://i0.hdslb.com/x.png", text.spans.single { it.linkUrl != null }.linkUrl)
+    }
+
+    @Test
+    fun anchorWrappedUrlIsNotDuplicatedAsBareLink() {
+        val url = "http://i0.hdslb.com/x.png"
+        val text = parseContentBlocks("<a href=\"$url\">$url</a>")
+            .filterIsInstance<ContentBlock.Text>().single()
+        assertEquals(1, text.spans.count { it.linkUrl != null })
+        assertEquals(url, text.spans.single { it.linkUrl != null }.linkUrl)
+    }
+
+    @Test
+    fun externalHttpImageIsUpgradedToHttps() {
+        // 网络策略只对站内域名放开明文，站外图床的 http 直链会被系统拦掉、图显示成空白占位
+        val image = parseContentBlocks("<img src=\"http://i0.hdslb.com/bfs/new_dyn/4fb5b4d5.jpg\" />")
+            .filterIsInstance<ContentBlock.Image>().single()
+        assertEquals("https://i0.hdslb.com/bfs/new_dyn/4fb5b4d5.jpg", image.url)
+    }
+
+    @Test
     fun videoTagBecomesVideoBlock() {
         val html = "看视频<video src=\"https://cdn.binmt.cc/data/attachment/forum/v.mp4\" controls></video>"
         val video = parseContentBlocks(html).filterIsInstance<ContentBlock.Video>().single()

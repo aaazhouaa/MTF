@@ -1,6 +1,5 @@
 package com.aazhou.mtforum.data.parser
 
-import android.util.Log
 import com.aazhou.mtforum.data.model.Forum
 import com.aazhou.mtforum.data.model.ForumGroup
 import com.aazhou.mtforum.data.model.ForumPage
@@ -276,6 +275,7 @@ object ForumParser {
             ?.text()?.let { numberFromText(it) }
         val replyUrl = document.selectFirst("form#fastpostform")?.attr("action")
         val action = parseActionState(document, html)
+        val follow = parseFollowState(document)
         return ThreadPage(
             tid = extractTid(document, html),
             subject = subject,
@@ -296,7 +296,26 @@ object ForumParser {
             likedStateKnown = action.likedKnown,
             isFavorited = action.favorited,
             favoritedStateKnown = action.favoritedKnown,
+            isFollowingOp = follow.first,
+            followingStateKnown = follow.second,
         )
+    }
+
+    /**
+     * 解析当前登录用户对楼主的关注状态；[Pair.second] 为 false 表示页面没给出该状态。
+     *
+     * 站点用关注控件的 op 参数区分（add=未关注，del=已关注），链接文本兜底；
+     * 未登录或控件缺失时状态未知，界面应回落到本地记录，否则已关注的人重进帖子
+     * 会被显示成未关注。
+     */
+    private fun parseFollowState(document: Document): Pair<Boolean, Boolean> {
+        val link = document.selectFirst("a[href*=ac=follow]") ?: return false to false
+        val href = link.attr("href")
+        val text = link.text()
+        if (href.contains("op=del") || text.contains("取消关注")) return true to true
+        if (href.contains("op=add")) return false to true
+        if (text.contains("已关注")) return true to true
+        return false to true
     }
 
     /** 首帖的点赞/收藏状态；两个 known 分别表示站点是否明确给出该状态。 */
@@ -532,96 +551,175 @@ object ForumParser {
         val uid = Regex("discuz_uid\\s*=\\s*'(\\d+)'").find(html)?.groupValues?.get(1)
             ?: RE_UID_VAR.find(html)?.groupValues?.get(1)
         if (uid == null || uid == "0") return UserProfile(uid = uid)
-        // comiis 移动模板的个人空间主页
-        val name = document.selectFirst(".comiis_space_tx h2")?.text()?.trim()
+        // comiis 模板的个人中心：kmlevs 是等级（Lv.3），kmlev 是用户组（初中生）；
+        // 头衔在个别模板里嵌在 h2 内，故昵称取 ownText，取不到再整段去掉头衔
+        val nameEl = document.selectFirst(".comiis_space_tx h2")
+        val level = document.selectFirst(".comiis_space_tx .kmlevs")?.text()?.trim()
+            ?: document.selectFirst(".comiis_space_tx .user_lev")?.text()?.trim()
+        val name = nameEl?.ownText()?.trim()?.ifEmpty { null }
+            ?: nameEl?.text()?.trim()?.removeSuffix(level.orEmpty())?.trim()
             ?: document.selectFirst("a.sidenv_user")?.text()?.trim()
-        val avatar = document.selectFirst(".comiis_space_tx img[src*=avatar], .comiis_space_tx .user_img img")
-            ?.attr("src")
+        val avatar = document.selectFirst(".comiis_space_tx .user_img img")?.attr("src")
             ?: document.selectFirst("img.sidenv_tximg, div.sidenv_user img")?.attr("src")
-        fun ico(label: String): Int? = document
-            .select(".comiis_space_profileico li:contains($label) span")
-            .firstOrNull()?.text()?.let(::numberFromText)
-        val jf = document.select(".comiis_space_profilejf ul li")
-        fun jfValue(index: Int): Int? =
-            jf.getOrNull(index)?.selectFirst(".f_0, span")?.text()?.let(::numberFromText)
         return UserProfile(
             uid = uid,
             name = name,
             avatarUrl = avatar,
-            level = document.selectFirst(".comiis_space_tx .kmlev, .comiis_space_tx .user_lev")?.text()?.trim(),
+            level = level,
             groupName = document.selectFirst(".comiis_space_tx .kmlev")?.text()?.trim(),
-            threads = ico("帖子"),
-            posts = ico("回复"),
-            friends = ico("好友"),
-            following = ico("关注"),
-            followers = ico("粉丝"),
-            credits = jfValue(0),
-            gold = jfValue(2),
-            onlineTime = document.select(".comiis_space_profile li:contains(在线时间) .profile_rs")
-                .firstOrNull()?.text()?.trim(),
+            threads = numberByLabel(document, "帖子", "主题"),
+            posts = numberByLabel(document, "回复", "回帖"),
+            friends = numberByLabel(document, "好友"),
+            following = numberByLabel(document, "关注"),
+            followers = numberByLabel(document, "粉丝"),
+            credits = numberByLabel(document, "积分"),
+            gold = numberByLabel(document, "金币"),
+            onlineTime = textByLabel(document, "在线时间"),
         )
     }
 
-    /** 单条提醒里出现的时间文本：相对时间（N分钟前/今天/昨天）或绝对日期。 */
+    /**
+     * 按标签取数值（统计 / 积分 / 金币 / 关注）。
+     *
+     * 标签与数值的排布有三种：同节点（«span: 帖子 1»）、数值在前（«span: 437»积分）、
+     * 拆成兄弟节点（«span:帖子»«span:42»）。一律先看标签所在节点自身的文本——范围最紧，
+     * 不会串到隔壁项——再看它的父行；标签后、标签前两个方向都找。
+     */
+    private fun numberByLabel(root: Element, vararg labels: String): Int? {
+        for (scope in profileScopes(root)) {
+            for (label in labels) {
+                for (holder in scope.select(":containsOwn($label)")) {
+                    numberNearLabel(holder.text(), label)?.let { return it }
+                    numberNearLabel((holder.parent() ?: holder).text(), label)?.let { return it }
+                }
+            }
+        }
+        return null
+    }
+
+    /** 标签后的数字优先，否则取标签前的最后一个数字。 */
+    private fun numberNearLabel(text: String, label: String): Int? {
+        Regex("""\d+""").find(text.substringAfter(label, ""))?.value?.toIntOrNull()
+            ?.let { return it }
+        return Regex("""\d+""").findAll(text.substringBefore(label, ""))
+            .lastOrNull()?.value?.toIntOrNull()
+    }
+
+    /** 按标签取文本（在线时长这类「数字 + 单位」的值）。 */
+    private fun textByLabel(root: Element, vararg labels: String): String? {
+        for (scope in profileScopes(root)) {
+            for (label in labels) {
+                for (holder in scope.select(":containsOwn($label)")) {
+                    textNearLabel(holder.text(), label)?.let { return it }
+                    textNearLabel((holder.parent() ?: holder).text(), label)?.let { return it }
+                }
+            }
+        }
+        return null
+    }
+
+    /** 标签后的时长片段优先，否则取标签前紧邻的一段。 */
+    private fun textNearLabel(text: String, label: String): String? {
+        val after = text.substringAfter(label, "").trim().trimStart(':', '：')
+            .takeWhile { it.isDigit() || it.isWhitespace() || it in "小时分钟天秒" }
+            .trim()
+        if (after.isNotEmpty()) return after
+        return text.substringBefore(label, "").trim()
+            .takeLastWhile { it.isDigit() || it.isWhitespace() || it in "小时分钟天秒" }
+            .trim()
+            .ifEmpty { null }
+    }
+
+    /** 资料数值的查找范围：从最具体的容器逐步放宽到整页。 */
+    private fun profileScopes(root: Element): List<Element> {
+        val scopes = LinkedHashSet<Element>()
+        for (selector in listOf(
+            ".comiis_space_profileico",
+            ".comiis_space_profilejf",
+            ".comiis_space_profile",
+            ".comiis_space_tx",
+            ".comiis_space",
+        )) {
+            scopes.addAll(root.select(selector))
+        }
+        scopes.add(root)
+        return scopes.toList()
+    }
+
+/**
+     * 单条提醒里出现的时间文本：相对时间（N分钟前/今天/昨天）或绝对日期。
+     * 「昨天」这类相对日词后面常跟钟点（昨天 15:22），一并吃进来，否则只剩「昨天」。
+     */
     private val RE_NOTICE_TIME = Regex(
         "\\d{4}-\\d{1,2}-\\d{1,2}(\\s+\\d{1,2}:\\d{2}(:\\d{2})?)?" +
             "|\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{2}" +
-            "|今天|昨天|前天|\\d+\\s*(分钟|小时|天|秒)前",
+            "|(?:今天|昨天|前天)(?:\\s+\\d{1,2}:\\d{2}(?::\\d{2})?)?" +
+            "|\\d+\\s*(分钟|小时|天|秒)前",
     )
 
-    /** 未登录时站点把提醒页换成登录表单；据此区分「未登录」与「确实没有提醒」。 */
-    private val RE_NOTICE_LOGGED_OUT = Regex("mod=logging|action=login|请先登录|需要登录")
+    /** 提醒行里指向主题的链接：移动模板用 redirect&goto=findpost&ptid=TID，旧式用 thread-TID。 */
+    private val RE_NOTICE_TID = Regex("""(?:ptid|tid)=(\d+)""")
 
     /**
-     * 「我的」→「消息提醒」页（home.php?mod=space&do=notice）。
+     * 「我的」→「消息提醒」的某个类别页（home.php?mod=space&do=notice&view=…）。
      *
-     * 站点把每条提醒渲染成一个 li，容器类名随 comiis 模板版本变化，因此分三层选取：
-     * 1. 专用容器（notice/pm 相关 class）；
-     * 2. 含帖子链接的 li（提醒基本都链到对应主题）；
-     * 3. 含时间文本的 li。
+     * 每条提醒是 div.comiis_notices_box 里的一个 li：头像链接 + .ntc_body 正文 +
+     * h2 里的时间与操作。类别菜单（我的消息/我的帖子/…）也是 li，靠容器与
+     * 「有正文或有主题链接」排除掉。容器类名随模板版本变化，故再留两层兜底。
      *
-     * 三层都失配（站点改版）时返回空列表，界面显示「暂无消息提醒」，不抛异常。
+     * 未登录只能看登录表单：登录态页面同样带着退出登录链接
+     * （member.php?mod=logging&action=logout），用 mod=logging/action=login 的宽松
+     * 子串判断会把已登录用户误判成未登录，消息页直接摆「请先登录」。
      */
     fun parseNotices(html: String): NoticePage {
         val document = doc(html)
-        val hasThreadLink = document.select("li a[href*=thread-]").isNotEmpty()
-        val loggedOut = RE_NOTICE_LOGGED_OUT.containsMatchIn(html) && !hasThreadLink
+        val loggedOut = document.selectFirst("form#loginform") != null
 
-        var rows: List<Element> = document.select(
-            "div.comiis_notice li, ul.comiis_notice li, li.comiis_notice, " +
-                "div[class*=notice] li, div[class*=pm_] li",
-        )
+        var rows: List<Element> = document.select("div.comiis_notices_box li").filter { li ->
+            li.selectFirst(".ntc_body") != null || li.select("a[href]").any {
+                RE_NOTICE_TID.containsMatchIn(it.attr("href")) ||
+                    RE_TID.containsMatchIn(it.attr("href"))
+            }
+        }
         if (rows.isEmpty()) {
-            rows = document.select("li").filter { it.select("a[href*=thread-]").isNotEmpty() }
+            rows = document.select("li").filter { li ->
+                li.select("a[href]").any {
+                    RE_NOTICE_TID.containsMatchIn(it.attr("href")) ||
+                        RE_TID.containsMatchIn(it.attr("href"))
+                }
+            }
         }
         if (rows.isEmpty()) {
             rows = document.select("li").filter { RE_NOTICE_TIME.containsMatchIn(it.text()) }
         }
         val notices = rows.mapIndexedNotNull { index, li -> noticeFromItem(li, index) }
-        if (notices.isEmpty() && !loggedOut) {
-            // 失配时只打候选节点的结构与条数（不打正文），便于按真实模板校准选择器
-            Log.d(
-                "MTF-NOTICE",
-                "no notice parsed, li=${document.select("li").size}, " +
-                    "classes=" +
-                    document.select("li").take(40).joinToString { it.className().ifBlank { "-" } },
-            )
-        }
         return NoticePage(loggedOut = loggedOut, notices = notices)
     }
 
-    /** 单个 li 转成提醒：正文取整行文本（去掉图标私用区字符），时间取行内最后一段。 */
+    /** 单个 li 转成提醒：正文取 .ntc_body（没有则整行），时间取 h2 里的时间段。 */
     private fun noticeFromItem(li: Element, index: Int): Notice? {
-        val raw = li.text().replace(Regex("[\\uE000-\\uF8FF]"), "").trim()
+        val body = li.selectFirst(".ntc_body")
+        // 站点用 &nbsp; 撑空白，Jsoup 会转成不换行空格，先归一成普通空格再裁剪
+        val raw = (body ?: li).text()
+            .replace(Regex("[\\uE000-\\uF8FF]"), "")
+            .replace('\u00A0', ' ')
+            .trim()
         if (raw.isEmpty()) return null
-        val time = RE_NOTICE_TIME.findAll(raw).lastOrNull()?.value
-        val text = if (time != null && raw.endsWith(time)) {
-            raw.dropLast(time.length).trim().trimEnd('·', ' ', ',', '，').ifBlank { raw }
-        } else {
-            raw
-        }
-        val tid = li.select("a[href*=thread-]").firstOrNull()?.attr("href")
-            ?.let { RE_TID.find(it)?.groupValues?.get(1) }
+        val time = RE_NOTICE_TIME.findAll(li.selectFirst("h2")?.text() ?: raw)
+            .lastOrNull()?.value
+        var text = raw
+        if (time != null && text.endsWith(time)) text = text.dropLast(time.length).trim()
+        // 行尾的「查看」是跳转操作链接，不是正文
+        text = text.replace(Regex("\\s*查看\\s*$"), "").trim()
+            .trimEnd('·', ' ', ',', '，')
+            .ifBlank { raw }
+        val tid = li.select("a[href]").asSequence()
+            .map { it.attr("href") }
+            .mapNotNull { href ->
+                RE_NOTICE_TID.find(href)?.groupValues?.get(1)
+                    ?: RE_TID.find(href)?.groupValues?.get(1)
+            }
+            .firstOrNull()
         return Notice(id = tid ?: "notice-$index", text = text, timeText = time, tid = tid)
     }
 

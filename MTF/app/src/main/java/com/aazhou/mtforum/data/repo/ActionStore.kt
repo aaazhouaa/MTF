@@ -10,15 +10,17 @@ import kotlinx.coroutines.flow.map
 private val Context.actionDataStore by preferencesDataStore(name = "mtf_actions")
 
 /**
- * 持久化各主题的点赞/收藏状态。
+ * 持久化各主题的点赞/收藏状态，以及各用户的关注状态。
  *
  * 站点只在登录态渲染点赞/收藏控件，未登录或控件缺失时页面无法告知状态，
  * 此时沿用本地记录，否则已操作过的帖子再次进入会被显示成未操作。
+ * 关注态同理：页面给了就以页面为准，没给时靠本地记录保持。
  */
 class ActionStore(private val context: Context) {
 
     private fun likedKey(tid: String) = booleanPreferencesKey("liked_$tid")
     private fun favoritedKey(tid: String) = booleanPreferencesKey("favorited_$tid")
+    private fun followingKey(uid: String) = booleanPreferencesKey("following_$uid")
 
     /** 本地记录的点赞状态；从未记录过返回 null。 */
     suspend fun liked(tid: String): Boolean? =
@@ -34,5 +36,14 @@ class ActionStore(private val context: Context) {
 
     suspend fun setFavorited(tid: String, favorited: Boolean) {
         context.actionDataStore.edit { it[favoritedKey(tid)] = favorited }
+    }
+
+    /** 本地记录的关注状态；从未记录过返回 null。 */
+    suspend fun following(uid: String): Boolean? =
+        context.actionDataStore.data.map { it[followingKey(uid)] }.first()
+
+    suspend fun setFollowing(uid: String, following: Boolean) {
+        if (uid.isBlank()) return
+        context.actionDataStore.edit { it[followingKey(uid)] = following }
     }
 }

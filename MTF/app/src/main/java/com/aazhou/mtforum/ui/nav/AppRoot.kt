@@ -139,6 +139,8 @@ fun AppRoot(onToggleTheme: () -> Unit) {
                     },
                     onForumClick = { fid, name -> navController.navigate(Routes.forum(fid, name)) },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                    // 顶栏头像进个人主页（自己的空间页）
+                    onProfileClick = { uid -> navController.navigate(Routes.user(uid)) },
                 )
             }
             composable(Routes.FORUMS) {
@@ -162,7 +164,11 @@ fun AppRoot(onToggleTheme: () -> Unit) {
             composable(Routes.LOGIN) {
                 LoginScreen(
                     onBack = { navController.popBackStack() },
-                    onSuccess = { navController.popBackStack() },
+                    onSuccess = {
+                        // 登录成功后立刻刷新当前用户资料，首页头像随之出现
+                        container.refreshCurrentUserAsync()
+                        navController.popBackStack()
+                    },
                 )
             }
             composable(Routes.SETTINGS) { SettingsScreen() }

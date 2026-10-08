@@ -3,6 +3,7 @@ package com.aazhou.mtforum
 import android.app.Application
 import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.download.ThreadArchiveStore
+import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.DownloadStore
@@ -12,6 +13,9 @@ import com.aazhou.mtforum.data.repo.ThemeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -30,14 +34,56 @@ class AppContainer(application: Application) {
     val httpClient = HttpClient()
     val repository = ForumRepository(httpClient)
 
+    /**
+     * 当前登录用户的资料；未登录为 null。
+     *
+     * 登录可能发生在三处：原生登录页、人机验证页里的 WebView（cookie 回灌后由
+     * [HttpClient.onSessionChanged] 通知）、以及启动时从持久化会话恢复。三者都
+     * 汇到 [refreshCurrentUser]，首页头像与各页资料才拿得到同一份数据。
+     */
+    private val _currentUser = MutableStateFlow<UserProfile?>(null)
+    val currentUser: StateFlow<UserProfile?> = _currentUser.asStateFlow()
+
     /** 本地内容缓存：一个 key 一个 JSON 文件，置于 cacheDir（临时性质，系统空间紧张可回收）。 */
     val contentCache = ContentCache(java.io.File(application.cacheDir, "mtf_content"))
 
     init {
+        httpClient.onSessionChanged = { refreshCurrentUserAsync() }
         appScope.launch {
             val saved = sessionStore.cookieHeader.first()
             if (saved.isNotEmpty()) restoreCookies(saved)
+            // 先用上次登录保存的资料上屏（免一次请求的白屏），网络回来再覆盖
+            val savedUid = sessionStore.uid.first()
+            if (savedUid.isNotEmpty()) {
+                _currentUser.value = UserProfile(
+                    uid = savedUid,
+                    name = sessionStore.username.first().ifEmpty { null },
+                    avatarUrl = sessionStore.avatar.first().ifEmpty { null },
+                )
+            }
+            if (httpClient.isLoggedIn()) refreshCurrentUser()
         }
+    }
+
+    /** 拉取并缓存当前登录用户资料；未登录时清空。失败则保留旧值，不清空已有资料。 */
+    suspend fun refreshCurrentUser() {
+        if (!httpClient.isLoggedIn()) {
+            _currentUser.value = null
+            return
+        }
+        val profile = runCatching { repository.me() }.getOrNull() ?: return
+        if (!profile.isLoggedIn) {
+            _currentUser.value = null
+            return
+        }
+        _currentUser.value = profile
+        // 顺手落盘：WebView 里登录的会话此前只存在于内存，重启即丢
+        persistSession(profile.uid.orEmpty(), profile.name.orEmpty(), profile.avatarUrl)
+    }
+
+    /** 界面/回调用的非挂起版本。 */
+    fun refreshCurrentUserAsync() {
+        appScope.launch { refreshCurrentUser() }
     }
 
     /** 将持久化的 Cookie 头写回内存 CookieJar。 */
@@ -61,6 +107,7 @@ class AppContainer(application: Application) {
 
     fun logout() {
         httpClient.cookieStore.clear()
+        _currentUser.value = null
         appScope.launch { sessionStore.clearSession() }
     }
 }

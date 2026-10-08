@@ -79,6 +79,10 @@ data class ThreadPage(
     val isFavorited: Boolean = false,
     /** 页面是否明确给出收藏状态。 */
     val favoritedStateKnown: Boolean = false,
+    /** 当前用户是否已关注楼主；[followingStateKnown] 为 false 时该值无意义。 */
+    val isFollowingOp: Boolean = false,
+    /** 页面是否明确给出关注状态（登录态且站点渲染了关注控件）。 */
+    val followingStateKnown: Boolean = false,
 )
 
 /** 单个楼层/回复。 */

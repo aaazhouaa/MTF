@@ -74,12 +74,22 @@ class ThreadDetailViewModel(
     private val _followState = MutableStateFlow<FollowState>(FollowState.Idle)
     val followState: StateFlow<FollowState> = _followState.asStateFlow()
 
+    /** 关注请求在途：连点不能变成「关注后又立刻取消」。 */
+    private var followPending = false
+
     /** 点赞状态与计数（客户端维护，初始取站点计数）。 */
     private val _liked = MutableStateFlow(false)
     val liked: StateFlow<Boolean> = _liked.asStateFlow()
     private val _likeCount = MutableStateFlow(0)
     val likeCount: StateFlow<Int> = _likeCount.asStateFlow()
-    private var likeInitialized = false
+
+    /**
+     * 互动态（点赞/收藏/关注）是否已按首次真实响应初始化过。
+     *
+     * 只初始化一次：用户操作后的本地状态才是最新，后续分页响应里的旧状态不能把它
+     * 覆盖回去（取消点赞后再翻页又变回已点赞）。
+     */
+    private var actionInitialized = false
 
     /** 收藏状态与计数。 */
     private val _favorited = MutableStateFlow(false)
@@ -199,6 +209,11 @@ class ThreadDetailViewModel(
                 dataGeneration++
                 cacheOnly = true
                 restore(snapshot)
+                // 关注态先按本地记录上屏：等补拉的第 1 页回来才翻胶囊，观感就是
+                // 「关注过的人重进帖子还是显示关注」
+                actionStore.following(snapshot.opUid.orEmpty())?.let {
+                    _followState.value = FollowState.Done(it, fromUser = false)
+                }
                 publish(resetFold = true, startChain = false)
                 // formhash / replyUrl 是一次性令牌，不落盘。缓存命中后补拉一次第 1 页
                 // 把会话态拿回来：楼层按 pid 覆盖写，列表内容不变，只是多一个请求。
@@ -303,7 +318,7 @@ class ThreadDetailViewModel(
             }
             // 被更新的请求（又一次切排序/只看楼主）取代，这一帧结果作废
             if (generation != dataGeneration) return@launch
-            if (!likeInitialized) {
+            if (!actionInitialized) {
                 _likeCount.value = data.likeCount ?: 0
                 _favoriteCount.value = data.favoriteCount ?: 0
                 // 登录态下站点给出明确状态，以其为准并落盘；否则沿用本地记录，
@@ -320,7 +335,16 @@ class ThreadDetailViewModel(
                 } else {
                     _favorited.value = actionStore.favorited(tid) ?: false
                 }
-                likeInitialized = true
+                // 关注态同理：页面给出就以页面为准，否则读本地记录，避免关注过的人
+                // 退出重进又显示成可关注
+                val following = if (data.followingStateKnown) {
+                    actionStore.setFollowing(data.opUid.orEmpty(), data.isFollowingOp)
+                    data.isFollowingOp
+                } else {
+                    actionStore.following(data.opUid.orEmpty()) ?: false
+                }
+                _followState.value = FollowState.Done(following, fromUser = false)
+                actionInitialized = true
             }
             mergeIntoPool(data)
             recordProgress(authorId, target, data.totalPages)
@@ -797,22 +821,31 @@ class ThreadDetailViewModel(
     }
 
     fun toggleFollow() {
-        if (_followState.value is FollowState.Sending) return
+        if (followPending) return
         val current = _state.value as? UiState.Success ?: return
         val uid = current.data.opUid
         val formhash = current.data.formhash
         if (uid.isNullOrBlank() || formhash.isNullOrBlank()) {
-            _followState.value = FollowState.Error("缺少关注令牌，请登录后重新进入帖子")
+            // 令牌没拿到：已登录说明是缓存上屏、补拉的第 1 页还没回来
+            _followState.value = FollowState.Error(
+                if (repository.isLoggedIn()) "页面还在加载，稍等一下再关注" else "请先登录后再关注",
+            )
             return
         }
         val following = (_followState.value as? FollowState.Done)?.following ?: false
-        _followState.value = FollowState.Sending
+        // 先翻胶囊再发请求：等响应回来才更新，观感就是「点了没反应」
+        _followState.value = FollowState.Done(!following)
+        followPending = true
         viewModelScope.launch {
-            _followState.value = try {
+            try {
                 repository.followTopic(uid, formhash, follow = !following)
-                FollowState.Done(!following)
+                // 关注态要跨帖子进入保持：本地落一份，页面没给出状态时靠它兜底
+                actionStore.setFollowing(uid, !following)
             } catch (e: Exception) {
-                FollowState.Error(e.message ?: "操作失败")
+                // 失败回滚成未关注，并照旧弹提示
+                _followState.value = FollowState.Error(e.message ?: "操作失败")
+            } finally {
+                followPending = false
             }
         }
     }
@@ -838,14 +871,20 @@ class ThreadDetailViewModel(
         // 乐观更新，失败再回滚；本地记录同步落盘
         _liked.value = target
         _likeCount.value = (_likeCount.value + if (target) 1 else -1).coerceAtLeast(0)
+        val optimistic = _likeCount.value
         viewModelScope.launch { actionStore.setLiked(tid, target) }
         viewModelScope.launch {
             val result = runCatching { repository.setLike(tid, formhash, target) }
                 .getOrDefault(LikeResult(false))
             if (result.success) {
-                // 用服务端返回的总赞数校正，避免本地乐观计数与真实值偏差
-                result.serverCount?.let { _likeCount.value = it }
-                // 成功不弹提示：图标与计数已反馈状态
+                // 站点回传的总赞数可能停在本次操作之前的旧值（首赞实测回 0，把 1 覆盖成 0），
+                // 与操作方向矛盾时不予采信，保留本地计数；方向一致才用它校正漂移
+                val corrected = result.serverCount
+                if (corrected != null &&
+                    ((target && corrected >= optimistic) || (!target && corrected <= optimistic))
+                ) {
+                    _likeCount.value = corrected
+                }
             } else {
                 _liked.value = !target
                 _likeCount.value = (_likeCount.value + if (target) -1 else 1).coerceAtLeast(0)
@@ -1006,8 +1045,12 @@ class ThreadDetailViewModel(
 
     sealed interface FollowState {
         data object Idle : FollowState
-        data object Sending : FollowState
-        data class Done(val following: Boolean) : FollowState
+
+        /**
+         * 关注结果。[fromUser] 为 false 表示这是进帖时从页面/本地记录同步来的初始态，
+         * 界面不应据此弹提示。
+         */
+        data class Done(val following: Boolean, val fromUser: Boolean = true) : FollowState
         data class Error(val message: String) : FollowState
     }
 }

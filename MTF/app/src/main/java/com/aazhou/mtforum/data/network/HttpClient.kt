@@ -50,6 +50,14 @@ class HttpClient(
 
     private var pendingVerification: CompletableDeferred<String?>? = null
 
+    /**
+     * 会话发生变化时的回调（WebView 验证/登录后 cookie 回灌、退出登录等）。
+     *
+     * 由应用容器装配：cookie 一变，上层就要重新拉当前用户资料，否则内置浏览器里
+     * 登录成功后头像与资料页仍是未登录状态。
+     */
+    var onSessionChanged: (() -> Unit)? = null
+
     /** 需要真人验证时打开的地址。 */
     val verificationUrl: String get() = baseUrl
 
@@ -148,6 +156,8 @@ class HttpClient(
             deferred?.complete(null)
         } else {
             deferred?.complete(cookieHeader)
+            // cookie 已变（可能刚在 WebView 里登录）：通知上层刷新会话态
+            onSessionChanged?.invoke()
         }
     }
 
