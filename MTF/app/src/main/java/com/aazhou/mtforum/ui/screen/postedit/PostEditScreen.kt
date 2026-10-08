@@ -13,8 +13,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -27,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.appViewModel
 
@@ -35,7 +34,6 @@ import com.aazhou.mtforum.ui.common.appViewModel
 fun PostEditScreen(fid: String, forumName: String, onBack: () -> Unit, onPosted: () -> Unit) {
     val viewModel: PostEditViewModel = appViewModel { PostEditViewModel(fid, it.repository) }
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val snackbarHostState = remember { SnackbarHostState() }
 
     var subject by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
@@ -43,12 +41,12 @@ fun PostEditScreen(fid: String, forumName: String, onBack: () -> Unit, onPosted:
     LaunchedEffect(state) {
         when (val s = state) {
             is PostEditViewModel.PostState.Success -> {
-                snackbarHostState.showSnackbar("发布成功")
+                AppToast.show("发布成功")
                 viewModel.consume()
                 onPosted()
             }
             is PostEditViewModel.PostState.Error -> {
-                snackbarHostState.showSnackbar(s.message)
+                AppToast.show(s.message)
                 viewModel.consume()
             }
             else -> Unit
@@ -70,7 +68,6 @@ fun PostEditScreen(fid: String, forumName: String, onBack: () -> Unit, onPosted:
                 expandedHeight = MtfTopBarHeight,
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
         Column(
             Modifier

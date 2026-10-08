@@ -156,13 +156,13 @@ fun VideoPlayerScreen(url: String, onBack: () -> Unit) {
             )
             Spacer(Modifier.weight(1f))
             VideoActionIcon(R.drawable.ic_download, "保存到相册") {
-                runBusy(scope, { busy = it }, context, "保存失败") {
+                runBusy(scope, { busy = it }, "保存失败") {
                     withContext(Dispatchers.IO) { saveVideoToGallery(context, url) } != null
                 }
             }
             Spacer(Modifier.width(8.dp))
             VideoActionIcon(R.drawable.ic_share, "分享") {
-                runBusy(scope, { busy = it }, context, "分享失败") {
+                runBusy(scope, { busy = it }, "分享失败") {
                     val file = withContext(Dispatchers.IO) { writeVideoCacheFile(context, url) }
                     if (file == null) {
                         false

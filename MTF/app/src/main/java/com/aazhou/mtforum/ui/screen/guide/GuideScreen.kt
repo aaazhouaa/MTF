@@ -1,7 +1,6 @@
 package com.aazhou.mtforum.ui.screen.guide
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -29,7 +28,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,7 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.Thread
-import com.aazhou.mtforum.ui.common.ActionHint
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
@@ -61,17 +59,13 @@ fun GuideScreen(onThreadClick: (tid: String) -> Unit) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
+    LaunchedEffect(actionMessage) {
+        val message = actionMessage ?: return@LaunchedEffect
+        AppToast.show(message)
+        viewModel.consumeActionMessage()
+    }
+
     Scaffold(
-        // 提示走中偏上的轻卡片：应用底栏是浮层，贴底的 Snackbar 会被它整块压住
-        snackbarHost = {
-            Box(Modifier.fillMaxSize()) {
-                ActionHint(
-                    actionMessage,
-                    { viewModel.consumeActionMessage() },
-                    Modifier.align(BiasAlignment(0f, -0.45f)),
-                )
-            }
-        },
         topBar = {
             TopAppBar(
                 title = { Text("导读") },

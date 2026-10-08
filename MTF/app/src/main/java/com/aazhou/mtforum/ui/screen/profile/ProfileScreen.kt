@@ -41,6 +41,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.UserProfile
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
@@ -264,9 +265,8 @@ private fun CreditsCard(profile: UserProfile?) {
 @Composable
 private fun MenuCard(onSettings: () -> Unit) {
     val colors = LocalMtfColors.current
-    val context = LocalContext.current
     val todo: (String) -> Unit = {
-        android.widget.Toast.makeText(context, "$it 暂未开放", android.widget.Toast.LENGTH_SHORT).show()
+        AppToast.show("$it 暂未开放")
     }
     ProfileCard(contentPadding = 0.dp) {
         Text(

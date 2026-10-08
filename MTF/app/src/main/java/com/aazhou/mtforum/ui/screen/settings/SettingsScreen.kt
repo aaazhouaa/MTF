@@ -30,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -46,13 +45,12 @@ import com.aazhou.mtforum.data.log.LogLevel
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.container
-import com.aazhou.mtforum.ui.common.HintToast
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.DefaultThemeIndex
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.ThemePresets
-import com.aazhou.mtforum.ui.theme.bodyTextColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -70,8 +68,6 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
         .collectAsStateWithLifecycle(initialValue = true)
     val colors = LocalMtfColors.current
     val scrollState = rememberScrollState()
-    // 清理缓存后的提示：同样走中偏上的轻卡片
-    var hint by remember { mutableStateOf<String?>(null) }
     // 清理确认框
     var clearCacheOpen by remember { mutableStateOf(false) }
     // 缓存占用：JSON 缓存 + Coil 图片磁盘缓存，IO 上算，清理后重新触发
@@ -103,12 +99,6 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
             )
         },
         containerColor = colors.background,
-        snackbarHost = {
-            // 宿主槽是个铺满内容区的 Box，正好拿来承载中偏上的提示卡片
-            Box(Modifier.fillMaxSize()) {
-                HintToast(hint, { hint = null }, Modifier.align(BiasAlignment(0f, -0.45f)))
-            }
-        },
         // 见 UserProfileScreen：语义色取不到 contentColorFor 时会退回旧值
         contentColor = bodyTextColor(),
     ) { padding ->
@@ -211,7 +201,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
                         loader.memoryCache?.clear()
                         cacheTick++
                         container.logger.info("Settings", "已清理缓存，清理前占用 ${formatCacheSize(cacheBytes)}")
-                        hint = "缓存已清理"
+                        AppToast.show("缓存已清理")
                     }
                 }) { Text("清理") }
             },

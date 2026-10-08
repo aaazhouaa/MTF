@@ -24,12 +24,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
@@ -43,8 +39,8 @@ import com.aazhou.mtforum.BuildConfig
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.log.LogEntry
 import com.aazhou.mtforum.data.log.toText
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.EmptyBox
-import com.aazhou.mtforum.ui.common.HintToast
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.saveTextDocument
@@ -74,7 +70,6 @@ fun LogDetailScreen(
     val entry by viewModel.entry.collectAsStateWithLifecycle()
     val colors = LocalMtfColors.current
     val scope = rememberCoroutineScope()
-    var hint by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -92,7 +87,7 @@ fun LogDetailScreen(
                             Icon(painterResource(R.drawable.ic_share), contentDescription = "分享此条")
                         }
                         IconButton(
-                            onClick = { exportEntry(context, current, logFileName(), scope) { hint = it } },
+                            onClick = { exportEntry(context, current, logFileName(), scope) { AppToast.show(it) } },
                         ) {
                             Icon(painterResource(R.drawable.ic_download), contentDescription = "导出此条")
                         }
@@ -103,12 +98,6 @@ fun LogDetailScreen(
         },
         containerColor = colors.background,
         contentColor = bodyTextColor(),
-        // 宿主槽只覆盖内容区：提示卡片落在顶栏下方，位置与其它页一致
-        snackbarHost = {
-            Box(Modifier.fillMaxSize()) {
-                HintToast(hint, { hint = null }, Modifier.align(BiasAlignment(0f, -0.45f)))
-            }
-        },
     ) { padding ->
         val current = entry
         if (current == null) {
@@ -197,19 +186,19 @@ private fun shareEntry(context: Context, entry: LogEntry) {
     context.startActivity(Intent.createChooser(intent, "分享此条日志"))
 }
 
-/** 导出单条日志到「下载/MTF」，结果经 [hint] 回调给界面。 */
+/** 导出单条日志到「下载/MTF」，结果经 [onResult] 回调给界面。 */
 private fun exportEntry(
     context: Context,
     entry: LogEntry,
     fileName: String,
     scope: CoroutineScope,
-    hint: (String) -> Unit,
+    onResult: (String) -> Unit,
 ) {
     scope.launch {
         val ok = withContext(Dispatchers.IO) {
             saveTextDocument(context, fileName, entry.toText()) != null
         }
-        hint(if (ok) "已导出到 下载/MTF" else "导出失败")
+        onResult(if (ok) "已导出到 下载/MTF" else "导出失败")
     }
 }
 

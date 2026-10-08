@@ -39,7 +39,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -56,8 +55,8 @@ import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.log.LogEntry
 import com.aazhou.mtforum.data.log.LogLevel
 import com.aazhou.mtforum.data.log.toExportText
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.EmptyBox
-import com.aazhou.mtforum.ui.common.HintToast
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.container
@@ -98,7 +97,6 @@ fun LogsScreen(
     var clearOpen by remember { mutableStateOf(false) }
     var levelOpen by remember { mutableStateOf(false) }
     var deleteId by remember { mutableStateOf<Long?>(null) }
-    var hint by remember { mutableStateOf<String?>(null) }
 
     val shown = if (filter == null) entries else entries.filter { it.level == filter }
 
@@ -123,7 +121,7 @@ fun LogsScreen(
                                 val ok = withContext(Dispatchers.IO) {
                                     saveTextDocument(context, name, text) != null
                                 }
-                                hint = if (ok) "已导出到 下载/MTF" else "导出失败"
+                                AppToast.show(if (ok) "已导出到 下载/MTF" else "导出失败")
                             }
                         },
                     ) {
@@ -144,12 +142,6 @@ fun LogsScreen(
         },
         containerColor = colors.background,
         contentColor = bodyTextColor(),
-        // 宿主槽只覆盖内容区：提示卡片落在顶栏下方，位置与其它页一致
-        snackbarHost = {
-            Box(Modifier.fillMaxSize()) {
-                HintToast(hint, { hint = null }, Modifier.align(BiasAlignment(0f, -0.45f)))
-            }
-        },
     ) { padding ->
         Column(
             modifier = Modifier
@@ -261,7 +253,7 @@ fun LogsScreen(
                 TextButton(onClick = {
                     clearOpen = false
                     viewModel.clear()
-                    hint = "日志已清空"
+                    AppToast.show("日志已清空")
                 }) { Text("清空") }
             },
             dismissButton = {
@@ -280,7 +272,7 @@ fun LogsScreen(
                     val id = deleteId ?: return@TextButton
                     deleteId = null
                     viewModel.remove(id)
-                    hint = "已删除该条日志"
+                    AppToast.show("已删除该条日志")
                 }) { Text("删除") }
             },
             dismissButton = {
@@ -288,8 +280,6 @@ fun LogsScreen(
             },
         )
     }
-
-    // 导出/清空的结果提示：内容区中央偏上的轻卡片，避开列表首屏
 }
 
 /** 单条日志：等级色 + tag + 摘要 + 时间；点开看全文与堆栈，长按删除。 */

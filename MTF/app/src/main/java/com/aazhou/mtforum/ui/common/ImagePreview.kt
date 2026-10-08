@@ -1,11 +1,9 @@
 package com.aazhou.mtforum.ui.common
 
-import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -204,7 +202,7 @@ fun ImagePreview(
                     }
                     Spacer(Modifier.weight(1f))
                     PreviewActionIcon(R.drawable.ic_download, "保存到相册", foreground, actionPill) {
-                        runBusy(scope, { busy = it }, context, "保存失败") {
+                        runBusy(scope, { busy = it }, "保存失败") {
                             val url = urls[pagerState.currentPage]
                             val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
                             withContext(Dispatchers.IO) { saveToGallery(context, url, bytes) } != null
@@ -212,7 +210,7 @@ fun ImagePreview(
                     }
                     Spacer(Modifier.width(8.dp))
                     PreviewActionIcon(R.drawable.ic_share, "分享", foreground, actionPill) {
-                        runBusy(scope, { busy = it }, context, "分享失败") {
+                        runBusy(scope, { busy = it }, "分享失败") {
                             val url = urls[pagerState.currentPage]
                             val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
                             val file = withContext(Dispatchers.IO) { writeCacheFile(context, url, bytes) }
@@ -224,7 +222,7 @@ fun ImagePreview(
                     PreviewActionIcon(R.drawable.ic_browser, "浏览器打开", foreground, actionPill) {
                         runCatching {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(urls[pagerState.currentPage])))
-                        }.onFailure { Toast.makeText(context, "没有可打开该链接的应用", Toast.LENGTH_SHORT).show() }
+                        }.onFailure { AppToast.show("没有可打开该链接的应用") }
                     }
                 }
             }

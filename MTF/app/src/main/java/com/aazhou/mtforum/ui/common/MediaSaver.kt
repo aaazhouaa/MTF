@@ -6,7 +6,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
-import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.image.forumMediaClient
@@ -197,7 +196,6 @@ internal fun shareVideo(context: Context, url: String, file: File) {
 internal fun runBusy(
     scope: CoroutineScope,
     setBusy: (Boolean) -> Unit,
-    context: Context,
     errorMessage: String,
     action: suspend () -> Boolean,
 ) {
@@ -205,6 +203,6 @@ internal fun runBusy(
         setBusy(true)
         val ok = runCatching { action() }.getOrDefault(false)
         setBusy(false)
-        if (!ok) Toast.makeText(context, errorMessage, Toast.LENGTH_SHORT).show()
+        if (!ok) AppToast.show(errorMessage)
     }
 }
