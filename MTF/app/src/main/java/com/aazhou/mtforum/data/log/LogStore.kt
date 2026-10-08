@@ -137,6 +137,6 @@ class LogStore(
         const val CRASH_MARKER = "crash_marker"
 
         /** 条数上限：超出后按时间淘汰最旧的，避免无限增长。 */
-        const val DEFAULT_MAX_ENTRIES = 500
+        const val DEFAULT_MAX_ENTRIES = 50
     }
 }

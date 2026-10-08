@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -152,6 +153,11 @@ fun ThreadDetailScreen(
         )
     }
     val myUid by viewModel.myUid.collectAsStateWithLifecycle()
+    // 登录态与界面显示（「我的」页、首页顶栏）共用同一判据：AppContainer.currentUser。
+    // 不能只查 cookie 里的 _auth——站点侧会话失效后 cookie 仍在，会出现界面显示未登录、
+    // 互动却全部放行的分歧
+    val currentUser by container.currentUser.collectAsStateWithLifecycle()
+    val loggedIn = currentUser?.isLoggedIn == true
     val state by viewModel.state.collectAsStateWithLifecycle()
     val replyState by viewModel.replyState.collectAsStateWithLifecycle()
     val collapsed by viewModel.collapsed.collectAsStateWithLifecycle()
@@ -267,6 +273,15 @@ fun ThreadDetailScreen(
     }
 
     val todo: (String) -> Unit = { msg -> AppToast.show(msg) }
+    // 未登录时互动入口只弹提示：不发请求、不开弹窗、不改状态
+    val requireLogin: (String) -> Boolean = { hint ->
+        if (loggedIn) {
+            true
+        } else {
+            AppToast.show(hint, LOGIN_HINT_DURATION_MS)
+            false
+        }
+    }
     // 长按评论弹出的操作菜单目标
     var actionTarget by remember { mutableStateOf<Post?>(null) }
     // 是否显示打赏弹窗
@@ -276,8 +291,8 @@ fun ThreadDetailScreen(
     // 删除确认弹窗目标（删除不可撤销，需二次确认）
     var deleteTarget by remember { mutableStateOf<Post?>(null) }
     // 举报/打赏入口已随作者栏移入「更多」菜单，回调须提到 Scaffold 之外供 topBar 使用
-    val reportThread: () -> Unit = { reportTarget = ReportTarget(null) }
-    val rewardThread: () -> Unit = { rewardOpen = true }
+    val reportThread: () -> Unit = { if (requireLogin(LOGIN_HINT_REPORT)) reportTarget = ReportTarget(null) }
+    val rewardThread: () -> Unit = { if (requireLogin(LOGIN_HINT_REWARD)) rewardOpen = true }
     // 「更多」菜单的下载：只保存点击这一刻已加载的内容（正文必存，评论不补拉），
     // 想收进后续评论就等加载完再点一次，按 tid 覆盖旧副本
     var downloadBusy by remember { mutableStateOf(false) }
@@ -369,11 +384,14 @@ fun ThreadDetailScreen(
                     likeCount = likeCount,
                     favorited = favorited,
                     favoriteCount = favoriteCount,
-                    onSend = { if (replyText.isNotBlank()) viewModel.reply(replyText) },
-                    onComments = { scope.launch { listState.animateScrollToItem(1) } },
-                    onLike = { viewModel.toggleLike() },
+                    loggedIn = loggedIn,
+                    onSend = { if (requireLogin(LOGIN_HINT_REPLY) && replyText.isNotBlank()) viewModel.reply(replyText) },
+                    onComments = {
+                        if (requireLogin(LOGIN_HINT_REPLY)) scope.launch { listState.animateScrollToItem(1) }
+                    },
+                    onLike = { if (requireLogin(LOGIN_HINT_LIKE)) viewModel.toggleLike() },
                     onLikeLongPress = { viewModel.loadLikeUsers() },
-                    onFavorite = { if (!viewModel.toggleFavorite()) todo("请先登录") },
+                    onFavorite = { if (requireLogin(LOGIN_HINT_FAVORITE)) viewModel.toggleFavorite() },
                     onShare = { shareThread(context, page.subject, tid) },
                 )
             }
@@ -545,8 +563,8 @@ fun ThreadDetailScreen(
                                 onNestedHeightMeasured = { height ->
                                     nestedHeights[reply.pid] = height
                                 },
-                                onReply = { viewModel.setReplyTarget(reply) },
-                                onReplyTo = { viewModel.setReplyTarget(it) },
+                                onReply = { if (requireLogin(LOGIN_HINT_REPLY)) viewModel.setReplyTarget(reply) },
+                                onReplyTo = { if (requireLogin(LOGIN_HINT_REPLY)) viewModel.setReplyTarget(it) },
                                 onImageClick = openImage,
                                 onVideoClick = openVideo,
                                 onUserClick = onUserClick,
@@ -696,7 +714,7 @@ fun ThreadDetailScreen(
                 Column {
                     MenuAction("回复") {
                         actionTarget = null
-                        viewModel.setReplyTarget(target)
+                        if (requireLogin(LOGIN_HINT_REPLY)) viewModel.setReplyTarget(target)
                     }
                     MenuAction("复制") {
                         actionTarget = null
@@ -718,7 +736,7 @@ fun ThreadDetailScreen(
                     } else {
                         MenuAction("举报") {
                             actionTarget = null
-                            reportTarget = ReportTarget(target.pid)
+                            if (requireLogin(LOGIN_HINT_REPORT)) reportTarget = ReportTarget(target.pid)
                         }
                     }
                 }
@@ -729,6 +747,16 @@ fun ThreadDetailScreen(
         )
     }
 }
+
+/** 未登录点击互动入口时的提示文案。 */
+private const val LOGIN_HINT_REPLY = "你不登录咋回复???"
+private const val LOGIN_HINT_LIKE = "嗯?暂无点赞资格"
+private const val LOGIN_HINT_FAVORITE = "我说收藏成功了你信吗?"
+private const val LOGIN_HINT_REPORT = "666你是有操作的"
+private const val LOGIN_HINT_REWARD = "tui~啥也不是!"
+
+/** 未登录提示的停留时长。 */
+private const val LOGIN_HINT_DURATION_MS = 2000L
 
 /** 举报弹窗目标：pid 为 null 时举报本帖。 */
 private data class ReportTarget(val pid: String?)
@@ -1677,6 +1705,7 @@ private fun ReplyBar(
     likeCount: Int,
     favorited: Boolean,
     favoriteCount: Int,
+    loggedIn: Boolean,
     onSend: () -> Unit,
     onComments: () -> Unit,
     onLike: () -> Unit,
@@ -1714,11 +1743,23 @@ private fun ReplyBar(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // 左胶囊：写评论
+            // 左胶囊：写评论；未登录时整块只弹提示，不聚焦输入框、不弹键盘
             Row(
                 modifier = Modifier
                     .weight(1f)
                     .height(48.dp)
+                    .then(
+                        if (loggedIn) {
+                            Modifier
+                        } else {
+                            Modifier.clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) {
+                                AppToast.show(LOGIN_HINT_REPLY, LOGIN_HINT_DURATION_MS)
+                            }
+                        },
+                    )
                     .drawBackdrop(
                         backdrop = backdrop,
                         shape = { glassShape },
@@ -1755,6 +1796,7 @@ private fun ReplyBar(
                     BasicTextField(
                         value = value,
                         onValueChange = onValueChange,
+                        enabled = loggedIn,
                         textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         maxLines = 2,

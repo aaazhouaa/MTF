@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 日志列表：整份读入内存（上限 500 条），删除走清空或单条删除。
+ * 日志列表：整份读入内存（上限 50 条），删除走清空或单条删除。
  *
  * 等级只决定「哪些日志会写入」，列表里再按等级筛选纯属查看便利，不影响存储内容。
  */

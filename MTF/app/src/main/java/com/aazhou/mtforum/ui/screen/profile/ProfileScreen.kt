@@ -94,14 +94,14 @@ fun ProfileScreen(onLogin: () -> Unit, onSettings: () -> Unit, onDownloads: () -
             CreditsCard(profile)
         }
         MenuCard(onSettings = onSettings)
-        // 已下载的帖子：入口 + 保存位置说明（固定落在下载目录的 MTF 文件夹）
+        // 已下载的帖子入口
         val downloadCount by context.container().downloadStore.items
             .collectAsStateWithLifecycle(initialValue = emptyList())
         DownloadsCard(onOpen = onDownloads, count = downloadCount.size)
     }
 }
 
-/** 底部卡片：「已下载的帖子」入口，行下小字标明保存位置；副本只可手动删除。 */
+/** 底部卡片：「已下载的帖子」入口。 */
 @Composable
 private fun DownloadsCard(onOpen: () -> Unit, count: Int) {
     val colors = LocalMtfColors.current
@@ -150,13 +150,6 @@ private fun DownloadsCard(onOpen: () -> Unit, count: Int) {
                 modifier = Modifier.size(16.dp),
             )
         }
-        HorizontalDivider(color = colors.divider, modifier = Modifier.padding(start = 66.dp))
-        Text(
-            "保存位置：手机下载目录 / MTF 文件夹（自动创建），只能手动删除，不占应用缓存",
-            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-            color = colors.textHint,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-        )
     }
 }
 

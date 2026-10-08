@@ -10,7 +10,7 @@ import org.junit.Test
 /** [LogStore] 的本机日志行为：读写顺序、id 连续性、条数上限、坏行、清空与崩溃标记。 */
 class LogStoreTest {
 
-    private fun tempStore(maxEntries: Int = 500): Pair<LogStore, java.io.File> {
+    private fun tempStore(maxEntries: Int = 50): Pair<LogStore, java.io.File> {
         val dir = Files.createTempDirectory("mtf_log_test").toFile()
         return LogStore(java.io.File(dir, "mtf_log.jsonl"), maxEntries) to dir
     }

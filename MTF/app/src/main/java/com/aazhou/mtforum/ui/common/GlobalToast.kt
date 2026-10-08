@@ -43,6 +43,8 @@ const val TOAST_DURATION_MS = 2600L
 /**
  * 全局轻提示的发送入口：任意位置都能调（含非 Composable 上下文），
  * 由应用根部唯一的 [GlobalToastHost] 统一展示，位置与样式全局一致。
+ *
+ * @param durationMs 停留时长，默认走全局时长 [TOAST_DURATION_MS]。
  */
 object AppToast {
 
@@ -52,9 +54,9 @@ object AppToast {
     /** 自增序号：同一条文案连发也能重新触发，不会被 StateFlow 的等值合吞掉。 */
     private var serial = 0
 
-    fun show(text: String) {
+    fun show(text: String, durationMs: Long = TOAST_DURATION_MS) {
         if (text.isBlank()) return
-        _current.value = ToastMessage(serial++, text)
+        _current.value = ToastMessage(serial++, text, durationMs)
     }
 
     /** 到点熄灭，由宿主调用。 */
@@ -63,7 +65,7 @@ object AppToast {
     }
 }
 
-data class ToastMessage(val serial: Int, val text: String)
+data class ToastMessage(val serial: Int, val text: String, val durationMs: Long = TOAST_DURATION_MS)
 
 /**
  * 全局轻提示宿主：贴在窗口顶部（状态栏下方）、盖在顶栏之上，带主题色细描边。
@@ -79,12 +81,12 @@ fun GlobalToastHost(modifier: Modifier = Modifier) {
     LaunchedEffect(message) {
         val current = message ?: return@LaunchedEffect
         lastText = current.text
-        delay(TOAST_DURATION_MS)
+        delay(current.durationMs)
         AppToast.dismiss()
     }
     AnimatedVisibility(
         visible = message != null,
-        modifier = modifier.statusBarsPadding().padding(top = 6.dp),
+        modifier = modifier.statusBarsPadding().padding(top = 26.dp),
         enter = fadeIn(tween(140)) + slideInVertically(tween(200)) { -it / 2 },
         exit = fadeOut(tween(160)) + slideOutVertically(tween(160)) { -it / 4 },
     ) {
