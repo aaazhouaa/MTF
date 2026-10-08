@@ -57,6 +57,9 @@ class ThreadDetailViewModel(
     /** 定位楼层所在页是否已拉回过（只做一次）。 */
     private var anchorPageFetched = false
 
+    /** 本次进帖为定位展开过折叠：退出重进（VM 重建）即恢复用户原来的折叠偏好。 */
+    private var anchorRevealed = false
+
     private val _replyState = MutableStateFlow<ReplyState>(ReplyState.Idle)
     val replyState: StateFlow<ReplyState> = _replyState.asStateFlow()
 
@@ -399,14 +402,37 @@ class ThreadDetailViewModel(
             }
             if (generation != dataGeneration) return@launch
             mergeIntoPool(data)
+            // 定位场景不开自动续拉：后续页按楼层插在目标前面，会把目标挤出处屏幕。
+            // 底部仍是「还有更多」的状态，用户往下滑或点「继续」照样能接着看。
+            autoLoadJob?.cancel()
+            _autoLoadRunning.value = false
             publish(startChain = false)
-            syncAutoLoad()
         }
     }
 
     /** 界面已滚到定位楼层，清掉待定位状态。 */
     fun consumeAnchor() {
         _anchor.value = null
+    }
+
+    /**
+     * 定位前把藏住目标楼层的折叠展开。
+     *
+     * 只看本次：折叠态随 ViewModel 生灭，退出重进仍是用户原来的偏好。
+     * 楼中楼父楼层被收起时，目标子回复整段不渲染，滚到父楼层也看不见它。
+     */
+    fun revealAnchorReply(pid: String) {
+        val parentPid = _tree.value?.children?.entries
+            ?.firstOrNull { (_, kids) -> kids.any { it.pid == pid } }?.key
+        val collapsedHidden = listOfNotNull(pid, parentPid).filter { _collapsed.value.contains(it) }
+        val folded = listOfNotNull(pid, parentPid).any { _waterPids.value.contains(it) }
+        if (collapsedHidden.isEmpty() && !folded) return
+        if (collapsedHidden.isNotEmpty()) {
+            _collapsed.value = _collapsed.value - collapsedHidden.toSet()
+        }
+        if (folded) _foldExpanded.value = true
+        // 展开过就一路保持到退出：否则紧接着的 publish 会把刚展开的楼层收回去
+        anchorRevealed = true
     }
 
     /**
@@ -421,7 +447,8 @@ class ThreadDetailViewModel(
         treeJob?.cancel()
         val view = viewPage()
         val (tree, water) = withContext(Dispatchers.Default) { treeFor(view) }
-        if (resetFold) {
+        // 定位未完成时不能重置折叠态：刚为定位展开的楼层会被紧接着的 publish 收回去
+        if (resetFold && !anchorRevealed) {
             _collapsed.value = emptySet()
             _foldExpanded.value = false
         }
@@ -1137,6 +1164,9 @@ internal fun deriveTree(data: ThreadPage): Pair<ReplyTree, Set<String>> {
 
 /** 切换筛选前界面的滚动位置：首个可见项下标 + 该项被遮住的像素高度。 */
 data class ScrollAnchor(val index: Int, val offset: Int)
+
+/** 闪烁总时长（两轮淡入淡出）；界面据此撤掉高亮态，滚出屏幕再回来不会重复闪。 */
+internal const val FLASH_HIGHLIGHT_MS = 1500L
 
 /** 楼层树：顶层楼层顺序列表 + 「父 pid -> 子楼层列表」。 */
 class ReplyTree(

@@ -62,6 +62,10 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
@@ -110,6 +114,10 @@ import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
+import androidx.compose.ui.draw.drawBehind
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -169,6 +177,8 @@ fun ThreadDetailScreen(
     val autoLoadRunning by viewModel.autoLoadRunning.collectAsStateWithLifecycle()
     // 从消息提醒跳进来时要定位的楼层
     val anchorPid by viewModel.anchor.collectAsStateWithLifecycle()
+    // 定位完成后柔和闪烁两次的楼层（指出是哪一条评论）
+    var highlightPid by remember { mutableStateOf<String?>(null) }
 
     var replyText by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -415,6 +425,9 @@ fun ThreadDetailScreen(
                     // 从消息提醒跳进来：目标楼层（可能在很后面的页）被拉回来后滚到它所在的位置
                     LaunchedEffect(anchorPid, visibleReplies, foldExpanded) {
                         val pid = anchorPid ?: return@LaunchedEffect
+                        // 先把藏住它的折叠展开（只看本次）：父楼层收起时目标子回复整段不渲染，
+                        // 滚到父楼层也看不见它
+                        viewModel.revealAnchorReply(pid)
                         val target = when {
                             visibleReplies.any { it.pid == pid } -> pid
                             // 目标是楼中楼的子回复：父楼层就在它上面，滚到父楼层即可
@@ -425,18 +438,34 @@ fun ThreadDetailScreen(
                             ?.let { key -> visibleReplies.indexOfFirst { it.pid == key } }
                             ?: -1
                         if (index < 0) {
-                            // 被灌水折叠藏住了：展开后这个 effect 会再跑一次
-                            if (!foldExpanded &&
-                                (waterPids.contains(pid) || (target != null && waterPids.contains(target)))
-                            ) {
-                                viewModel.toggleFoldExpanded()
-                            }
+                            // 目标还没上屏：所在页没拉到、或刚展开的折叠还没重组完。
+                            // 折叠由 revealAnchorReply 直接置位，这里不能再 toggle——
+                            // 那样会和它各拨一次，目标永远上不了屏。
                             return@LaunchedEffect
                         }
-                        // 等这一帧布局完再滚，否则目标项还没测量出来
-                        withFrameNanos { }
                         // 列表头部固定两项：帖子头部 + 评论标题栏（头部缺省时少一项）
-                        listState.scrollToItem(index + (if (op != null) 1 else 0) + 1)
+                        val lazyIndex = index + (if (op != null) 1 else 0) + 1
+                        // 必须等目标下标真的进入布局再滚：此刻组合虽已换上新的楼层列表，
+                        // LazyColumn 可能还没测量它，直接滚会被夹到当前列表末尾——
+                        // 表现为「总是跳到最后一楼」。滚完再确认一次，没到位就重试。
+                        repeat(3) {
+                            withTimeoutOrNull(2500) {
+                                snapshotFlow { listState.layoutInfo.totalItemsCount }
+                                    .first { count -> count > lazyIndex }
+                            }
+                            withFrameNanos { }
+                            listState.scrollToItem(lazyIndex)
+                            withFrameNanos { }
+                            if (listState.layoutInfo.visibleItemsInfo.any { it.key == target }) {
+                                // 闪烁落在目标本身：是楼中楼子回复时就闪那条子回复
+                                highlightPid = pid
+                                viewModel.consumeAnchor()
+                                // 闪烁只来一下：定位完就撤掉，楼层滚出屏幕再回来不会重复闪
+                                delay(FLASH_HIGHLIGHT_MS)
+                                highlightPid = null
+                                return@LaunchedEffect
+                            }
+                        }
                         viewModel.consumeAnchor()
                     }
 
@@ -511,11 +540,15 @@ fun ThreadDetailScreen(
                         }
                         items(visibleReplies, key = { it.pid }) { reply ->
                             val children = tree?.children?.get(reply.pid).orEmpty()
+                            // 定位闪烁：目标是本条；是楼中楼子回复时由 highlightChildPid 闪那条
+                            val highlighted = reply.pid == highlightPid
                             ReplyBlock(
                                 reply = reply,
                                 children = children,
                                 subReplyTo = tree?.subReplyTo.orEmpty(),
                                 expanded = !collapsed.contains(reply.pid),
+                                highlight = highlighted,
+                                highlightChildPid = highlightPid,
                                 onToggle = { viewModel.toggleReplies(reply.pid) },
                                 onNestedHeightMeasured = { height ->
                                     nestedHeights[reply.pid] = height
@@ -1338,6 +1371,10 @@ internal fun ReplyBlock(
     pageImages: List<String>,
     onLongPress: (Post) -> Unit,
     onThreadClick: (String) -> Unit,
+    /** 定位闪烁：从消息提醒跳到本条时柔和闪两下。 */
+    highlight: Boolean = false,
+    /** 定位闪烁落在楼中楼的哪条子回复上（目标是子回复时传入其 pid）。 */
+    highlightChildPid: String? = null,
 ) {
     val colors = LocalMtfColors.current
     val context = LocalContext.current
@@ -1359,7 +1396,8 @@ internal fun ReplyBlock(
                     .userClick(reply.authorUid, onUserClick),
             )
             Spacer(Modifier.width(9.dp))
-            Column(Modifier.weight(1f)) {
+            // 闪烁只覆盖这条消息的内容（昵称 + 正文），不含头像与底栏
+            Column(Modifier.weight(1f).flashHighlight(highlight)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!reply.floorLabel.isNullOrBlank()) {
                         Text(
@@ -1469,6 +1507,7 @@ internal fun ReplyBlock(
                         pageImages = pageImages,
                         onLongPress = { onLongPress(child) },
                         onThreadClick = onThreadClick,
+                        highlight = child.pid == highlightChildPid,
                     )
                 }
             }
@@ -1497,6 +1536,8 @@ private fun NestedReply(
     pageImages: List<String>,
     onLongPress: () -> Unit,
     onThreadClick: (String) -> Unit,
+    /** 定位闪烁：从消息提醒跳到本条时柔和闪两下。 */
+    highlight: Boolean = false,
 ) {
     val colors = LocalMtfColors.current
     val context = LocalContext.current
@@ -1507,6 +1548,8 @@ private fun NestedReply(
             .combinedClickable(onClick = {}, onLongClick = onLongPress)
             .padding(top = 7.dp, bottom = 7.dp),
     ) {
+        // 闪烁只覆盖这条消息的内容（昵称 + 正文），不含头像与底栏
+        Column(Modifier.fillMaxWidth().flashHighlight(highlight)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
                 model = child.avatarUrl,
@@ -1518,6 +1561,15 @@ private fun NestedReply(
                     .userClick(child.authorUid, onUserClick),
             )
             Spacer(Modifier.width(8.dp))
+            // 楼中楼同样带楼层号（与顶层楼层一致，便于对照引用关系）
+            if (!child.floorLabel.isNullOrBlank()) {
+                Text(
+                    child.floorLabel,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(end = 2.dp),
+                )
+            }
             Text(
                 child.authorName.ifBlank { "匿名" },
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
@@ -1574,6 +1626,7 @@ private fun NestedReply(
                 .combinedClickable(onClick = {}, onLongClick = onLongPress),
             onLinkClick = { url -> openForumLink(context, url, siteHost, onThreadClick) },
         )
+        }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 30.dp, top = 4.dp)) {
             TimeLine(child)
             Spacer(Modifier.weight(1f))
@@ -1862,6 +1915,30 @@ private fun BarAction(
             .padding(horizontal = 4.dp, vertical = 4.dp),
     ) {
         icon()
+    }
+}
+
+/** 闪烁峰值透明度：再高就抢正文，再低在浅色主题下看不出来。 */
+private const val FLASH_PEAK_ALPHA = 0.16f
+
+/**
+ * 定位提醒楼层时的柔和闪烁：主题色淡入淡出两次，不抢眼但足以指出是哪一条。
+ *
+ * 画在内容之下（楼层本身没有背景色），深浅色主题下都只是淡淡一层。
+ */
+@Composable
+private fun Modifier.flashHighlight(active: Boolean): Modifier {
+    if (!active) return this
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        repeat(2) {
+            progress.animateTo(1f, tween(durationMillis = 240, easing = FastOutSlowInEasing))
+            progress.animateTo(0f, tween(durationMillis = 480, easing = FastOutSlowInEasing))
+        }
+    }
+    val accent = MaterialTheme.colorScheme.primary
+    return drawBehind {
+        drawRect(color = accent, alpha = progress.value * FLASH_PEAK_ALPHA)
     }
 }
 
