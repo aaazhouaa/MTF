@@ -29,13 +29,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.aazhou.mtforum.ui.common.ActionHint
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.ImagePreview
@@ -58,6 +57,7 @@ fun ThreadListScreen(
     title: String,
     onBack: () -> Unit,
     onThreadClick: (tid: String) -> Unit,
+    onUserClick: (uid: String) -> Unit,
     onNewPost: () -> Unit,
 ) {
     val viewModel: ThreadListViewModel = appViewModel { ThreadListViewModel(fid, it.repository, it.contentCache) }
@@ -72,18 +72,14 @@ fun ThreadListScreen(
     }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    // 加载/操作类提示改走全局轻提示：页面级提示卡片已由 AppToast 统一承载
+    LaunchedEffect(actionMessage) {
+        val message = actionMessage ?: return@LaunchedEffect
+        AppToast.show(message)
+        viewModel.consumeActionMessage()
+    }
 
     Scaffold(
-        // 提示走中偏上的轻卡片：应用底栏是浮层，贴底的 Snackbar 会被它整块压住
-        snackbarHost = {
-            Box(Modifier.fillMaxSize()) {
-                ActionHint(
-                    actionMessage,
-                    { viewModel.consumeActionMessage() },
-                    Modifier.align(BiasAlignment(0f, -0.45f)),
-                )
-            }
-        },
         topBar = {
             TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -145,6 +141,7 @@ fun ThreadListScreen(
                                 thread = thread,
                                 onClick = { onThreadClick(thread.tid) },
                                 onImageClick = openImage,
+                                onUserClick = onUserClick,
                                 showForumName = false,
                             )
                         }

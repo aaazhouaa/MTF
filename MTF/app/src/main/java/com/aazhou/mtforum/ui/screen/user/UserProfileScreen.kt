@@ -144,18 +144,6 @@ private fun InfoCard(profile: UserProfile) {
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                         color = colors.textSecondary,
                     )
-                    if (!profile.level.isNullOrBlank()) {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            profile.level,
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = accentTextColor(),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-                                .padding(horizontal = 8.dp, vertical = 2.dp),
-                        )
-                    }
                 }
                 if (!profile.groupName.isNullOrBlank()) {
                     Text(

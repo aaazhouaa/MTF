@@ -1,7 +1,11 @@
 package com.aazhou.mtforum
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.sp
 import com.aazhou.mtforum.ui.common.ContentBlock
 import com.aazhou.mtforum.ui.common.StyleSpan
+import com.aazhou.mtforum.ui.common.buildBodyText
 import com.aazhou.mtforum.ui.common.parseContentBlocks
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -295,6 +299,67 @@ class HtmlContentTest {
         assertTrue(spanOf('码').code)
         assertEquals(0xFFFF0000L, spanOf('红').colorArgb)
         assertEquals("https://bbs.binmt.cc/x", spanOf('链').linkUrl)
+    }
+
+    @Test
+    fun fontSizeScaleAppliesToHeadingSpanOnly() {
+        // 站点把标题包进 <font size="6">、同段后面的普通行不包：网页上逐行各自生效，
+        // 整块取最大缩放会把普通行一起放大
+        val base = 17.sp
+        val block = parseContentBlocks("""<font size="6">大标题</font>普通文字""")
+            .filterIsInstance<ContentBlock.Text>().single()
+        val body = buildBodyText(
+            text = block.text,
+            smiles = block.smiles,
+            spans = block.spans,
+            baseFontSize = base,
+            linkColor = Color.Unspecified,
+            codeBackground = Color.White,
+            background = Color.White,
+            darkTheme = false,
+        )
+        assertEquals(1, body.spanStyles.size)
+        val heading = body.spanStyles.single()
+        assertEquals(0, heading.start)
+        assertEquals(3, heading.end)
+        assertEquals(base * 1.45f, heading.item.fontSize)
+    }
+
+    @Test
+    fun fontSizeScaleFiveIsSmallerThanSix() {
+        val base = 17.sp
+        val block = parseContentBlocks("""<font size="5">小标题</font>普通文字""")
+            .filterIsInstance<ContentBlock.Text>().single()
+        val body = buildBodyText(
+            text = block.text,
+            smiles = block.smiles,
+            spans = block.spans,
+            baseFontSize = base,
+            linkColor = Color.Unspecified,
+            codeBackground = Color.White,
+            background = Color.White,
+            darkTheme = false,
+        )
+        assertEquals(base * 1.3f, body.spanStyles.single().item.fontSize)
+    }
+
+    @Test
+    fun plainBodySpansCarryNoFontSize() {
+        // 不含 font size 的正文不能产出任何带字号的 span，否则普通段落会被无谓改变字号
+        val block = parseContentBlocks("<b>粗</b>普通文字")
+            .filterIsInstance<ContentBlock.Text>().single()
+        val body = buildBodyText(
+            text = block.text,
+            smiles = block.smiles,
+            spans = block.spans,
+            baseFontSize = 17.sp,
+            linkColor = Color.Unspecified,
+            codeBackground = Color.White,
+            background = Color.White,
+            darkTheme = false,
+        )
+        assertEquals(1, body.spanStyles.size)
+        assertTrue(body.spanStyles.all { it.item.fontSize == TextUnit.Unspecified })
     }
 
     @Test

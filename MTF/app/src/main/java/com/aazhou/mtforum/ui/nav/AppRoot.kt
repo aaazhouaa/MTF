@@ -27,6 +27,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.aazhou.mtforum.ui.common.container
+import com.aazhou.mtforum.ui.common.GlobalToastHost
 import com.aazhou.mtforum.ui.screen.forumlist.ForumListScreen
 import com.aazhou.mtforum.ui.screen.downloads.DownloadsScreen
 import com.aazhou.mtforum.ui.screen.guide.GuideScreen
@@ -147,6 +148,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 HomeScreen(
                     onSearch = { navController.navigate(Routes.SEARCH) },
                     onToggleTheme = onToggleTheme,
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                     // 消息提醒需登录态，未登录时先走登录页（与「我的」一致）
                     onMessages = {
                         if (container.httpClient.isLoggedIn()) {
@@ -177,7 +179,10 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 )
             }
             composable(Routes.SEARCH) {
-                SearchScreen(onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) })
+                SearchScreen(
+                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                )
             }
             composable(Routes.LOGIN) {
                 LoginScreen(
@@ -213,6 +218,8 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onThreadClick = { tid, pid ->
                         navController.navigate(Routes.threadAnchor(tid, pid))
                     },
+                    // 消息里的头像进对应用户的个人主页
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                 )
             }
             composable(Routes.DOWNLOADS) {
@@ -247,6 +254,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     title = name,
                     onBack = { navController.popBackStack() },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                     onNewPost = { navController.navigate(Routes.post(fid, name)) },
                 )
             }
@@ -311,5 +319,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
+        // 全局轻提示：统一贴在窗口顶部，盖在一切页面之上；发送一律走 AppToast.show
+        GlobalToastHost(Modifier.align(Alignment.TopCenter))
     }
 }

@@ -75,7 +75,12 @@ class ThreadDetailViewModel(
     private val _opOnly = MutableStateFlow(false)
     val opOnly: StateFlow<Boolean> = _opOnly.asStateFlow()
 
-    /** 灌水回复是否展开显示（默认折叠）。 */
+    /**
+     * 灌水回复是否展开显示（默认折叠）。
+     *
+     * 不随数据重装重置：用户手动展开/收起后，本次浏览内一直保持（切排序/刷新/续拉都
+     * 不收回），退出帖子 VM 重建才恢复默认。
+     */
     private val _foldExpanded = MutableStateFlow(false)
     val foldExpanded: StateFlow<Boolean> = _foldExpanded.asStateFlow()
 
@@ -230,7 +235,11 @@ class ThreadDetailViewModel(
                 actionStore.following(snapshot.opUid.orEmpty())?.let {
                     _followState.value = FollowState.Done(it, fromUser = false)
                 }
-                publish(resetFold = true, startChain = false)
+                // 定位楼层先拉回来合入楼层池再上屏：目标楼层通常在很后面的页，
+                // 先上屏再拉，界面会先渲染到帖子正文、等目标页到达后再跳过去。
+                // 续拉链也等锚点消费掉再开：定位期间后续页会把目标挤出处屏幕
+                fetchAnchorPage()
+                publish(resetCollapsed = true, startChain = _anchor.value == null)
                 // formhash / replyUrl 是一次性令牌，不落盘。缓存命中后补拉一次第 1 页
                 // 把会话态拿回来：楼层按 pid 覆盖写，列表内容不变，只是多一个请求。
                 // 顺带发现新评论——总评论数一变，池子就不再算收齐，续拉会继续。
@@ -366,9 +375,10 @@ class ThreadDetailViewModel(
             recordProgress(authorId, target, data.totalPages)
             adoptMeta(data)
             cacheOnly = false
-            publish()
-            // 从消息提醒跳进来：把目标楼层所在的那一页也拉回来
+            // 目标楼层通常在很后面的页，先拉回来合入楼层池再上屏；反过来先上屏再拉，
+            // 界面会先渲染到帖子正文、等目标页到达后再跳过去。续拉链等锚点消费掉再开
             fetchAnchorPage()
+            publish(startChain = _anchor.value == null)
         }
     }
 
@@ -379,35 +389,33 @@ class ThreadDetailViewModel(
      * redirect 中转地址拿到页码、直接取那一页，界面随即滚到该楼层。不推进页码记录：
      * 自动链仍从第 2 页继续，中间的页照旧在后台补齐，列表不会留下空洞。
      */
-    private fun fetchAnchorPage() {
+    private suspend fun fetchAnchorPage() {
         val pid = anchorPid ?: return
         if (anchorPageFetched || pool.containsKey(pid)) return
         anchorPageFetched = true
-        viewModelScope.launch {
-            val generation = dataGeneration
-            val page = try {
-                repository.noticeReplyPage(tid, pid)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            } ?: return@launch
-            if (page <= 1 || generation != dataGeneration) return@launch
-            val data = try {
-                repository.threadPage(tid, page, FETCH_ORDER, opOnlyAuthorId())
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                return@launch
-            }
-            if (generation != dataGeneration) return@launch
-            mergeIntoPool(data)
-            // 定位场景不开自动续拉：后续页按楼层插在目标前面，会把目标挤出处屏幕。
-            // 底部仍是「还有更多」的状态，用户往下滑或点「继续」照样能接着看。
-            autoLoadJob?.cancel()
-            _autoLoadRunning.value = false
-            publish(startChain = false)
+        val generation = dataGeneration
+        val page = try {
+            repository.noticeReplyPage(tid, pid)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: return
+        if (page <= 1 || generation != dataGeneration) return
+        val data = try {
+            repository.threadPage(tid, page, FETCH_ORDER, opOnlyAuthorId())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return
         }
+        if (generation != dataGeneration) return
+        mergeIntoPool(data)
+        // 定位场景不开自动续拉：后续页按楼层插在目标前面，会把目标挤出处屏幕。
+        // 底部仍是「还有更多」的状态，用户往下滑或点「继续」照样能接着看。
+        autoLoadJob?.cancel()
+        _autoLoadRunning.value = false
+        publish(startChain = false)
     }
 
     /** 界面已滚到定位楼层，清掉待定位状态。 */
@@ -443,14 +451,15 @@ class ThreadDetailViewModel(
      * 在两种排序下完全一致，已折叠条数也不会因为切排序而变。
      * 有切换筛选时记录的锚点，就同时交给界面在新楼层上屏后原地定位，屏幕不跳。
      */
-    private suspend fun publish(resetFold: Boolean = true, startChain: Boolean = true) {
+    private suspend fun publish(resetCollapsed: Boolean = true, startChain: Boolean = true) {
         treeJob?.cancel()
         val view = viewPage()
         val (tree, water) = withContext(Dispatchers.Default) { treeFor(view) }
-        // 定位未完成时不能重置折叠态：刚为定位展开的楼层会被紧接着的 publish 收回去
-        if (resetFold && !anchorRevealed) {
+        // 灌水折叠态不在这里重置：用户手动展开/收起后本次浏览内一直保持，退出帖子
+        // VM 重建才恢复默认；楼中楼收起态仍随重装重置，定位未完成时连它也不重置
+        // （刚为定位展开的楼层会被紧接着的 publish 收回去）。
+        if (resetCollapsed && !anchorRevealed) {
             _collapsed.value = emptySet()
-            _foldExpanded.value = false
         }
         _state.value = UiState.Success(view)
         _tree.value = tree
@@ -815,7 +824,7 @@ class ThreadDetailViewModel(
             recordProgress(authorId, 1, fresh.totalPages)
             adoptMeta(fresh)
             // 不清用户的展开/折叠态：回复成功后正在看的楼层不该被重置
-            publish(resetFold = false, startChain = false)
+            publish(resetCollapsed = false, startChain = false)
             syncAutoLoad()
         }
     }
@@ -896,7 +905,7 @@ class ThreadDetailViewModel(
                 // 直接从楼层池移除该楼层并重算树/灌水；
                 // 不能调 refreshAfterReply：它会重新拉第 1 页，把已删楼层按 pid 再加回来。
                 pool.remove(pid)
-                publish(resetFold = false, startChain = false)
+                publish(resetCollapsed = false, startChain = false)
             }
             _actionMessage.value = if (ok) "已删除该回复" else "删除未生效，站点可能不允许删除"
         }
@@ -1066,7 +1075,7 @@ class ThreadDetailViewModel(
                 mergeIntoPool(fresh)
                 recordProgress(authorId, 1, fresh.totalPages)
                 adoptMeta(fresh)
-                publish(resetFold = false, startChain = false)
+                publish(resetCollapsed = false, startChain = false)
                 syncAutoLoad()
             } catch (e: Exception) {
                 if (generation == dataGeneration) _actionMessage.value = friendlyError(e, "刷新失败")

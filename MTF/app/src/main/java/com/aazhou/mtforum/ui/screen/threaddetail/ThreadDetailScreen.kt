@@ -45,8 +45,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -67,7 +65,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -89,10 +86,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.imageLoader
 import com.aazhou.mtforum.data.model.Post
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.BottomBarBottomMargin
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
-import com.aazhou.mtforum.ui.common.HintToast
 import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.image.ImageAspectCache
 import com.aazhou.mtforum.ui.common.LoadingBox
@@ -182,7 +179,6 @@ fun ThreadDetailScreen(
     var highlightPid by remember { mutableStateOf<String?>(null) }
 
     var replyText by remember { mutableStateOf("") }
-    val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
@@ -207,13 +203,13 @@ fun ThreadDetailScreen(
         when (val r = replyState) {
             is ThreadDetailViewModel.ReplyState.Success -> {
                 replyText = ""
-                snackbarHostState.showSnackbar("回复成功")
+                AppToast.show("回复成功")
                 viewModel.consumeReplyState()
                 // 只重拉第 1 页并合并，保留已加载的后续页，不整页回退
                 viewModel.refreshAfterReply()
             }
             is ThreadDetailViewModel.ReplyState.Error -> {
-                snackbarHostState.showSnackbar(r.message)
+                AppToast.show(r.message)
                 viewModel.consumeReplyState()
             }
             else -> Unit
@@ -223,18 +219,14 @@ fun ThreadDetailScreen(
         when (val f = followState) {
             // 进帖时同步来的初始态不弹提示，只有用户点了关注/取消关注才反馈
             is ThreadDetailViewModel.FollowState.Done ->
-                if (f.fromUser) snackbarHostState.showSnackbar(if (f.following) "已关注" else "已取消关注")
-            is ThreadDetailViewModel.FollowState.Error -> snackbarHostState.showSnackbar(f.message)
+                if (f.fromUser) AppToast.show(if (f.following) "已关注" else "已取消关注")
+            is ThreadDetailViewModel.FollowState.Error -> AppToast.show(f.message)
             else -> Unit
         }
     }
-    // 加载/操作类提示改走中偏上的轻卡片：这类提示出现时内容往往还在（如只剩缓存），
-    // 必须盖在内容之上，底部 Snackbar 会被底栏与长列表挤没。
-    var hint by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(actionMessage) {
         val message = actionMessage ?: return@LaunchedEffect
-        hint = message
-        // 熄灭由 HintToast 自己计时；这里立刻清掉 ViewModel 那条，下一条消息才能重新触发
+        AppToast.show(message)
         viewModel.consumeActionMessage()
     }
 
@@ -274,8 +266,7 @@ fun ThreadDetailScreen(
         if (shouldLoadMore) viewModel.loadMore()
     }
 
-    // 提示统一走 Snackbar，避免同屏混用 Toast
-    val todo: (String) -> Unit = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+    val todo: (String) -> Unit = { msg -> AppToast.show(msg) }
     // 长按评论弹出的操作菜单目标
     var actionTarget by remember { mutableStateOf<Post?>(null) }
     // 是否显示打赏弹窗
@@ -294,7 +285,7 @@ fun ThreadDetailScreen(
         // 快照在点击这一刻同步冻结：之后自动续拉进来的评论不进这次下载
         val frame = viewModel.snapshotForDownload()
         if (frame == null) {
-            hint = "帖子还没加载出来，稍后再试"
+            AppToast.show("帖子还没加载出来，稍后再试")
         } else {
             scope.launch {
                 downloadBusy = true
@@ -312,11 +303,13 @@ fun ThreadDetailScreen(
                 }
                 downloadBusy = false
                 val savedReplies = frame.posts.count { !it.isFirstPost }
-                hint = when {
-                    entry == null -> "保存失败，请稍后重试"
-                    savedReplies == 0 -> "已保存正文到 下载/MTF（暂无评论）"
-                    else -> "已保存到 下载/MTF（含已加载的 $savedReplies 楼评论）"
-                }
+                AppToast.show(
+                    when {
+                        entry == null -> "保存失败，请稍后重试"
+                        savedReplies == 0 -> "已保存正文到 下载/MTF（暂无评论）"
+                        else -> "已保存到 下载/MTF（含已加载的 $savedReplies 楼评论）"
+                    },
+                )
             }
         }
     }
@@ -362,7 +355,6 @@ fun ThreadDetailScreen(
                 onDoubleTap = { scope.launch { listState.scrollToTop() } },
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (page != null) {
                 ReplyBar(
@@ -392,7 +384,6 @@ fun ThreadDetailScreen(
                 .fillMaxSize()
                 .layerBackdrop(replyBarBackdrop),
         ) {
-        // 轻提示浮在内容之上，位置中偏上：既压得住正文，又不遮顶部作者栏
         when (val current = state) {
             is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
             is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.fillMaxSize())
@@ -599,12 +590,6 @@ fun ThreadDetailScreen(
                 }
             }
         }
-        // 轻提示必须最后画：Box 按子项顺序绘制，放在前面会被 LazyColumn 的楼层盖住
-        HintToast(
-            message = hint,
-            onDismiss = { hint = null },
-            modifier = Modifier.align(BiasAlignment(0f, -0.5f)),
-        )
         }
     }
 
@@ -909,7 +894,8 @@ private fun shareThread(context: Context, subject: String?, tid: String) {
 
 /**
  * 顶栏：与首页顶栏同规格（状态栏避让 + 上下 10dp）的单行作者栏。
- * 返回 → 头像/昵称（昵称下方左对齐显示时间/属地）→ 关注 → 更多；作者帖未就绪时只留返回键。
+ * 返回 → 头像/昵称（昵称下方左对齐显示时间/属地）→ 关注 → 更多；作者帖未就绪时占位
+ * 显示，行高与就绪后一致，否则内容区会随 Scaffold 顶部内边距变化被推着下移。
  * 举报/赞赏/下载都收在「更多」菜单里（纯文字项），顶栏不再单独摆图标。
  */
 @Composable
@@ -953,41 +939,40 @@ internal fun ThreadDetailTopBar(
                 .clickable(onClick = onBack)
                 .padding(7.dp),
         )
-        if (post == null) return@Row
         Spacer(Modifier.width(6.dp))
         AsyncImage(
-            model = post.avatarUrl,
+            model = post?.avatarUrl,
             contentDescription = null,
             modifier = Modifier
                 .size(36.dp)
                 .clip(CircleShape)
                 .background(colors.quoteBackground)
                 .dimImageInDark()
-                .userClick(post.authorUid, onUserClick),
+                .userClick(post?.authorUid, onUserClick),
         )
         Spacer(Modifier.width(8.dp))
         // 昵称一行、时间/属地一行，均左对齐；昵称可被压缩，长昵称优先让位
         Column(Modifier.weight(1f)) {
             Text(
-                post.authorName.ifBlank { "匿名" },
+                post?.authorName?.ifBlank { "匿名" }.orEmpty(),
                 style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp),
                 fontWeight = FontWeight.Bold,
                 color = bodyTextColor(),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.userClick(post.authorUid, onUserClick),
+                modifier = Modifier.userClick(post?.authorUid, onUserClick),
             )
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 1.dp)) {
                 Text(
-                    post.timeText.orEmpty(),
+                    post?.timeText.orEmpty(),
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                     color = colors.textSecondary,
                     maxLines = 1,
                 )
-                if (!post.location.isNullOrBlank()) {
+                if (!post?.location.isNullOrBlank()) {
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        post.location,
+                        post?.location.orEmpty(),
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = colors.textHint,
                         maxLines = 1,

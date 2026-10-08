@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -180,6 +181,7 @@ fun PostContent(
                                 text = text,
                                 smiles = block.smiles,
                                 spans = block.spans,
+                                baseFontSize = style.fontSize,
                                 linkColor = linkColor,
                                 codeBackground = codeBg,
                                 background = colors.background,
@@ -229,10 +231,11 @@ fun PostContent(
  * 笑脸用字符串注解 + inlineContent 替换（注解值必须是占位字符本身）；
  * 样式来自 [StyleSpan]，下标与 [text] 对齐，越界区间已在解析阶段裁掉。
  */
-private fun buildBodyText(
+internal fun buildBodyText(
     text: String,
     smiles: Map<Char, String>,
     spans: List<StyleSpan>,
+    baseFontSize: TextUnit,
     linkColor: Color,
     codeBackground: Color,
     background: Color,
@@ -256,7 +259,11 @@ private fun buildBodyText(
                 span.underline -> TextDecoration.Underline
                 else -> null
             }
+            // 字号逐 span 施加：站点把标题包进 <font size> 里、普通行不包，
+            // 整块取最大缩放会把段落里的普通行一起放大，与网页逐行各自生效不一致
+            val scale = span.fontSizeScale * headingScale(span.headingLevel)
             val spanStyle = SpanStyle(
+                fontSize = if (scale != 1f) baseFontSize * scale else TextUnit.Unspecified,
                 fontWeight = if (span.bold || span.headingLevel > 0) FontWeight.Bold else null,
                 fontStyle = if (span.italic) FontStyle.Italic else null,
                 textDecoration = decoration,
@@ -289,16 +296,11 @@ private fun buildBodyText(
     }
 }
 
-/** 由段内样式推出该段的基础排版（标题字号/加粗、字号缩放、对齐）。 */
+/** 由段内样式推出该段的基础排版：只推导段级对齐，字号与标题缩放按 span 在 buildBodyText 施加。 */
 private fun ContentBlock.Text.derivedStyle(bodyStyle: TextStyle): TextStyle {
     if (spans.isEmpty()) return bodyStyle
-    val heading = spans.maxOfOrNull { it.headingLevel } ?: 0
-    val scale = (spans.maxOfOrNull { it.fontSizeScale } ?: 1f) * headingScale(heading)
     val align = spans.firstNotNullOfOrNull { it.align }
     return bodyStyle.copy(
-        fontSize = bodyStyle.fontSize * scale,
-        lineHeight = bodyStyle.lineHeight * scale,
-        fontWeight = if (heading > 0) FontWeight.Bold else null,
         textAlign = when (align) {
             CellAlign.Center -> TextAlign.Center
             CellAlign.End -> TextAlign.End

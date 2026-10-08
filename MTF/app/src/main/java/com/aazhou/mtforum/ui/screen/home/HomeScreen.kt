@@ -36,7 +36,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
@@ -48,7 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.Thread
-import com.aazhou.mtforum.ui.common.ActionHint
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.LoadingBox
@@ -76,6 +75,7 @@ fun HomeScreen(
     onMessages: () -> Unit,
     onForumClick: (fid: String, name: String) -> Unit,
     onThreadClick: (tid: String) -> Unit,
+    onUserClick: (uid: String) -> Unit,
     onProfileClick: (uid: String) -> Unit,
 ) {
     val colors = LocalMtfColors.current
@@ -100,6 +100,12 @@ fun HomeScreen(
     // 列表状态提升到页面作用域：顶栏双击回顶部时刷新/加载态也要能拿到它
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    // 加载/操作类提示改走全局轻提示：页面级提示卡片已由 AppToast 统一承载
+    LaunchedEffect(actionMessage) {
+        val message = actionMessage ?: return@LaunchedEffect
+        AppToast.show(message)
+        viewModel.consumeActionMessage()
+    }
     val scrollToTop: () -> Unit = {
         scope.launch { listState.scrollToTop() }
     }
@@ -108,18 +114,6 @@ fun HomeScreen(
         containerColor = colors.background,
         // 见 UserProfileScreen：语义色取不到 contentColorFor 时会退回旧值
         contentColor = bodyTextColor(),
-        // 提示走中偏上的轻卡片：应用底栏（首页/板块/导读/我的）是浮层，
-        // 贴在 Scaffold 底部的 Snackbar 会被它整块压住
-        snackbarHost = {
-            // 宿主槽是个铺满内容区的 Box，正好拿来承载中偏上的提示卡片
-            Box(Modifier.fillMaxSize()) {
-                ActionHint(
-                    actionMessage,
-                    { viewModel.consumeActionMessage() },
-                    Modifier.align(BiasAlignment(0f, -0.45f)),
-                )
-            }
-        },
         topBar = {
             HomeTopBar(
                 avatarUrl = me?.avatarUrl,
@@ -167,6 +161,7 @@ fun HomeScreen(
                                 thread = thread,
                                 onClick = { onThreadClick(thread.tid) },
                                 onImageClick = openImage,
+                                onUserClick = onUserClick,
                             )
                         }
                         if (loadingMore) {

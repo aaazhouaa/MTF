@@ -1,9 +1,9 @@
 package com.aazhou.mtforum.ui.common
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,6 +57,7 @@ fun ThreadCard(
     thread: Thread,
     onClick: () -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
+    onUserClick: (String) -> Unit,
     showForumName: Boolean = true,
 ) {
     val colors = LocalMtfColors.current
@@ -76,7 +77,11 @@ fun ThreadCard(
             AsyncImage(
                 model = thread.avatarUrl,
                 contentDescription = null,
-                modifier = Modifier.size(38.dp).clip(CircleShape).dimImageInDark(),
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .dimImageInDark()
+                    .userClick(thread.authorUid, onUserClick),
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
@@ -87,6 +92,7 @@ fun ThreadCard(
                     color = bodyTextColor(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.userClick(thread.authorUid, onUserClick),
                 )
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.5.dp)) {
                     Text(
@@ -346,3 +352,14 @@ private fun formatCount(raw: String?): String? {
         else -> count.toString()
     }
 }
+
+/**
+ * 头像/昵称可点：有 uid 时进入该用户主页；无 uid（游客/匿名）不响应。
+ *
+ * 卡片本体可点（打开帖子），这里的内层 clickable 会优先消费手势，不会误触卡片。
+ */
+private fun Modifier.userClick(
+    uid: String?,
+    onUserClick: (String) -> Unit,
+): Modifier =
+    if (uid.isNullOrBlank()) this else clickable { onUserClick(uid) }
