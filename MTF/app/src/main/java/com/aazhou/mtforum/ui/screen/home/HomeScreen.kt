@@ -40,7 +40,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,6 +53,7 @@ import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.RankCard
 import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
+import com.aazhou.mtforum.ui.common.accountIconModel
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
@@ -66,7 +66,7 @@ import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.launch
 
-/** 首页：顶栏（头像/应用名 + 搜索胶囊 + 主题切换 + 消息）、热帖排行头部、帖子卡片流。 */
+/** 首页：顶栏（头像/登录图标 + 搜索胶囊 + 主题切换 + 消息）、热帖排行头部、帖子卡片流。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -77,6 +77,7 @@ fun HomeScreen(
     onThreadClick: (tid: String) -> Unit,
     onUserClick: (uid: String) -> Unit,
     onProfileClick: (uid: String) -> Unit,
+    onLogin: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
     val container = LocalContext.current.container()
@@ -118,6 +119,7 @@ fun HomeScreen(
             HomeTopBar(
                 avatarUrl = me?.avatarUrl,
                 onProfileClick = { me?.uid?.let(onProfileClick) },
+                onLogin = onLogin,
                 onSearch = onSearch,
                 onToggleTheme = onToggleTheme,
                 onMessages = onMessages,
@@ -187,6 +189,7 @@ fun HomeScreen(
 private fun HomeTopBar(
     avatarUrl: String?,
     onProfileClick: () -> Unit,
+    onLogin: () -> Unit,
     onSearch: () -> Unit,
     onToggleTheme: () -> Unit,
     onMessages: () -> Unit,
@@ -211,11 +214,14 @@ private fun HomeTopBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (avatarUrl.isNullOrBlank()) {
-            Text(
-                "MTF",
-                style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
-                fontWeight = FontWeight.Bold,
-                color = bodyTextColor(),
+            // 未登录：左侧放登录动图（与「我的」页同一枚，白底已抠透明），
+            // 点击直接进登录页——此前这里显示「MTF」文字且不可点
+            AsyncImage(
+                model = accountIconModel(logout = false),
+                contentDescription = "登录",
+                modifier = Modifier
+                    .size(32.dp)
+                    .clickable(onClick = onLogin),
             )
         } else {
             AsyncImage(

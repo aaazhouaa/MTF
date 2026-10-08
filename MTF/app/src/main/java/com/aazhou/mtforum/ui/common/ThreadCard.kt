@@ -78,7 +78,7 @@ fun ThreadCard(
                 model = thread.avatarUrl,
                 contentDescription = null,
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(30.dp)
                     .clip(CircleShape)
                     .dimImageInDark()
                     .userClick(thread.authorUid, onUserClick),

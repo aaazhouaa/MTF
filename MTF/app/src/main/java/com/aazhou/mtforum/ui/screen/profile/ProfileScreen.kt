@@ -42,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.ui.common.AppToast
+import com.aazhou.mtforum.ui.common.accountIconModel
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
@@ -80,7 +81,6 @@ fun ProfileScreen(onLogin: () -> Unit, onSettings: () -> Unit, onDownloads: () -
         InfoCard(
             profile = profile,
             loggedIn = loggedIn,
-            onLogin = onLogin,
             onAccountAction = {
                 if (loggedIn) {
                     context.container().logout()
@@ -160,27 +160,29 @@ private fun DownloadsCard(onOpen: () -> Unit, count: Int) {
     }
 }
 
-/** 卡片 1：头像 + 名字 + 切换账号 + UID/等级 + 用户组 + 登录/退出 + 五列统计。 */
+/** 卡片 1：头像 + 名字 + UID + 登录/登出 + 五列统计。 */
 @Composable
 private fun InfoCard(
     profile: UserProfile?,
     loggedIn: Boolean,
-    onLogin: () -> Unit,
     onAccountAction: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
     ProfileCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(
-                model = if (loggedIn) profile?.avatarUrl else null,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(72.dp)
-                    .clip(CircleShape)
-                    .background(colors.quoteBackground)
-                    .dimImageInDark(),
-            )
-            Spacer(Modifier.width(16.dp))
+            // 未登录没有站点头像可显示：不占头像位，也不留灰色占位圆
+            if (loggedIn) {
+                AsyncImage(
+                    model = profile?.avatarUrl,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(colors.quoteBackground)
+                        .dimImageInDark(),
+                )
+                Spacer(Modifier.width(16.dp))
+            }
             Column(Modifier.weight(1f)) {
                 Text(
                     if (loggedIn) profile?.name.orEmpty().ifBlank { "未知用户" } else "未登录",
@@ -189,7 +191,6 @@ private fun InfoCard(
                     color = bodyTextColor(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable(enabled = !loggedIn, onClick = onLogin),
                 )
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                     Text(
@@ -197,41 +198,20 @@ private fun InfoCard(
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                         color = colors.textSecondary,
                     )
-                    if (loggedIn && !profile?.level.isNullOrBlank()) {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            profile.level.orEmpty(),
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = accentTextColor(),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-                                .padding(horizontal = 8.dp, vertical = 2.dp),
-                        )
-                    }
-                }
-                if (loggedIn && !profile?.groupName.isNullOrBlank()) {
-                    Text(
-                        profile.groupName.orEmpty(),
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                        fontWeight = FontWeight.Bold,
-                        color = accentTextColor(),
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
                 }
             }
+            // 登录/登出动图：WebP 已把白底抠透明，直接落在卡片上，
+            // 深色主题下也是图标自身的颜色（GIF 只有 1 位透明，会锯齿，故用 WebP 承载 alpha）
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
+                    .size(46.dp)
                     .clickable(onClick = onAccountAction),
             ) {
-                Icon(
-                    painterResource(com.aazhou.mtforum.R.drawable.ic_people),
+                AsyncImage(
+                    model = accountIconModel(logout = loggedIn),
                     contentDescription = if (loggedIn) "退出登录" else "登录",
-                    tint = colors.iconSecondary,
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(42.dp),
                 )
             }
         }

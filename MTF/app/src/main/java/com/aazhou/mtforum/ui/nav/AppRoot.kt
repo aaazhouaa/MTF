@@ -148,6 +148,8 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 HomeScreen(
                     onSearch = { navController.navigate(Routes.SEARCH) },
                     onToggleTheme = onToggleTheme,
+                    // 未登录时顶栏左侧是登录图标，点击进登录页
+                    onLogin = { navController.navigate(Routes.LOGIN) },
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                     // 消息提醒需登录态，未登录时先走登录页（与「我的」一致）
                     onMessages = {
