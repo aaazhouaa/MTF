@@ -53,7 +53,8 @@ object Routes {
     const val LOGIN = "login"
     const val SETTINGS = "settings"
     const val FORUM = "forum/{fid}/{name}"
-    const val THREAD = "thread/{tid}"
+    // pid 是可查询参数：消息提醒跳进来时带上要定位的楼层，普通进帖不带
+    const val THREAD = "thread/{tid}?pid={pid}"
     const val USER = "user/{uid}"
     const val POST = "post/{fid}/{name}"
     const val NOTICE = "notice"
@@ -62,6 +63,10 @@ object Routes {
 
     fun forum(fid: String, name: String) = "forum/$fid/${Uri.encode(name)}"
     fun thread(tid: String) = "thread/$tid"
+
+    /** 从消息提醒跳进来：[pid] 为要定位的楼层，空表示只打开帖子。 */
+    fun threadAnchor(tid: String, pid: String?) =
+        if (pid.isNullOrBlank()) "thread/$tid" else "thread/$tid?pid=$pid"
     fun user(uid: String) = "user/$uid"
     fun post(fid: String, name: String) = "post/$fid/${Uri.encode(name)}"
     fun downloadedThread(tid: String) = "downloaded/$tid"
@@ -175,7 +180,9 @@ fun AppRoot(onToggleTheme: () -> Unit) {
             composable(Routes.NOTICE) {
                 NoticeScreen(
                     onBack = { navController.popBackStack() },
-                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                    onThreadClick = { tid, pid ->
+                        navController.navigate(Routes.threadAnchor(tid, pid))
+                    },
                 )
             }
             composable(Routes.DOWNLOADS) {
@@ -214,13 +221,25 @@ fun AppRoot(onToggleTheme: () -> Unit) {
                 )
             }
 
-            composable(Routes.THREAD, arguments = listOf(navArgument("tid") { type = NavType.StringType })) { entry ->
+            composable(
+                Routes.THREAD,
+                arguments = listOf(
+                    navArgument("tid") { type = NavType.StringType },
+                    navArgument("pid") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) { entry ->
                 ThreadDetailScreen(
                     tid = entry.arguments?.getString("tid").orEmpty(),
                     onBack = { navController.popBackStack() },
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                     // 正文里的站内帖子链接在 App 内继续看帖，不进浏览器
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                    // 消息提醒跳进来时带上要定位的楼层
+                    anchorPid = entry.arguments?.getString("pid")?.takeIf { it.isNotBlank() },
                 )
             }
 

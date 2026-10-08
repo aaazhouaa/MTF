@@ -20,6 +20,8 @@ object CacheKeys {
      */
     fun thread(tid: String): String = "thread|v2|$tid"
 
+    fun notice(): String = "notice"
+
     fun forum(fid: String): String = "forum|$fid"
 
     fun home(): String = "home"

@@ -15,6 +15,7 @@ import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.isWaterReply
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -35,6 +36,11 @@ class ThreadDetailViewModel(
     private val actionStore: ActionStore,
     private val contentCache: ContentCache,
     myUidFlow: Flow<String>,
+    /**
+     * 从消息提醒跳进来时要定位的楼层 pid。
+     * 该楼层常在最末几页，故额外把所在页拉回来并让界面滚过去（见 [fetchAnchorPage]）。
+     */
+    private val anchorPid: String? = null,
 ) : ViewModel() {
 
     /** 当前登录用户 uid（用于判定某条回复是否本人发表）。 */
@@ -43,6 +49,13 @@ class ThreadDetailViewModel(
 
     private val _state = MutableStateFlow<UiState<ThreadPage>>(UiState.Loading)
     val state: StateFlow<UiState<ThreadPage>> = _state.asStateFlow()
+
+    /** 待定位的楼层 pid；界面滚到位后调 [consumeAnchor] 清掉。 */
+    private val _anchor = MutableStateFlow(anchorPid)
+    val anchor: StateFlow<String?> = _anchor.asStateFlow()
+
+    /** 定位楼层所在页是否已拉回过（只做一次）。 */
+    private var anchorPageFetched = false
 
     private val _replyState = MutableStateFlow<ReplyState>(ReplyState.Idle)
     val replyState: StateFlow<ReplyState> = _replyState.asStateFlow()
@@ -351,7 +364,49 @@ class ThreadDetailViewModel(
             adoptMeta(data)
             cacheOnly = false
             publish()
+            // 从消息提醒跳进来：把目标楼层所在的那一页也拉回来
+            fetchAnchorPage()
         }
+    }
+
+    /**
+     * 把提醒指向的楼层所在页拉回来并楼层池。
+     *
+     * 被回复的楼层通常在最末几页，从第 1 页顺着自动链翻过去要几十个请求；这里先按
+     * redirect 中转地址拿到页码、直接取那一页，界面随即滚到该楼层。不推进页码记录：
+     * 自动链仍从第 2 页继续，中间的页照旧在后台补齐，列表不会留下空洞。
+     */
+    private fun fetchAnchorPage() {
+        val pid = anchorPid ?: return
+        if (anchorPageFetched || pool.containsKey(pid)) return
+        anchorPageFetched = true
+        viewModelScope.launch {
+            val generation = dataGeneration
+            val page = try {
+                repository.noticeReplyPage(tid, pid)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } ?: return@launch
+            if (page <= 1 || generation != dataGeneration) return@launch
+            val data = try {
+                repository.threadPage(tid, page, FETCH_ORDER, opOnlyAuthorId())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                return@launch
+            }
+            if (generation != dataGeneration) return@launch
+            mergeIntoPool(data)
+            publish(startChain = false)
+            syncAutoLoad()
+        }
+    }
+
+    /** 界面已滚到定位楼层，清掉待定位状态。 */
+    fun consumeAnchor() {
+        _anchor.value = null
     }
 
     /**

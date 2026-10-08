@@ -129,12 +129,21 @@ fun ThreadDetailScreen(
     onBack: () -> Unit,
     onUserClick: (String) -> Unit,
     onThreadClick: (String) -> Unit,
+    /** 从消息提醒跳进来时要定位的楼层 pid（普通进帖为 null）。 */
+    anchorPid: String? = null,
 ) {
     val context = LocalContext.current
     val colors = LocalMtfColors.current
     val container = context.container()
     val viewModel: ThreadDetailViewModel = appViewModel {
-        ThreadDetailViewModel(tid, it.repository, it.actionStore, it.contentCache, it.sessionStore.uid)
+        ThreadDetailViewModel(
+            tid,
+            it.repository,
+            it.actionStore,
+            it.contentCache,
+            it.sessionStore.uid,
+            anchorPid = anchorPid,
+        )
     }
     val myUid by viewModel.myUid.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -158,6 +167,8 @@ fun ThreadDetailScreen(
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     val foldExpanded by viewModel.foldExpanded.collectAsStateWithLifecycle()
     val autoLoadRunning by viewModel.autoLoadRunning.collectAsStateWithLifecycle()
+    // 从消息提醒跳进来时要定位的楼层
+    val anchorPid by viewModel.anchor.collectAsStateWithLifecycle()
 
     var replyText by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -400,6 +411,33 @@ fun ThreadDetailScreen(
                     val visibleReplies = remember(tree, waterPids, foldExpanded) {
                         val top = tree?.topLevel.orEmpty()
                         if (foldExpanded) top else top.filter { it.pid !in waterPids }
+                    }
+                    // 从消息提醒跳进来：目标楼层（可能在很后面的页）被拉回来后滚到它所在的位置
+                    LaunchedEffect(anchorPid, visibleReplies, foldExpanded) {
+                        val pid = anchorPid ?: return@LaunchedEffect
+                        val target = when {
+                            visibleReplies.any { it.pid == pid } -> pid
+                            // 目标是楼中楼的子回复：父楼层就在它上面，滚到父楼层即可
+                            else -> tree?.children?.entries
+                                ?.firstOrNull { (_, kids) -> kids.any { it.pid == pid } }?.key
+                        }
+                        val index = target
+                            ?.let { key -> visibleReplies.indexOfFirst { it.pid == key } }
+                            ?: -1
+                        if (index < 0) {
+                            // 被灌水折叠藏住了：展开后这个 effect 会再跑一次
+                            if (!foldExpanded &&
+                                (waterPids.contains(pid) || (target != null && waterPids.contains(target)))
+                            ) {
+                                viewModel.toggleFoldExpanded()
+                            }
+                            return@LaunchedEffect
+                        }
+                        // 等这一帧布局完再滚，否则目标项还没测量出来
+                        withFrameNanos { }
+                        // 列表头部固定两项：帖子头部 + 评论标题栏（头部缺省时少一项）
+                        listState.scrollToItem(index + (if (op != null) 1 else 0) + 1)
+                        viewModel.consumeAnchor()
                     }
 
                     PullToRefreshBox(

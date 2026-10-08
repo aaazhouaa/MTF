@@ -660,6 +660,18 @@ object ForumParser {
     /** 提醒行里指向主题的链接：移动模板用 redirect&goto=findpost&ptid=TID，旧式用 thread-TID。 */
     private val RE_NOTICE_TID = Regex("""(?:ptid|tid)=(\d+)""")
 
+    /** 提醒行里指向具体楼层的链接：goto=findpost&pid=PID。 */
+    private val RE_NOTICE_PID = Regex("""[?&]pid=(\d+)""")
+
+    /** 帖子地址里的页码：`viewthread&tid=X&page=N` 或 `thread-X-N-1.html`。 */
+    private val RE_THREAD_PAGE = Regex("""[?&]page=(\d+)|thread-\d+-(\d+)-""")
+
+    /** 从（跟随重定向后的）帖子地址里取页码；取不到按第 1 页处理。 */
+    fun pageFromThreadUrl(url: String): Int {
+        val m = RE_THREAD_PAGE.find(url) ?: return 1
+        return (m.groupValues[1].ifEmpty { m.groupValues[2] }).toIntOrNull()?.coerceAtLeast(1) ?: 1
+    }
+
     /**
      * 「我的」→「消息提醒」的某个类别页（home.php?mod=space&do=notice&view=…）。
      *
@@ -720,7 +732,11 @@ object ForumParser {
                     ?: RE_TID.find(href)?.groupValues?.get(1)
             }
             .firstOrNull()
-        return Notice(id = tid ?: "notice-$index", text = text, timeText = time, tid = tid)
+        val pid = li.select("a[href]").asSequence()
+            .map { it.attr("href") }
+            .mapNotNull { href -> RE_NOTICE_PID.find(href)?.groupValues?.get(1) }
+            .firstOrNull()
+        return Notice(id = tid ?: "notice-$index", text = text, timeText = time, tid = tid, pid = pid)
     }
 
     /** 点赞用户列表（misc.php?op=recommend）：昵称取自链接文本，需剔掉图标字体私用区字符。 */

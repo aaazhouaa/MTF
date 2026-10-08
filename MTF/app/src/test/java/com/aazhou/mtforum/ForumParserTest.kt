@@ -690,6 +690,7 @@ class ForumParserTest {
         assertEquals(2, notices.notices.size)
         val first = notices.notices[0]
         assertEquals("174032", first.tid)
+        assertEquals("11921862", first.pid)
         assertEquals("昨天 15:22", first.timeText)
         // 正文含发帖人与主题名，行尾的「查看」是操作链接、不进正文
         assertTrue(first.text.contains("rsuyeug 回复了您的帖子"))
@@ -712,6 +713,20 @@ class ForumParserTest {
         val notices = ForumParser.parseNotices(html)
         assertTrue(!notices.loggedOut)
         assertTrue(notices.notices.isEmpty())
+    }
+
+    @Test
+    fun threadPageParsedFromResolvedUrl() {
+        // redirect 中转地址 302 到带页码的帖子页，页码从这里取
+        assertEquals(
+            19,
+            ForumParser.pageFromThreadUrl(
+                "https://bbs.binmt.cc/forum.php?mod=viewthread&tid=174032&page=19&mobile=2#pid11921862",
+            ),
+        )
+        assertEquals(3, ForumParser.pageFromThreadUrl("https://bbs.binmt.cc/thread-174032-3-1.html"))
+        // 没有页码按第 1 页处理（调用方据此跳过额外的取页请求）
+        assertEquals(1, ForumParser.pageFromThreadUrl("https://bbs.binmt.cc/forum.php?mod=viewthread&tid=174032"))
     }
 
     @Test

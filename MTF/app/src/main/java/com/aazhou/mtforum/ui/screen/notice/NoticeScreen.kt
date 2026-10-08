@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -55,10 +56,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun NoticeScreen(
     onBack: () -> Unit,
-    onThreadClick: (String) -> Unit,
+    onThreadClick: (tid: String, pid: String?) -> Unit,
 ) {
-    val viewModel: NoticeViewModel = appViewModel { NoticeViewModel(it.repository) }
+    val viewModel: NoticeViewModel = appViewModel { NoticeViewModel(it.repository, it.contentCache) }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
@@ -88,9 +90,14 @@ fun NoticeScreen(
                 if (current.data.isEmpty()) {
                     EmptyBox("暂无消息提醒", Modifier.padding(padding))
                 } else {
+                    PullToRefreshBox(
+                        isRefreshing = refreshing,
+                        onRefresh = { viewModel.refresh() },
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                    ) {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize().padding(padding),
+                        modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(
                             top = 4.dp,
                             bottom = bottomBarContentPadding(),
@@ -99,9 +106,12 @@ fun NoticeScreen(
                         items(current.data, key = { it.id }) { notice ->
                             NoticeRow(
                                 notice = notice,
-                                onClick = { notice.tid?.let(onThreadClick) },
+                                onClick = {
+                                    notice.tid?.let { tid -> onThreadClick(tid, notice.pid) }
+                                },
                             )
                         }
+                    }
                     }
                 }
             }

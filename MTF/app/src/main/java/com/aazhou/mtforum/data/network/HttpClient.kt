@@ -109,6 +109,25 @@ class HttpClient(
         return body
     }
 
+    /**
+     * 发起一次 GET 并返回跟随重定向后的最终地址。
+     *
+     * 站点的楼层链接是 redirect 中转地址（goto=findpost&ptid=X&pid=Y），
+     * 302 到带页码的帖子页；只有最终地址里才拿得到页码。
+     * 拿不到页码时调用方按「只打开帖子」处理。
+     */
+    @Throws(IOException::class)
+    fun resolveRedirect(url: String, userAgent: String = MOBILE_UA): String {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", userAgent)
+            .header("Accept", ACCEPT)
+            .header("Accept-Language", ACCEPT_LANGUAGE)
+            .get()
+            .build()
+        return client.newCall(request).execute().use { it.request.url.toString() }
+    }
+
     @Throws(IOException::class)
     fun getBytes(url: String, referer: String? = null): ByteArray {
         val builder = Request.Builder()

@@ -259,6 +259,8 @@ data class Notice(
     val text: String,
     val timeText: String? = null,
     val tid: String? = null,
+    /** 提醒指向的楼层 pid（「回复了您的帖子」这类提醒有），用于跳转到对应楼层。 */
+    val pid: String? = null,
 )
 
 /** 消息提醒页解析结果；[loggedOut] 为 true 表示页面被重定向到了登录表单。 */

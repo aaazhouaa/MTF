@@ -227,6 +227,22 @@ class ForumRepository(
         NoticePage(notices = merged)
     }
 
+    /**
+     * 提醒里「回复了您的帖子」指向的楼层在第几页。
+     *
+     * 站点的楼层链接是 redirect 中转地址，302 到 `viewthread&tid=X&page=N`；
+     * 直接把这一页拉回来，比从第 1 页顺着自动链翻到末页快得多。
+     * 中转失败（风控拦截等）返回 null，调用方退化成只打开帖子。
+     */
+    suspend fun noticeReplyPage(tid: String, pid: String): Int? = withContext(Dispatchers.IO) {
+        val finalUrl = runCatching {
+            http.resolveRedirect(
+                http.url("forum.php?mod=redirect&goto=findpost&ptid=$tid&pid=$pid"),
+            )
+        }.getOrNull() ?: return@withContext null
+        ForumParser.pageFromThreadUrl(finalUrl)
+    }
+
     /** 指定用户的个人中心（他人主页）。 */
     suspend fun userProfile(uid: String): UserProfile = withContext(Dispatchers.IO) {
         ForumParser.parseUserProfile(
