@@ -755,7 +755,19 @@ object ForumParser {
         // 新消息插到前面时后面的行不会因为下标平移而整批重建
         val noteId = li.selectFirst("a[id^=a_note_]")?.id()?.removePrefix("a_note_")
         val id = noteId ?: pid ?: tid ?: "notice-$index"
-        return Notice(id = id, text = text, timeText = time, tid = tid, pid = pid)
+        // 互动类提醒的头像链接：a.notice_img 包着头像，href 带 uid=；系统类提醒没有它，两项自然为 null
+        val avatarLink = li.selectFirst("a.notice_img")
+        val avatarUrl = avatarLink?.selectFirst("img")?.attr("src")?.trim()?.takeIf { it.isNotBlank() }
+        val uid = avatarLink?.attr("href")?.let { RE_UID.find(it)?.groupValues?.get(1) }
+        return Notice(
+            id = id,
+            text = text,
+            timeText = time,
+            tid = tid,
+            pid = pid,
+            avatarUrl = avatarUrl,
+            uid = uid,
+        )
     }
 
     /** 点赞用户列表（misc.php?op=recommend）：昵称取自链接文本，需剔掉图标字体私用区字符。 */

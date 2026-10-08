@@ -698,6 +698,9 @@ class ForumParserTest {
         assertTrue(!first.text.contains("app"))
         assertTrue(!first.text.contains("查看"))
         assertTrue(!first.text.contains("忽略"))
+        // 互动类提醒带头像链接：a.notice_img 的 img.src 是头像，href 里带 uid（点头像进个人主页）
+        assertEquals("https://avatar.mt2.cn/uc_server/avatar.php?uid=151212&size=middle", first.avatarUrl)
+        assertEquals("151212", first.uid)
     }
 
     @Test

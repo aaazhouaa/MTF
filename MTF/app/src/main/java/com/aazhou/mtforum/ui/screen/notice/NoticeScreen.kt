@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -14,12 +15,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -28,16 +31,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.ContextCompat
+import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.ui.common.EmptyBox
@@ -59,6 +67,7 @@ import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.accentTextColor
+import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.launch
 
 /** 消息提醒页：对应网页端「我的」→「消息提醒」。 */
@@ -67,7 +76,9 @@ import kotlinx.coroutines.launch
 fun NoticeScreen(
     onBack: () -> Unit,
     onThreadClick: (tid: String, pid: String?) -> Unit,
+    onUserClick: (String) -> Unit,
 ) {
+    val colors = LocalMtfColors.current
     val viewModel: NoticeViewModel = appViewModel {
         NoticeViewModel(it.repository, it.contentCache, onRead = { ids -> it.markNoticesRead(ids) })
     }
@@ -92,8 +103,11 @@ fun NoticeScreen(
     }
 
     Scaffold(
+        containerColor = colors.topBar,
+        contentColor = bodyTextColor(),
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.topBar),
                 title = { Text("消息提醒") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -133,6 +147,7 @@ fun NoticeScreen(
                         items(current.data, key = { it.id }) { notice ->
                             NoticeRow(
                                 notice = notice,
+                                onUserClick = onUserClick,
                                 onClick = {
                                     notice.tid?.let { tid -> onThreadClick(tid, notice.pid) }
                                 },
@@ -156,36 +171,52 @@ fun NoticeScreen(
     }
 }
 
-/** 单条提醒：图标 + 正文 + 时间，站点给了主题链接才可点击。 */
+/** 单条提醒：头像 + 正文 + 时间，站点给了主题链接才可点击。 */
 @Composable
-private fun NoticeRow(notice: Notice, onClick: () -> Unit) {
+private fun NoticeRow(notice: Notice, onUserClick: (String) -> Unit, onClick: () -> Unit) {
     val colors = LocalMtfColors.current
     val clickable = notice.tid != null
+    // 正文最后一行的右缘（像素）：细线只画到这里，短行不拖到整宽
+    var textRight by remember(notice.id) { mutableStateOf(0f) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 2.5.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(colors.surface)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
             .then(
                 if (clickable) Modifier.clickable(onClick = onClick) else Modifier,
-            )
-            .padding(horizontal = 14.dp, vertical = 13.dp),
+            ),
     ) {
         Row(verticalAlignment = Alignment.Top) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(colors.quoteBackground),
-            ) {
-                Icon(
-                    painterResource(R.drawable.ic_mail_line),
+            val avatarUrl = notice.avatarUrl
+            if (avatarUrl != null) {
+                AsyncImage(
+                    model = avatarUrl,
                     contentDescription = null,
-                    tint = accentTextColor(),
-                    modifier = Modifier.size(17.dp),
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(colors.quoteBackground)
+                        .dimImageInDark()
+                        .then(
+                            notice.uid?.let { uid -> Modifier.clickable { onUserClick(uid) } }
+                                ?: Modifier,
+                        ),
                 )
+            } else {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(colors.quoteBackground),
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_mail_line),
+                        contentDescription = null,
+                        tint = accentTextColor(),
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
@@ -195,6 +226,7 @@ private fun NoticeRow(notice: Notice, onClick: () -> Unit) {
                     color = bodyTextColor(),
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
+                    onTextLayout = { textRight = it.getLineRight(it.lineCount - 1) },
                 )
                 // 回复内容摘要：与上方正文同一左边缘（即顶部用户名的左边缘），最多两行
                 val content = notice.content
@@ -214,6 +246,15 @@ private fun NoticeRow(notice: Notice, onClick: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = colors.textSecondary,
                         modifier = Modifier.padding(top = 5.dp),
+                    )
+                }
+                Spacer(Modifier.height(7.dp))
+                Canvas(Modifier.fillMaxWidth().height(0.5.dp)) {
+                    drawLine(
+                        color = colors.divider,
+                        start = Offset(0f, size.height / 2f),
+                        end = Offset(textRight, size.height / 2f),
+                        strokeWidth = size.height,
                     )
                 }
             }

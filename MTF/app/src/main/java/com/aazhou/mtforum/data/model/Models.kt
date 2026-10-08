@@ -263,6 +263,10 @@ data class Notice(
     val pid: String? = null,
     /** 该楼层正文的纯文本摘要（按需拉取，用于列表里显示回复内容）。 */
     val content: String? = null,
+    /** 该条提醒关联用户的头像地址（系统类提醒没有用户头像，为 null）。 */
+    val avatarUrl: String? = null,
+    /** 该条提醒关联用户的 uid；点头像进入其个人主页，为 null 时不可点。 */
+    val uid: String? = null,
 )
 
 /** 消息提醒页解析结果；[loggedOut] 为 true 表示页面被重定向到了登录表单。 */
