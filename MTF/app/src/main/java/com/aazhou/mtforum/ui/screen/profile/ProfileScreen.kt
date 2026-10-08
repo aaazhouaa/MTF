@@ -163,19 +163,23 @@ private fun InfoCard(
     val colors = LocalMtfColors.current
     ProfileCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // 未登录没有站点头像可显示：不占头像位，也不留灰色占位圆
-            if (loggedIn) {
-                AsyncImage(
-                    model = profile?.avatarUrl,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .background(colors.quoteBackground)
-                        .dimImageInDark(),
-                )
-                Spacer(Modifier.width(16.dp))
+            // 未登录也占头像位：底色取卡片同色，未登录时与卡片浑然一体；已登录仍是
+            // 头像加载中的浅灰底
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(CircleShape)
+                    .background(if (loggedIn) colors.quoteBackground else colors.surface),
+            ) {
+                if (loggedIn) {
+                    AsyncImage(
+                        model = profile?.avatarUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize().dimImageInDark(),
+                    )
+                }
             }
+            Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     if (loggedIn) profile?.name.orEmpty().ifBlank { "未知用户" } else "未登录",
@@ -225,12 +229,10 @@ private fun InfoCard(
 @Composable
 private fun CreditsCard(profile: UserProfile?) {
     val colors = LocalMtfColors.current
-    ProfileCard {
-        Row(Modifier.fillMaxWidth()) {
-            MetricColumn("积分", profile?.credits?.toString(), accentTextColor(), Modifier.weight(1f))
-            MetricColumn("金币", profile?.gold?.toString(), colors.gold, Modifier.weight(1f))
-            MetricColumn("在线", profile?.onlineTime, bodyTextColor(), Modifier.weight(1f))
-        }
+    Row(Modifier.fillMaxWidth()) {
+        MetricColumn("积分", profile?.credits?.toString(), accentTextColor(), Modifier.weight(1f))
+        MetricColumn("金币", profile?.gold?.toString(), colors.gold, Modifier.weight(1f))
+        MetricColumn("在线", profile?.onlineTime, bodyTextColor(), Modifier.weight(1f))
     }
 }
 
@@ -348,7 +350,6 @@ private fun MetricColumn(
         Text(
             value?.takeIf { it.isNotBlank() } ?: "—",
             style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
-            fontWeight = FontWeight.Bold,
             color = color,
         )
         Text(

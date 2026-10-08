@@ -37,10 +37,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -176,8 +174,6 @@ fun NoticeScreen(
 private fun NoticeRow(notice: Notice, onUserClick: (String) -> Unit, onClick: () -> Unit) {
     val colors = LocalMtfColors.current
     val clickable = notice.tid != null
-    // 正文最后一行的右缘（像素）：细线只画到这里，短行不拖到整宽
-    var textRight by remember(notice.id) { mutableStateOf(0f) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -226,7 +222,6 @@ private fun NoticeRow(notice: Notice, onUserClick: (String) -> Unit, onClick: ()
                     color = bodyTextColor(),
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
-                    onTextLayout = { textRight = it.getLineRight(it.lineCount - 1) },
                 )
                 // 回复内容摘要：与上方正文同一左边缘（即顶部用户名的左边缘），最多两行
                 val content = notice.content
@@ -249,11 +244,18 @@ private fun NoticeRow(notice: Notice, onUserClick: (String) -> Unit, onClick: ()
                     )
                 }
                 Spacer(Modifier.height(7.dp))
-                Canvas(Modifier.fillMaxWidth().height(0.5.dp)) {
+                // 右端距屏幕右侧 20dp：所在 Column 已有左右各 16dp 外边距，向右再收 4dp 即 20dp，
+                // 左端仍留在正文左边缘，故用定长分隔线而不去量正文最后一行
+                Canvas(
+                    Modifier
+                        .padding(end = 4.dp)
+                        .fillMaxWidth()
+                        .height(0.5.dp),
+                ) {
                     drawLine(
                         color = colors.divider,
                         start = Offset(0f, size.height / 2f),
-                        end = Offset(textRight, size.height / 2f),
+                        end = Offset(size.width, size.height / 2f),
                         strokeWidth = size.height,
                     )
                 }

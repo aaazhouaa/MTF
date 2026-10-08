@@ -285,6 +285,73 @@ class HtmlContentTest {
     }
 
     @Test
+    fun codeBlockBecomesCodeBlockWithOneLinePerLi() {
+        // 站点把 [code] 烘成 div.comiis_blockcode > ol > li，一个 li 一行，
+        // 不能退化成正文那种带 "1. " 前缀的编号列表
+        val html = "有人找我要，顺便冒个泡<br>" +
+            "<div class=\"comiis_blockcode comiis_bodybg b_ok f_b\"><div class=\"bg_f b_l\"><ol>" +
+            "<li>#2026_1008_1712<br>\n</li>" +
+            "<li>#com.catchingnow.icebox<br>\n</li>" +
+            "<li>&nbsp;&nbsp;.registers 1<br>\n</li>" +
+            "<li><br>\n</li>" +
+            "<li>.end method<br>\n</li>" +
+            "<li>```</li></ol></div></div><br>" +
+            "<a href=\"https://bbs.binmt.cc/forum.php?mod=attachment&aid=1\">原包</a>"
+        val blocks = parseContentBlocks(html)
+        val code = blocks.filterIsInstance<ContentBlock.CodeBlock>().single()
+        assertEquals(
+            listOf(
+                "#2026_1008_1712",
+                "#com.catchingnow.icebox",
+                "  .registers 1",
+                "",
+                ".end method",
+                "```",
+            ),
+            code.lines,
+        )
+        assertTrue("代码行不能被加上编号前缀: ${code.lines}", code.lines.none { it.startsWith("1. ") })
+    }
+
+    @Test
+    fun codeBlockKeepsLeadingIndentOfCode() {
+        // 行首的 &nbsp; 是代码缩进，归一成普通空格后必须留下，不能像正文行首空白被吃掉
+        val code = parseContentBlocks(
+            "<div class=\"comiis_blockcode\"><ol>" +
+                "<li>&nbsp;&nbsp;.registers 1</li>" +
+                "<li>.end method</li></ol></div>",
+        ).filterIsInstance<ContentBlock.CodeBlock>().single()
+        assertEquals("  .registers 1", code.lines[0])
+        assertTrue(code.lines.none { it.contains('\u00A0') })
+    }
+
+    @Test
+    fun codeBlockKeepsBlankLineSoLineNumberDoesNotSkip() {
+        // 空行也要占一个行号，渲染层按 lines.size 编号才不会跳号
+        val code = parseContentBlocks(
+            "<div class=\"comiis_blockcode\"><ol>" +
+                "<li>.registers 1</li>" +
+                "<li><br></li>" +
+                "<li>.end method</li></ol></div>",
+        ).filterIsInstance<ContentBlock.CodeBlock>().single()
+        assertEquals(listOf(".registers 1", "", ".end method"), code.lines)
+    }
+
+    @Test
+    fun textAroundCodeBlockStaysText() {
+        // 代码块前后的普通文字仍是正文块，且顺序不变
+        val html = "前面<br><div class=\"comiis_blockcode\"><ol><li>code</li></ol></div><br>后面"
+        val blocks = parseContentBlocks(html)
+        assertEquals(3, blocks.size)
+        assertTrue(blocks[0] is ContentBlock.Text)
+        assertEquals("前面", (blocks[0] as ContentBlock.Text).text)
+        assertTrue(blocks[1] is ContentBlock.CodeBlock)
+        assertEquals(listOf("code"), (blocks[1] as ContentBlock.CodeBlock).lines)
+        assertTrue(blocks[2] is ContentBlock.Text)
+        assertEquals("后面", (blocks[2] as ContentBlock.Text).text)
+    }
+
+    @Test
     fun inlineStylesProduceSpans() {
         val html = "<strong>粗</strong>平<em>斜</em><code>码</code>" +
             "<font color=\"#FF0000\">红</font><a href=\"https://bbs.binmt.cc/x\">链</a>"

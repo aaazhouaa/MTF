@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.LinkInteractionListener
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
@@ -63,6 +65,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -220,6 +223,7 @@ fun PostContent(
                     onPlay = onVideoClick?.let { click -> { click(block.url) } },
                 )
                 is ContentBlock.Table -> PostTable(block, bodyStyle)
+                is ContentBlock.CodeBlock -> PostCodeBlock(block, bodyStyle)
             }
         }
     }
@@ -365,6 +369,68 @@ private fun PostTable(table: ContentBlock.Table, bodyStyle: TextStyle) {
                 if (rowIndex < table.rows.lastIndex) {
                     HorizontalDivider(color = colors.divider, thickness = dividerThickness)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 代码块：圆角浅灰底 + 左侧一条彩色竖线 + 行号前缀，等宽字体、长行自动换行。
+ *
+ * 行号与代码必须同处一段：拆成两个 Text 时代码折行会让行号列与代码行错位，
+ * 故每行一个 Text、行号作前缀，续行用 TextIndent 缩进行号列宽度与代码左缘对齐。
+ */
+@Composable
+private fun PostCodeBlock(block: ContentBlock.CodeBlock, bodyStyle: TextStyle) {
+    val colors = LocalMtfColors.current
+    val codeStyle = bodyStyle.copy(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 12.sp,
+        lineHeight = 18.sp,
+    )
+    val numberStyle = codeStyle.copy(fontSize = 11.sp)
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    // 行号列宽度按最宽行号测量：折行后的续行缩进到它，代码左缘才与首行对齐
+    val indent = remember(block.lines.size, numberStyle) {
+        with(density) {
+            (measurer.measure(
+                AnnotatedString("%02d ".format(block.lines.size)),
+                numberStyle,
+            ).size.width.toDp() + 8.dp).toSp()
+        }
+    }
+    val wrappedStyle = remember(codeStyle, indent) {
+        codeStyle.merge(
+            ParagraphStyle(textIndent = TextIndent(firstLine = 0.sp, restLine = indent)),
+        )
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(colors.quoteBackground)
+            .height(IntrinsicSize.Min),
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .background(accentTextColor()),
+        )
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            block.lines.forEachIndexed { index, line ->
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(SpanStyle(color = colors.textHint)) {
+                            append("%02d ".format(index + 1))
+                        }
+                        append(line)
+                    },
+                    style = wrappedStyle,
+                    color = bodyTextColor(),
+                )
             }
         }
     }

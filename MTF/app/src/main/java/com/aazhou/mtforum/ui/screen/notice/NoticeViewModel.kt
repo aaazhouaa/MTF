@@ -13,6 +13,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.util.Calendar
+
+/** 只保留最新 10 条：页面按可见范围逐条拉楼层摘要，条数越少请求越少。 */
+private const val NOTICE_LIMIT = 10
 
 class NoticeViewModel(
     private val repository: ForumRepository,
@@ -87,11 +91,14 @@ class NoticeViewModel(
             }
             return
         }
+        // 四类提醒合并的结果不按时间排序，取最新几条上屏；未读基线仍用全量 id，
+        // 否则没上屏的那部分下次轮询会被当成新消息、红点反复亮
+        val latest = page.notices.sortedByDescending { noticeRecency(it) }.take(NOTICE_LIMIT)
         _state.value = when {
             page.loggedOut -> UiState.Error("请先登录后查看消息提醒")
             // 空列表不落盘：解析失配返回空时不能把上一份好数据覆盖掉
             page.notices.isEmpty() -> UiState.Success(emptyList())
-            else -> UiState.Success(page.notices)
+            else -> UiState.Success(latest)
         }
         val loaded = (_state.value as? UiState.Success)?.data.orEmpty()
         // 新列表没有摘要：先把本次会话已知的摘要并回去，再连缓存一起存——
@@ -99,7 +106,7 @@ class NoticeViewModel(
         republishWithContents()
         saveToCache((_state.value as? UiState.Success)?.data ?: loaded)
         // 打开/刷新消息页就算看过：以这一批提醒为已读基线
-        onRead(loaded.map { it.id })
+        onRead(page.notices.map { it.id })
         // 首屏几条的摘要立刻问：不依赖列表布局回调，进页面就能看见
         ensureContents(loaded.take(eagerContentCount))
     }
@@ -158,3 +165,76 @@ class NoticeViewModel(
 private data class CachedNotices(
     val notices: List<Notice> = emptyList(),
 )
+
+/** 站点提醒页实际出现的时间文本：相对时间、相对日词加钟点、绝对日期、当年月日。 */
+private val NOTICE_RELATIVE_TIME = Regex("""(\d+)\s*(秒|分钟|小时|天)前""")
+private val NOTICE_DAY_WORD_TIME = Regex("""(今天|昨天|前天)(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?""")
+private val NOTICE_ABSOLUTE_TIME = Regex("""(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?""")
+private val NOTICE_MONTH_DAY_TIME = Regex("""(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?""")
+
+/**
+ * 提醒的时间文本 -> 可比较的时间戳，用于按新到旧排序。
+ *
+ * 解析不出时返回 [Long.MIN_VALUE] 排到最后；[sortedByDescending] 是稳定排序，
+ * 同戳条目保持站点原序。
+ */
+private fun noticeRecency(notice: Notice): Long {
+    val raw = notice.timeText?.replace('\u00A0', ' ')?.trim().orEmpty()
+    if (raw.isEmpty()) return Long.MIN_VALUE
+    NOTICE_RELATIVE_TIME.find(raw)?.let { match ->
+        val amount = match.groupValues[1].toLongOrNull() ?: return@let
+        val unit = when (match.groupValues[2]) {
+            "秒" -> 1_000L
+            "分钟" -> 60_000L
+            "小时" -> 3_600_000L
+            else -> 86_400_000L
+        }
+        return System.currentTimeMillis() - amount * unit
+    }
+    val today = Calendar.getInstance()
+    NOTICE_DAY_WORD_TIME.find(raw)?.let { match ->
+        val calendar = today.clone() as Calendar
+        when (match.groupValues[1]) {
+            "昨天" -> calendar.add(Calendar.DAY_OF_YEAR, -1)
+            "前天" -> calendar.add(Calendar.DAY_OF_YEAR, -2)
+        }
+        return calendar.atTimeOfDay(match.groupValues[2], match.groupValues[3], match.groupValues[4])
+            .timeInMillis
+    }
+    NOTICE_ABSOLUTE_TIME.find(raw)?.let { match ->
+        val calendar = Calendar.getInstance().apply {
+            clear()
+            set(Calendar.YEAR, match.groupValues[1].toIntOrNull() ?: return@let)
+            set(Calendar.MONTH, (match.groupValues[2].toIntOrNull() ?: return@let) - 1)
+            set(Calendar.DAY_OF_MONTH, match.groupValues[3].toIntOrNull() ?: return@let)
+        }
+        return calendar.atTimeOfDay(
+            match.groupValues[4],
+            match.groupValues[5],
+            match.groupValues.getOrElse(6) { "" },
+        ).timeInMillis
+    }
+    NOTICE_MONTH_DAY_TIME.find(raw)?.let { match ->
+        // 站点只写月日：年份按当年算
+        val calendar = Calendar.getInstance().apply {
+            clear()
+            set(Calendar.MONTH, (match.groupValues[1].toIntOrNull() ?: return@let) - 1)
+            set(Calendar.DAY_OF_MONTH, match.groupValues[2].toIntOrNull() ?: return@let)
+        }
+        return calendar.atTimeOfDay(
+            match.groupValues[3],
+            match.groupValues[4],
+            match.groupValues.getOrElse(5) { "" },
+        ).timeInMillis
+    }
+    return Long.MIN_VALUE
+}
+
+/** 把时、分、秒写进日历，缺项与解析不出的一律按 0 计。 */
+private fun Calendar.atTimeOfDay(hour: String, minute: String, second: String): Calendar {
+    set(Calendar.HOUR_OF_DAY, hour.toIntOrNull() ?: 0)
+    set(Calendar.MINUTE, minute.toIntOrNull() ?: 0)
+    set(Calendar.SECOND, second.toIntOrNull() ?: 0)
+    set(Calendar.MILLISECOND, 0)
+    return this
+}

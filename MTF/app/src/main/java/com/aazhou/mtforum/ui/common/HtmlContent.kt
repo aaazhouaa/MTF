@@ -41,6 +41,14 @@ sealed interface ContentBlock {
         val header: List<String>?,
         val rows: List<List<String>>,
     ) : ContentBlock
+
+    /**
+     * 站点 `[code]` 块的代码内容：逐行保留原始缩进与空行。
+     *
+     * 行首空白是代码缩进的一部分，故不经正文那套「吃掉换行后行首空白」的处理，
+     * 渲染时另起等宽字体卡片，不当成带序号的普通列表。
+     */
+    data class CodeBlock(val lines: List<String>) : ContentBlock
 }
 
 /**
@@ -62,6 +70,7 @@ fun plainTextOf(html: String): String =
             when (block) {
                 is ContentBlock.Text -> block.text.takeIf { it.isNotBlank() }
                 is ContentBlock.Quote -> block.text.takeIf { it.isNotBlank() }
+                is ContentBlock.CodeBlock -> block.lines.joinToString("\n").takeIf { it.isNotBlank() }
                 else -> null
             }
         }
@@ -380,6 +389,11 @@ private class BlocksBuilder {
             if (quote.isNotEmpty()) blocks.add(ContentBlock.Quote(quote))
             return
         }
+        if (element.hasClass("comiis_blockcode") || element.tagName() == "pre") {
+            flushText()
+            codeLinesOf(element)?.let { blocks.add(ContentBlock.CodeBlock(it)) }
+            return
+        }
         when (element.tagName()) {
             "script", "style" -> Unit
             "video", "embed", "object" -> appendVideoElement(element, style)
@@ -406,6 +420,37 @@ private class BlocksBuilder {
             }
             else -> appendContainer(element, style)
         }
+    }
+
+    /**
+     * 代码块取行：站点把 `[code]` 烘成 div.comiis_blockcode 里的 ol > li，一个 li 一行；
+     * 没有 li（如 <pre>）时按元素整体文本拆行。行首的 &nbsp; 归一成普通空格，缩进是有效内容。
+     *
+     * 不走 [Element.text]：它会把连续空白折叠成一个空格并 trim 掉首尾，代码缩进会整个消失。
+     */
+    private fun codeLinesOf(element: Element): List<String>? {
+        val items = element.select("li")
+        val raw = if (items.isNotEmpty()) {
+            items.map { li -> decodedTextOf(li) }
+        } else {
+            decodedTextOf(element).split('\n')
+        }
+        val lines = raw.map { it.replace('\u00A0', ' ').trimEnd() }
+        return lines.takeIf { candidates -> candidates.any { it.isNotBlank() } }
+    }
+
+    /** 按源码取元素文本：<br> 记为一个换行，其余标签只递归取其文本，行首空白原样留下。 */
+    private fun decodedTextOf(element: Element): String {
+        val out = StringBuilder()
+        for (node in element.childNodes()) {
+            when (node) {
+                is TextNode -> out.append(node.wholeText)
+                is Element ->
+                    if (node.tagName() == "br") out.append('\n') else out.append(decodedTextOf(node))
+                else -> Unit
+            }
+        }
+        return out.toString()
     }
 
     /** 按标签自身的样式语义扩展内联样式后递归；无样式语义的容器原样展开。 */
@@ -549,7 +594,6 @@ private const val URL_TAIL_CHARS = ".,;:!?，。；、！？…～~）)】]〉�
 
 /**
  * 把 [raw] 里 [start, end) 区间中的裸地址补成链接 span（下标与 [raw] 对齐）。
- *
  * 站点用户贴图床直链时常常不加链接标签，网页上浏览器会自动识别，客户端不补就点不开。
  * 已被 <a> 覆盖的区间跳过，避免同一段文字叠两个链接注解。
  */
@@ -566,7 +610,7 @@ private fun detectBareLinks(raw: String, start: Int, end: Int, spans: MutableLis
 }
 
 private val HEX_COLOR = Regex("#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})")
-private val RGB_COLOR = Regex("rgb\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)")
+private val RGB_COLOR = Regex("rgb\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\)")
 
 private fun parseColor(value: String): Long? {
     val raw = value.trim()
@@ -580,7 +624,7 @@ private fun parseColor(value: String): Long? {
         val r = match.groupValues[1].toIntOrNull() ?: return null
         val g = match.groupValues[2].toIntOrNull() ?: return null
         val b = match.groupValues[3].toIntOrNull() ?: return null
-        return ((r.coerceIn(0, 255).toLong() shl 16) or (g.coerceIn(0, 255).toLong() shl 8) or b.coerceIn(0, 255).toLong())
+        return ((r.coerceIn(0, 255).toLong() shl 16) or (g.coerceIn(0, 255).toLong() shl 8) or b.toLong())
     }
     return when (raw.lowercase()) {
         "black" -> 0xFF000000L

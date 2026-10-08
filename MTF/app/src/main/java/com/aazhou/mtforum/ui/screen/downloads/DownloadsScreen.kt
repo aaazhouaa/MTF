@@ -219,7 +219,7 @@ private fun DownloadedRow(
             }
             IconButton(onClick = onDelete) {
                 Icon(
-                    painterResource(R.drawable.ic_forbid),
+                    painterResource(R.drawable.ic_delete),
                     contentDescription = "删除",
                     tint = colors.iconSecondary,
                     modifier = Modifier.size(18.dp),
