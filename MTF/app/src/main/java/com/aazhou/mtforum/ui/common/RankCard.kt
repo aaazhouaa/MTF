@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aazhou.mtforum.data.model.Thread
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 
@@ -69,7 +70,7 @@ fun RankCard(
                     modifier = Modifier
                         .size(20.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(rankColor(rank)),
+                        .background(rankBadgeColor(rank)),
                 ) {
                     Text(
                         rank.toString(),
@@ -90,10 +91,24 @@ fun RankCard(
     }
 }
 
-/** 序号底色：1 红 / 2 黄 / 3 绿 / 其余灰。 */
-private fun rankColor(rank: Int): Color = when (rank) {
-    1 -> Color(0xFFFF705E)
-    2 -> Color(0xFFFFB900)
-    3 -> Color(0xFFA8C500)
-    else -> Color(0xFFCCCCCC)
+/**
+ * 序号底色：1 红 / 2 黄 / 3 绿 / 其余灰。
+ *
+ * 深色主题换用压暗的同色相实底：浅色那套是全饱和度亮色，直接铺在深色卡片上会发刺，
+ * 且序号 4+ 的浅灰底配白字在深色底下几乎读不出来。压暗后白字对比度也一并解决。
+ */
+@Composable
+private fun rankBadgeColor(rank: Int): Color {
+    if (!LocalIsDarkTheme.current) return when (rank) {
+        1 -> Color(0xFFFF705E)
+        2 -> Color(0xFFFFB900)
+        3 -> Color(0xFFA8C500)
+        else -> Color(0xFFCCCCCC)
+    }
+    return when (rank) {
+        1 -> Color(0xFFC2453A)
+        2 -> Color(0xFFB07D0A)
+        3 -> Color(0xFF6E8C0F)
+        else -> Color(0xFF5A6472)
+    }
 }

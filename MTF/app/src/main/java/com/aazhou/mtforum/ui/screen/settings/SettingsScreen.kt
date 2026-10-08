@@ -166,7 +166,6 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
                 color = colors.textSecondary,
             )
 
-            Text("日志", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             SettingsRow(
                 title = "日志",
                 subtitle = "当前等级 ${logLevel.label} · ${formatLogCount(logCount)}",
