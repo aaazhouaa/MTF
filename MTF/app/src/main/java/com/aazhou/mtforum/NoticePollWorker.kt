@@ -28,6 +28,7 @@ class NoticePollWorker(context: Context, params: WorkerParameters) :
             container.noticeChecker.check()
         } catch (e: Exception) {
             // 网络/风控失败交给系统退避重试，不丢这一轮的检测
+            container.logger.warn("Notice", "后台消息轮询失败，交给系统退避重试", e)
             return Result.retry()
         }
         if (fresh.isNotEmpty()) NoticeNotifier.show(applicationContext, fresh)

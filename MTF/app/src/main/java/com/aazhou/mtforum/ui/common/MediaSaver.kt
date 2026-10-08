@@ -58,6 +58,15 @@ internal fun saveToGallery(context: Context, url: String, bytes: ByteArray): Uri
 internal fun saveDocument(context: Context, fileName: String, bytes: ByteArray): Uri? =
     saveBytes(context, fileName, bytes, "${Environment.DIRECTORY_DOWNLOADS}/MTF", "text/html")
 
+/**
+ * 保存导出的文本（日志等）到「下载/MTF」目录（API 29+ 无需存储权限）；失败返回 null。
+ *
+ * 与 [saveDocument] 同一套写入路径，只是 mime 换成 text/plain：日志文件要能被
+ * 文本编辑器直接打开，而不是被当成网页。
+ */
+internal fun saveTextDocument(context: Context, fileName: String, text: String): Uri? =
+    saveBytes(context, fileName, text.toByteArray(), "${Environment.DIRECTORY_DOWNLOADS}/MTF", "text/plain")
+
 /** 删除一个已写入的媒体库文件（用户手动删除已下载帖子时调用）。 */
 internal fun deleteDocument(context: Context, uri: Uri?) {
     if (uri == null) return

@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="shared_images" path="shared_images/" />
     <cache-path name="shared_videos" path="shared_videos/" />
+    <cache-path name="shared_logs" path="logs/" />
 </paths>

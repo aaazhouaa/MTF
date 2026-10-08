@@ -31,6 +31,8 @@ import com.aazhou.mtforum.ui.screen.forumlist.ForumListScreen
 import com.aazhou.mtforum.ui.screen.downloads.DownloadsScreen
 import com.aazhou.mtforum.ui.screen.guide.GuideScreen
 import com.aazhou.mtforum.ui.screen.home.HomeScreen
+import com.aazhou.mtforum.ui.screen.logs.LogDetailScreen
+import com.aazhou.mtforum.ui.screen.logs.LogsScreen
 import com.aazhou.mtforum.ui.screen.login.LoginScreen
 import com.aazhou.mtforum.ui.screen.notice.NoticeScreen
 import com.aazhou.mtforum.ui.screen.postedit.PostEditScreen
@@ -61,6 +63,8 @@ object Routes {
     const val NOTICE = "notice"
     const val DOWNLOADS = "downloads"
     const val DOWNLOADED_THREAD = "downloaded/{tid}"
+    const val LOGS = "logs"
+    const val LOG_DETAIL = "log/{id}"
 
     fun forum(fid: String, name: String) = "forum/$fid/${Uri.encode(name)}"
     fun thread(tid: String) = "thread/$tid"
@@ -71,6 +75,7 @@ object Routes {
     fun user(uid: String) = "user/$uid"
     fun post(fid: String, name: String) = "post/$fid/${Uri.encode(name)}"
     fun downloadedThread(tid: String) = "downloaded/$tid"
+    fun logDetail(id: Long) = "log/$id"
 }
 
 @Composable
@@ -184,7 +189,24 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     },
                 )
             }
-            composable(Routes.SETTINGS) { SettingsScreen() }
+            composable(Routes.SETTINGS) {
+                SettingsScreen(onOpenLogs = { navController.navigate(Routes.LOGS) })
+            }
+            composable(Routes.LOGS) {
+                LogsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenLog = { id -> navController.navigate(Routes.logDetail(id)) },
+                )
+            }
+            composable(
+                Routes.LOG_DETAIL,
+                arguments = listOf(navArgument("id") { type = NavType.LongType }),
+            ) { entry ->
+                LogDetailScreen(
+                    id = entry.arguments?.getLong("id") ?: 0L,
+                    onBack = { navController.popBackStack() },
+                )
+            }
             composable(Routes.NOTICE) {
                 NoticeScreen(
                     onBack = { navController.popBackStack() },

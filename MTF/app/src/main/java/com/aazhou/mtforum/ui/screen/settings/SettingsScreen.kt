@@ -38,8 +38,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.imageLoader
+import com.aazhou.mtforum.data.log.LogLevel
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.container
@@ -56,7 +59,7 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onOpenLogs: () -> Unit) {
     val context = LocalContext.current
     val container = context.container()
     val themeStore = container.themeStore
@@ -79,6 +82,14 @@ fun SettingsScreen() {
             val images = context.imageLoader.diskCache?.size ?: 0L
             json + images
         }
+    }
+    // 日志等级与条数：等级改完立刻反映在副标题上，条数每次回到本页重新算
+    val logLevel by container.logSettings.level
+        .collectAsStateWithLifecycle(initialValue = LogLevel.INFO)
+    var logTick by remember { mutableStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { logTick++ }
+    val logCount by produceState(initialValue = 0, logTick) {
+        value = withContext(Dispatchers.IO) { container.logStore.entries().size }
     }
 
     Scaffold(
@@ -165,24 +176,19 @@ fun SettingsScreen() {
                 color = colors.textSecondary,
             )
 
+            Text("日志", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            SettingsRow(
+                title = "日志",
+                subtitle = "当前等级 ${logLevel.label} · ${formatLogCount(logCount)}",
+                onClick = onOpenLogs,
+            )
+
             // 清理缓存：JSON 内容缓存与 Coil 图片磁盘缓存一起清，清完图片需重新下载
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(MaterialTheme.shapes.small)
-                    .clickable { clearCacheOpen = true }
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("清理缓存", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "已占用 ${formatCacheSize(cacheBytes)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary,
-                    )
-                }
-            }
+            SettingsRow(
+                title = "清理缓存",
+                subtitle = "已占用 ${formatCacheSize(cacheBytes)}",
+                onClick = { clearCacheOpen = true },
+            )
         }
     }
 
@@ -204,6 +210,7 @@ fun SettingsScreen() {
                         }
                         loader.memoryCache?.clear()
                         cacheTick++
+                        container.logger.info("Settings", "已清理缓存，清理前占用 ${formatCacheSize(cacheBytes)}")
                         hint = "缓存已清理"
                     }
                 }) { Text("清理") }
@@ -221,6 +228,32 @@ private fun formatCacheSize(bytes: Long): String = when {
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
     bytes < 1024L * 1024 * 1024 -> "${bytes / (1024 * 1024)} MB"
     else -> String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024))
+}
+
+/** 日志条数的展示：没有日志时说明原因，避免副标题出现「0 条」这种无信息量文案。 */
+private fun formatLogCount(count: Int): String = if (count <= 0) "暂无日志" else "$count 条"
+
+/** 设置页的统一条目行：主标题 + 副标题（当前值或说明），整行可点。 */
+@Composable
+private fun SettingsRow(title: String, subtitle: String, onClick: () -> Unit) {
+    val colors = LocalMtfColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.textSecondary,
+            )
+        }
+    }
 }
 
 @Composable

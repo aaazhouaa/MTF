@@ -260,7 +260,7 @@ private fun CreditsCard(profile: UserProfile?) {
     }
 }
 
-/** 卡片 3：「功能」标题 + 菜单项。本地暂无对应页面，点击给出提示。 */
+/** 卡片 3：「功能」标题 + 菜单项。「设置」进设置页，其余本地暂无对应页面，点击给出提示。 */
 @Composable
 private fun MenuCard(onSettings: () -> Unit) {
     val colors = LocalMtfColors.current
@@ -278,21 +278,53 @@ private fun MenuCard(onSettings: () -> Unit) {
         )
         HorizontalDivider(color = colors.divider)
         val entries = listOf(
-            "我的帖子" to painterResource(com.aazhou.mtforum.R.drawable.ic_posts),
-            "我的收藏" to painterResource(com.aazhou.mtforum.R.drawable.ic_favorite_outline),
-            "我的好友" to painterResource(com.aazhou.mtforum.R.drawable.ic_friends),
-            "积分详情" to painterResource(com.aazhou.mtforum.R.drawable.ic_points),
-            "个人资料" to painterResource(com.aazhou.mtforum.R.drawable.ic_people),
-            "个人小黑屋" to painterResource(com.aazhou.mtforum.R.drawable.ic_forbid),
+            MenuEntry(
+                label = "设置",
+                icon = painterResource(com.aazhou.mtforum.R.drawable.ic_settings),
+                onClick = onSettings,
+            ),
+            MenuEntry(
+                label = "我的帖子",
+                icon = painterResource(com.aazhou.mtforum.R.drawable.ic_posts),
+                onClick = { todo("我的帖子") },
+            ),
+            MenuEntry(
+                label = "我的收藏",
+                icon = painterResource(com.aazhou.mtforum.R.drawable.ic_favorite_outline),
+                onClick = { todo("我的收藏") },
+            ),
+            MenuEntry(
+                label = "我的好友",
+                icon = painterResource(com.aazhou.mtforum.R.drawable.ic_friends),
+                onClick = { todo("我的好友") },
+            ),
+            MenuEntry(
+                label = "积分详情",
+                icon = painterResource(com.aazhou.mtforum.R.drawable.ic_points),
+                onClick = { todo("积分详情") },
+            ),
+            MenuEntry(
+                label = "个人资料",
+                icon = painterResource(com.aazhou.mtforum.R.drawable.ic_people),
+                onClick = { todo("个人资料") },
+            ),
+            MenuEntry(
+                label = "个人小黑屋",
+                icon = painterResource(com.aazhou.mtforum.R.drawable.ic_forbid),
+                onClick = { todo("个人小黑屋") },
+            ),
         )
-        entries.forEachIndexed { index, (label, icon) ->
-            MenuRow(label, icon, onClick = { todo(label) })
+        entries.forEachIndexed { index, entry ->
+            MenuRow(entry.label, entry.icon, onClick = entry.onClick)
             if (index != entries.lastIndex) {
                 HorizontalDivider(color = colors.divider, modifier = Modifier.padding(start = 66.dp))
             }
         }
     }
 }
+
+/** 「功能」卡片里的一行菜单项。 */
+private data class MenuEntry(val label: String, val icon: Painter, val onClick: () -> Unit)
 
 /** 统一的白色卡片外观：左右 6dp、间距 6dp、12dp 圆角。 */
 @Composable

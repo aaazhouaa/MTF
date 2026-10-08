@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.Thread
+import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.MtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -284,12 +286,17 @@ private fun RowScope.cardCellModifier(
 /** 单格配图：网格与角标格共用，圆角/底色/描边由传入的 modifier 负责。 */
 @Composable
 private fun CardImage(url: String, modifier: Modifier) {
+    val context = LocalContext.current
     AsyncImage(
         model = url,
         contentDescription = null,
         contentScale = ContentScale.Crop,
         onError = { state ->
-            android.util.Log.e("MTF-IMG", "card fail url=$url", state.result.throwable)
+            context.container().logger.error(
+                "Image",
+                "帖子卡片配图加载失败 url=$url",
+                state.result.throwable,
+            )
         },
         modifier = modifier.dimImageInDark(),
     )

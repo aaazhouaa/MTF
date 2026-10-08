@@ -14,6 +14,26 @@ class MtfApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        installCrashHandler()
+    }
+
+    /**
+     * 未捕获异常统一先写进本地日志，再交回系统默认处理（崩溃弹窗 + 进程回收）。
+     *
+     * 进程马上要被杀掉，写盘必须同步，故走 [AppLogger.logCrash]；容器构造期间
+     * （本方法执行前）抛出的异常进不了日志，属已知边界。
+     */
+    private fun installCrashHandler() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            container.logger.logCrash(thread, throwable)
+            if (previous != null) {
+                previous.uncaughtException(thread, throwable)
+            } else {
+                android.os.Process.killProcess(android.os.Process.myPid())
+                kotlin.system.exitProcess(10)
+            }
+        }
     }
 
     /**

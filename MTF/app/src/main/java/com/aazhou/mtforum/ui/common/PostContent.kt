@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import com.aazhou.mtforum.ui.common.container
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -430,6 +432,7 @@ private fun PostTableRow(
 @Composable
 private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modifier = Modifier) {
     val colors = LocalMtfColors.current
+    val context = LocalContext.current
     // 宽高比预取命中时首次测量即终态：滚动途中图片加载完成不会再撑高所在 item，
     // LazyColumn 的滚动锚点失配导致的跳屏随之消失；未命中仍回落 4:3 占位
     val cachedAspect = ImageAspectCache.aspectOf(url)
@@ -451,7 +454,11 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
                 }
             },
             onError = { state ->
-                android.util.Log.e("MTF-IMG", "single fail url=$url", state.result.throwable)
+                context.container().logger.error(
+                    "Image",
+                    "正文单图加载失败 url=$url",
+                    state.result.throwable,
+                )
             },
             modifier = Modifier
                 .align(Alignment.Center)
@@ -471,6 +478,7 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
 @Composable
 private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
     val colors = LocalMtfColors.current
+    val context = LocalContext.current
     val columns = if (urls.size == 2 || urls.size == 4) 2 else 3
     val cells = if (urls.size > 9) urls.take(9) else urls
     val overflow = urls.size - 9
@@ -500,7 +508,11 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             onError = { state ->
-                                android.util.Log.e("MTF-IMG", "grid fail url=$url", state.result.throwable)
+                                context.container().logger.error(
+                                    "Image",
+                                    "正文图组加载失败 url=$url",
+                                    state.result.throwable,
+                                )
                             },
                             modifier = Modifier.fillMaxSize().dimImageInDark(),
                         )
@@ -534,6 +546,7 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
 @Composable
 private fun InlineVideo(url: String, poster: String?, onPlay: (() -> Unit)?) {
     val colors = LocalMtfColors.current
+    val context = LocalContext.current
     BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         val maxVideoWidth = maxWidth * 0.92f
         Box(
@@ -552,7 +565,11 @@ private fun InlineVideo(url: String, poster: String?, onPlay: (() -> Unit)?) {
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     onError = { state ->
-                        android.util.Log.e("MTF-IMG", "video poster fail url=$poster", state.result.throwable)
+                        context.container().logger.error(
+                            "Image",
+                            "视频封面加载失败 url=$poster",
+                            state.result.throwable,
+                        )
                     },
                     modifier = Modifier.fillMaxSize().dimImageInDark(),
                 )

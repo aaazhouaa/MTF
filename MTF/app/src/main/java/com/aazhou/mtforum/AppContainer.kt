@@ -4,11 +4,14 @@ import android.app.Application
 import android.content.Context
 import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.download.ThreadArchiveStore
+import com.aazhou.mtforum.data.log.AppLogger
+import com.aazhou.mtforum.data.log.LogStore
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.DownloadStore
 import com.aazhou.mtforum.data.repo.ForumRepository
+import com.aazhou.mtforum.data.repo.LogSettingsStore
 import com.aazhou.mtforum.data.repo.NoticeChecker
 import com.aazhou.mtforum.data.repo.NoticeUnreadStore
 import com.aazhou.mtforum.data.repo.SessionStore
@@ -60,11 +63,30 @@ class AppContainer(application: Application) {
     /** 本地内容缓存：一个 key 一个 JSON 文件，置于 cacheDir（临时性质，系统空间紧张可回收）。 */
     val contentCache = ContentCache(java.io.File(application.cacheDir, "mtf_content"))
 
+    /** 本地日志库（filesDir/logs，内部存储，不占缓存）与记录等级的持久化。 */
+    val logStore = LogStore(java.io.File(application.filesDir, "logs/mtf_log.jsonl"))
+    val logSettings = LogSettingsStore(application)
+
+    /** 应用日志门面：logcat 镜像 + 按等级入库；崩溃路径同步写盘。 */
+    val logger = AppLogger(logStore, appScope)
+
     init {
         httpClient.onSessionChanged = { refreshCurrentUserAsync() }
+        httpClient.onLog = { level, tag, message, throwable ->
+            logger.log(level, tag, message, throwable)
+        }
+        // 等级一改立即生效；设置页改完后新日志就按新等级入库
+        appScope.launch { logSettings.level.collect { logger.setLevel(it) } }
         appScope.launch {
+            // 上一次是崩溃退出的：先把指认放在本次运行日志的最前面，再看下面的崩溃条目
+            if (logStore.consumeCrashMarker()) {
+                logger.info(AppLogger.TAG_CRASH, "检测到上次运行异常退出，上一条 ERROR 即当时的崩溃日志")
+            }
             val saved = sessionStore.cookieHeader.first()
-            if (saved.isNotEmpty()) restoreCookies(saved)
+            if (saved.isNotEmpty()) {
+                restoreCookies(saved)
+                logger.info("Session", "已从磁盘恢复登录会话")
+            }
             // 先用上次登录保存的资料上屏（免一次请求的白屏），网络回来再覆盖
             val savedUid = sessionStore.uid.first()
             if (savedUid.isNotEmpty()) {
@@ -78,7 +100,11 @@ class AppContainer(application: Application) {
                 refreshCurrentUser()
                 // 进应用先查一次消息：红点要反映真实未读，不能只等 15 分钟的后台轮询。
                 // 失败无所谓，下一轮轮询还会再查；不发通知（用户已经在应用里）。
-                appScope.launch { runCatching { noticeChecker.check() } }
+                appScope.launch {
+                    runCatching { noticeChecker.check() }.onFailure { e ->
+                        logger.warn("Notice", "进应用时查询消息失败", e)
+                    }
+                }
             }
             NoticePollWorker.enqueue(appContext)
         }
@@ -95,7 +121,10 @@ class AppContainer(application: Application) {
             _currentUser.value = null
             return
         }
-        val profile = runCatching { repository.me() }.getOrNull() ?: return
+        val profile = runCatching { repository.me() }.getOrElse { e ->
+            logger.warn("Session", "拉取当前用户资料失败", e)
+            return
+        }
         if (!profile.isLoggedIn) {
             _currentUser.value = null
             return
@@ -132,6 +161,7 @@ class AppContainer(application: Application) {
     fun logout() {
         httpClient.cookieStore.clear()
         _currentUser.value = null
+        logger.info("Session", "已退出登录")
         NoticePollWorker.cancel(appContext)
         appScope.launch { sessionStore.clearSession() }
     }

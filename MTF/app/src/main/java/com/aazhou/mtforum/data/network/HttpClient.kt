@@ -1,5 +1,6 @@
 package com.aazhou.mtforum.data.network
 
+import com.aazhou.mtforum.data.log.LogLevel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,6 +59,12 @@ class HttpClient(
      */
     var onSessionChanged: (() -> Unit)? = null
 
+    /**
+     * 日志回调（WAF 挑战、真人验证流程、请求失败），由应用容器接到日志门面。
+     * 缺省不接：客户端本身不依赖日志，单测里也不必接。
+     */
+    var onLog: ((LogLevel, String, String, Throwable?) -> Unit)? = null
+
     /** 需要真人验证时打开的地址。 */
     val verificationUrl: String get() = baseUrl
 
@@ -81,23 +88,35 @@ class HttpClient(
      */
     @Throws(IOException::class)
     suspend fun getWithFinalUrl(url: String, userAgent: String = MOBILE_UA): Pair<String, String> {
-        var (finalUrl, body) = executeGet(url, userAgent)
+        var (finalUrl, body) = try {
+            executeGet(url, userAgent)
+        } catch (e: IOException) {
+            onLog?.invoke(LogLevel.ERROR, TAG, "GET 失败：$url", e)
+            throw e
+        }
         if (!WafSolver.looksLikeChallenge(body)) return finalUrl to body
 
+        onLog?.invoke(LogLevel.WARN, TAG, "命中 WAF 挑战，尝试本地求解：$url", null)
         WafSolver.solve(body)?.let { value ->
             cookieStore.setCookie(host, WafSolver.COOKIE_NAME, value)
             val retried = executeGet(url, userAgent)
-            if (!WafSolver.looksLikeChallenge(retried.second)) return retried
+            if (!WafSolver.looksLikeChallenge(retried.second)) {
+                onLog?.invoke(LogLevel.INFO, TAG, "WAF 本地求解通过：$url", null)
+                return retried
+            }
             finalUrl = retried.first
             body = retried.second
         }
 
         // 本地求解无法通过：交给真人验证，验证完成后用新 cookie 重试
+        onLog?.invoke(LogLevel.WARN, TAG, "WAF 本地求解失配，需要真人验证：$url", null)
         val verifiedCookie = awaitVerification()
         if (verifiedCookie != null) {
             applyCookieHeader(verifiedCookie)
+            onLog?.invoke(LogLevel.INFO, TAG, "真人验证 cookie 已回灌：$url", null)
             return executeGet(url, userAgent)
         }
+        onLog?.invoke(LogLevel.WARN, TAG, "真人验证未完成（超时或取消），按挑战页返回：$url", null)
         return finalUrl to body
     }
 
@@ -116,6 +135,7 @@ class HttpClient(
         val body = client.newCall(request).execute().use { it.body?.string() ?: "" }
         // 写操作不自动重放（避免重复提交），仅求解并留存 Cookie
         if (WafSolver.looksLikeChallenge(body)) {
+            onLog?.invoke(LogLevel.WARN, TAG, "写操作命中 WAF 挑战，仅留存 Cookie 不重放：$url", null)
             WafSolver.solve(body)?.let { cookieStore.setCookie(host, WafSolver.COOKIE_NAME, it) }
         }
         return body
@@ -185,7 +205,10 @@ class HttpClient(
         if (cookie.isNotEmpty()) requestBuilder.header("Cookie", cookie)
         return client.newCall(requestBuilder.build()).execute().use {
             val body = it.body?.string() ?: ""
-            if (!it.isSuccessful) throw IOException("上传失败（HTTP ${it.code}）")
+            if (!it.isSuccessful) {
+                onLog?.invoke(LogLevel.ERROR, TAG, "上传失败（HTTP ${it.code}）：$url", null)
+                throw IOException("上传失败（HTTP ${it.code}）")
+            }
             body
         }
     }
@@ -196,9 +219,11 @@ class HttpClient(
         if (cookieHeader.isNullOrBlank()) {
             _pendingVerification.value = false
             deferred?.complete(null)
+            onLog?.invoke(LogLevel.WARN, TAG, "用户取消了真人验证", null)
         } else {
             deferred?.complete(cookieHeader)
             // cookie 已变（可能刚在 WebView 里登录）：通知上层刷新会话态
+            onLog?.invoke(LogLevel.INFO, TAG, "真人验证完成，cookie 已回灌", null)
             onSessionChanged?.invoke()
         }
     }
@@ -269,6 +294,9 @@ class HttpClient(
         private const val ACCEPT_LANGUAGE = "zh-CN,zh;q=0.9,en;q=0.8"
 
         private const val VERIFY_TIMEOUT_MS = 5 * 60 * 1000L
+
+        /** 网络层事件的日志 tag：日志页按它筛选用。 */
+        private const val TAG = "HttpClient"
 
         fun httpUrl(url: String): HttpUrl? = url.toHttpUrlOrNull()
     }
