@@ -115,6 +115,7 @@ import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
@@ -1918,13 +1919,14 @@ private fun BarAction(
     }
 }
 
-/** 闪烁峰值透明度：再高就抢正文，再低在浅色主题下看不出来。 */
-private const val FLASH_PEAK_ALPHA = 0.16f
+/** 闪烁圆角：与消息卡片的圆角区分开，只看得出是这一条的内容区。 */
+private val FLASH_CORNER = 8.dp
 
 /**
- * 定位提醒楼层时的柔和闪烁：主题色淡入淡出两次，不抢眼但足以指出是哪一条。
+ * 定位提醒楼层时的柔和闪烁：底色用最底层的页面灰，淡入淡出两次。
  *
- * 画在内容之下（楼层本身没有背景色），深浅色主题下都只是淡淡一层。
+ * 灰色与页面底色接近，透明度压低后会淡到看不出来，故峰值给足（淡入淡出本身
+ * 已经提供了「柔和」）；画在内容之下、带圆角，只覆盖内容列。
  */
 @Composable
 private fun Modifier.flashHighlight(active: Boolean): Modifier {
@@ -1936,9 +1938,14 @@ private fun Modifier.flashHighlight(active: Boolean): Modifier {
             progress.animateTo(0f, tween(durationMillis = 480, easing = FastOutSlowInEasing))
         }
     }
-    val accent = MaterialTheme.colorScheme.primary
+    val shade = LocalMtfColors.current.background
     return drawBehind {
-        drawRect(color = accent, alpha = progress.value * FLASH_PEAK_ALPHA)
+        // 圆角的 px 值在 DrawScope 里换算，才能拿到当前密度
+        drawRoundRect(
+            color = shade,
+            cornerRadius = CornerRadius(FLASH_CORNER.toPx()),
+            alpha = progress.value,
+        )
     }
 }
 

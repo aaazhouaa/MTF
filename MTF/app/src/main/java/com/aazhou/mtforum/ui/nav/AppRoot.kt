@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -73,13 +74,20 @@ object Routes {
 }
 
 @Composable
-fun AppRoot(onToggleTheme: () -> Unit) {
+fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
     // 本地 WAF 求解失配时，全局拉起人机验证页；完成后 cookie 回灌给原生会话
     val container = LocalContext.current.container()
+
+    // 点了新消息通知：直达消息页（未登录仍留在首页，消息页要登录态才能看）
+    LaunchedEffect(openNotice) {
+        if (openNotice && container.httpClient.isLoggedIn()) {
+            navController.navigate(Routes.NOTICE)
+        }
+    }
     val needsVerification by container.httpClient.pendingVerificationFlow.collectAsStateWithLifecycle()
     if (needsVerification) {
         Dialog(onDismissRequest = {}, properties = DialogProperties(usePlatformDefaultWidth = false)) {

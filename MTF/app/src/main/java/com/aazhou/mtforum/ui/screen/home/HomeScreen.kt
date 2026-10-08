@@ -89,6 +89,8 @@ fun HomeScreen(
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     // 当前登录用户：已登录时顶栏左侧用头像替代「MTF」，点击进个人主页
     val me by container.currentUser.collectAsStateWithLifecycle()
+    // 有没有未读新消息：消息图标上那颗主题色小圆点
+    val hasUnread by container.unreadNotices.collectAsStateWithLifecycle()
 
     // 点击卡片配图一律进内置全屏查看器；urls 为本卡全部配图，便于左右翻页
     var preview by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
@@ -126,6 +128,7 @@ fun HomeScreen(
                 onToggleTheme = onToggleTheme,
                 onMessages = onMessages,
                 onDoubleTap = scrollToTop,
+                hasUnreadNotices = hasUnread,
             )
         },
     ) { padding ->
@@ -193,6 +196,8 @@ private fun HomeTopBar(
     onToggleTheme: () -> Unit,
     onMessages: () -> Unit,
     onDoubleTap: () -> Unit,
+    /** 有未读新消息：消息图标右上角亮一颗主题色小圆点。 */
+    hasUnreadNotices: Boolean,
 ) {
     val colors = LocalMtfColors.current
     Row(
@@ -275,16 +280,28 @@ private fun HomeTopBar(
                 .padding(7.dp),
         )
         Spacer(Modifier.width(4.dp))
-        Icon(
-            painterResource(com.aazhou.mtforum.R.drawable.ic_mail_line),
-            contentDescription = "消息提醒",
-            tint = colors.iconSecondary,
+        Box(
             modifier = Modifier
                 .size(36.dp)
                 .clip(CircleShape)
-                .clickable(onClick = onMessages)
-                .padding(7.dp),
-        )
+                .clickable(onClick = onMessages),
+        ) {
+            Icon(
+                painterResource(com.aazhou.mtforum.R.drawable.ic_mail_line),
+                contentDescription = "消息提醒",
+                tint = colors.iconSecondary,
+                modifier = Modifier.padding(7.dp),
+            )
+            if (hasUnreadNotices) {
+                // 小圆点贴在信封图标右上角（图标本体 22dp，四周留 7dp 点击区）
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .size(9.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                )
+            }
+        }
     }
 }
 

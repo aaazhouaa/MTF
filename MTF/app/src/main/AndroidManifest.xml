@@ -3,6 +3,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 新消息系统通知（Android 13+ 需运行时申请，见 NoticeScreen） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".MtfApp"
@@ -14,10 +16,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MTF">
 
+        <!-- singleTop：点通知进来时不新开实例，走 onNewIntent 复用当前任务栈 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.MTF">
             <intent-filter>

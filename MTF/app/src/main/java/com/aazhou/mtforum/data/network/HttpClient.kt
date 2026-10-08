@@ -70,14 +70,26 @@ class HttpClient(
         if (path.startsWith("http")) path else baseUrl + path.removePrefix("/")
 
     @Throws(IOException::class)
-    suspend fun get(url: String, userAgent: String = MOBILE_UA): String {
-        val body = executeGet(url, userAgent)
-        if (!WafSolver.looksLikeChallenge(body)) return body
+    suspend fun get(url: String, userAgent: String = MOBILE_UA): String =
+        getWithFinalUrl(url, userAgent).second
+
+    /**
+     * 同 [get]，但同时返回跟随重定向后的最终地址。
+     *
+     * 楼层中转链接（redirect&goto=findpost）会 302 到带页码的帖子页，响应体就是那一页；
+     * 拿最终地址既能知道页码，也能直接把这一页当作内容来源，省掉再一次取页。
+     */
+    @Throws(IOException::class)
+    suspend fun getWithFinalUrl(url: String, userAgent: String = MOBILE_UA): Pair<String, String> {
+        var (finalUrl, body) = executeGet(url, userAgent)
+        if (!WafSolver.looksLikeChallenge(body)) return finalUrl to body
 
         WafSolver.solve(body)?.let { value ->
             cookieStore.setCookie(host, WafSolver.COOKIE_NAME, value)
             val retried = executeGet(url, userAgent)
-            if (!WafSolver.looksLikeChallenge(retried)) return retried
+            if (!WafSolver.looksLikeChallenge(retried.second)) return retried
+            finalUrl = retried.first
+            body = retried.second
         }
 
         // 本地求解无法通过：交给真人验证，验证完成后用新 cookie 重试
@@ -86,7 +98,7 @@ class HttpClient(
             applyCookieHeader(verifiedCookie)
             return executeGet(url, userAgent)
         }
-        return body
+        return finalUrl to body
     }
 
     @Throws(IOException::class)
@@ -110,14 +122,14 @@ class HttpClient(
     }
 
     /**
-     * 发起一次 GET 并返回跟随重定向后的最终地址。
+     * 取重定向目标地址本身，不下载目标页面。
      *
-     * 站点的楼层链接是 redirect 中转地址（goto=findpost&ptid=X&pid=Y），
-     * 302 到带页码的帖子页；只有最终地址里才拿得到页码。
-     * 拿不到页码时调用方按「只打开帖子」处理。
+     * 只读 Location 头：提醒列表要给每条回复摘出正文，得先知道它在第几页，
+     * 跟着 302 把整页下回来太贵（一页几十 KB、还有节流）。
+     * 非 302（风控挑战页等）返回 null，调用方按「取不到」处理。
      */
     @Throws(IOException::class)
-    fun resolveRedirect(url: String, userAgent: String = MOBILE_UA): String {
+    fun redirectLocation(url: String, userAgent: String = MOBILE_UA): String? {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", userAgent)
@@ -125,7 +137,18 @@ class HttpClient(
             .header("Accept-Language", ACCEPT_LANGUAGE)
             .get()
             .build()
-        return client.newCall(request).execute().use { it.request.url.toString() }
+        client.newBuilder().followRedirects(false).build()
+            .newCall(request).execute().use { response ->
+                if (!response.isRedirect) return null
+                val location = response.header("Location") ?: return null
+                // 站点多数给绝对地址；给相对地址时按当前 host 拼完整
+                return if (location.startsWith("http")) {
+                    location
+                } else {
+                    response.request.url.newBuilder().encodedPath(location.removePrefix("/")).build()
+                        .toString()
+                }
+            }
     }
 
     @Throws(IOException::class)
@@ -211,7 +234,7 @@ class HttpClient(
         }
     }
 
-    private fun executeGet(url: String, userAgent: String): String {
+    private fun executeGet(url: String, userAgent: String): Pair<String, String> {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", userAgent)
@@ -219,7 +242,10 @@ class HttpClient(
             .header("Accept-Language", ACCEPT_LANGUAGE)
             .get()
             .build()
-        return client.newCall(request).execute().use { it.body?.string() ?: "" }
+        return client.newCall(request).execute().use { response ->
+            // 跟随重定向后的最终地址（中转链接 302 到帖子页），以及响应体
+            response.request.url.toString() to (response.body?.string() ?: "")
+        }
     }
 
     private fun guessContentType(file: File): String = when {

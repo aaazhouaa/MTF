@@ -692,11 +692,33 @@ class ForumParserTest {
         assertEquals("174032", first.tid)
         assertEquals("11921862", first.pid)
         assertEquals("昨天 15:22", first.timeText)
-        // 正文含发帖人与主题名，行尾的「查看」是操作链接、不进正文
+        // 帖子标题超过 8 字截断成省略号，正文与「查看」都不受污染
         assertTrue(first.text.contains("rsuyeug 回复了您的帖子"))
-        assertTrue(first.text.contains("(停更)MT论坛app(液态玻璃)"))
+        assertTrue(first.text.contains("(停更)MT论坛…"))
+        assertTrue(!first.text.contains("app"))
         assertTrue(!first.text.contains("查看"))
         assertTrue(!first.text.contains("忽略"))
+    }
+
+    @Test
+    fun noticeTitleKeptWhenShort() {
+        // 标题不超过 8 字时原样保留
+        val html = """
+            <html><body>
+            <div class="comiis_notices_box"><div class="comiis_notice_list"><ul>
+              <li class="b_b bg_f cl">
+                <div class="ntc_body"><a href="space-uid-1.html">someone</a> 回复了您的帖子
+                  <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=1&amp;pid=2">短标题</a></div>
+                <h2 class="f_d">今天 10:00</h2>
+              </li>
+            </ul></div></div>
+            </body></html>
+        """.trimIndent()
+        val notice = ForumParser.parseNotices(html).notices.single()
+        assertTrue(notice.text.contains("短标题"))
+        assertTrue(!notice.text.contains("…"))
+        // 没有 a_note_id 时退回 pid，保证 key 仍稳定
+        assertEquals("2", notice.id)
     }
 
     @Test

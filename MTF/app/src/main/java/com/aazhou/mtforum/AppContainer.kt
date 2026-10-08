@@ -1,6 +1,7 @@
 package com.aazhou.mtforum
 
 import android.app.Application
+import android.content.Context
 import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.download.ThreadArchiveStore
 import com.aazhou.mtforum.data.model.UserProfile
@@ -8,21 +9,26 @@ import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.DownloadStore
 import com.aazhou.mtforum.data.repo.ForumRepository
+import com.aazhou.mtforum.data.repo.NoticeChecker
+import com.aazhou.mtforum.data.repo.NoticeUnreadStore
 import com.aazhou.mtforum.data.repo.SessionStore
 import com.aazhou.mtforum.data.repo.ThemeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /** 应用级依赖容器：手动 DI，避免引入注解处理框架。 */
 class AppContainer(application: Application) {
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val appContext: Context = application
 
     val sessionStore = SessionStore(application)
     val themeStore = ThemeStore(application)
@@ -33,6 +39,13 @@ class AppContainer(application: Application) {
     val archiveStore = ThreadArchiveStore(application)
     val httpClient = HttpClient()
     val repository = ForumRepository(httpClient)
+    val noticeUnreadStore = NoticeUnreadStore(application)
+    /** 后台消息轮询（15 分钟一次）；进应用时也由 [checkNoticesNow] 顺手调一次。 */
+    val noticeChecker = NoticeChecker(repository, noticeUnreadStore)
+
+    /** 是否有未读新消息：首页消息图标上的小圆点以此为准。 */
+    val unreadNotices: StateFlow<Boolean> =
+        noticeUnreadStore.hasUnread.stateIn(appScope, SharingStarted.Eagerly, false)
 
     /**
      * 当前登录用户的资料；未登录为 null。
@@ -61,8 +74,19 @@ class AppContainer(application: Application) {
                     avatarUrl = sessionStore.avatar.first().ifEmpty { null },
                 )
             }
-            if (httpClient.isLoggedIn()) refreshCurrentUser()
+            if (httpClient.isLoggedIn()) {
+                refreshCurrentUser()
+                // 进应用先查一次消息：红点要反映真实未读，不能只等 15 分钟的后台轮询。
+                // 失败无所谓，下一轮轮询还会再查；不发通知（用户已经在应用里）。
+                appScope.launch { runCatching { noticeChecker.check() } }
+            }
+            NoticePollWorker.enqueue(appContext)
         }
+    }
+
+    /** 看过消息页：把 [ids] 记为已读，红点随之灭掉。 */
+    fun markNoticesRead(ids: List<String>) {
+        appScope.launch { noticeUnreadStore.markRead(ids) }
     }
 
     /** 拉取并缓存当前登录用户资料；未登录时清空。失败则保留旧值，不清空已有资料。 */
@@ -108,6 +132,7 @@ class AppContainer(application: Application) {
     fun logout() {
         httpClient.cookieStore.clear()
         _currentUser.value = null
+        NoticePollWorker.cancel(appContext)
         appScope.launch { sessionStore.clearSession() }
     }
 }

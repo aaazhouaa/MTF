@@ -17,6 +17,8 @@ import kotlinx.serialization.json.Json
 class NoticeViewModel(
     private val repository: ForumRepository,
     private val contentCache: ContentCache,
+    /** 列表刷 Success 后回调：把这一批提醒记为已读，首页红点随之灭掉。 */
+    private val onRead: (List<String>) -> Unit,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState<List<Notice>>>(UiState.Loading)
@@ -27,6 +29,15 @@ class NoticeViewModel(
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
     private val cacheJson = Json { ignoreUnknownKeys = true }
+
+    /** 已问过内容的楼层 pid：滚动时重复可见不重复请求。 */
+    private val contentAsked = mutableSetOf<String>()
+
+    /** 列表一上来就为其取摘要的条数（约一屏）；其余由滚动可见时再取。 */
+    private val eagerContentCount = 6
+
+    /** 已取到的楼层正文摘要：pid -> 纯文本。 */
+    private val contentText = mutableMapOf<String, String>()
 
     init {
         load()
@@ -80,11 +91,17 @@ class NoticeViewModel(
             page.loggedOut -> UiState.Error("请先登录后查看消息提醒")
             // 空列表不落盘：解析失配返回空时不能把上一份好数据覆盖掉
             page.notices.isEmpty() -> UiState.Success(emptyList())
-            else -> {
-                saveToCache(page.notices)
-                UiState.Success(page.notices)
-            }
+            else -> UiState.Success(page.notices)
         }
+        val loaded = (_state.value as? UiState.Success)?.data.orEmpty()
+        // 新列表没有摘要：先把本次会话已知的摘要并回去，再连缓存一起存——
+        // 否则刷新一次（或重进页面）内容就整块消失，问过的 pid 也不会再问
+        republishWithContents()
+        saveToCache((_state.value as? UiState.Success)?.data ?: loaded)
+        // 打开/刷新消息页就算看过：以这一批提醒为已读基线
+        onRead(loaded.map { it.id })
+        // 首屏几条的摘要立刻问：不依赖列表布局回调，进页面就能看见
+        ensureContents(loaded.take(eagerContentCount))
     }
 
     private suspend fun saveToCache(notices: List<Notice>) {
@@ -93,6 +110,46 @@ class NoticeViewModel(
             value = CachedNotices(notices),
             encode = { cacheJson.encodeToString(CachedNotices.serializer(), it) },
         )
+    }
+
+    /**
+     * 给可见的提醒补上楼层正文摘要。
+     *
+     * 站点提醒页只给「谁 回复了您的帖子 标题」，没有回复内容；要显示内容得按
+     * 楼层链接找到所在页再摘出该楼层。故按需加载：只问当前可见的几条，同一页
+     * 只取一次（同页的多条提醒共用），问过的 pid 不再重复问。
+     */
+    fun ensureContents(visible: List<Notice>) {
+        val pending = visible.filter { !it.pid.isNullOrBlank() && contentAsked.add(it.pid!!) }
+        if (pending.isEmpty()) return
+        viewModelScope.launch {
+            // 一次问一批：仓库里按 (tid, page) 归并，同页的多条提醒只取一次页面
+            val texts = runCatching {
+                repository.noticeReplyTexts(
+                    pending.mapNotNull { notice ->
+                        val tid = notice.tid ?: return@mapNotNull null
+                        val pid = notice.pid ?: return@mapNotNull null
+                        tid to pid
+                    },
+                )
+            }.getOrNull().orEmpty()
+            if (texts.isEmpty()) return@launch
+            contentText.putAll(texts)
+            republishWithContents()
+        }
+    }
+
+    /** 把已取到的摘要并回列表，逐条到达逐条上屏；并顺带落盘，下次进页面直接带摘要。 */
+    private suspend fun republishWithContents() {
+        val current = _state.value as? UiState.Success ?: return
+        if (contentText.isEmpty()) return
+        val merged = current.data.map { notice ->
+            val text = notice.pid?.let { contentText[it] } ?: return@map notice
+            if (notice.content == text) notice else notice.copy(content = text)
+        }
+        if (merged == current.data) return
+        _state.value = UiState.Success(merged)
+        saveToCache(merged)
     }
 }
 

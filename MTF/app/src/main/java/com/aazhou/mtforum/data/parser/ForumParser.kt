@@ -663,6 +663,9 @@ object ForumParser {
     /** 提醒行里指向具体楼层的链接：goto=findpost&pid=PID。 */
     private val RE_NOTICE_PID = Regex("""[?&]pid=(\d+)""")
 
+    /** 提醒里帖子标题的最大显示长度，超出部分用省略号代替。 */
+    private const val NOTICE_TITLE_MAX = 8
+
     /** 帖子地址里的页码：`viewthread&tid=X&page=N` 或 `thread-X-N-1.html`。 */
     private val RE_THREAD_PAGE = Regex("""[?&]page=(\d+)|thread-\d+-(\d+)-""")
 
@@ -671,6 +674,10 @@ object ForumParser {
         val m = RE_THREAD_PAGE.find(url) ?: return 1
         return (m.groupValues[1].ifEmpty { m.groupValues[2] }).toIntOrNull()?.coerceAtLeast(1) ?: 1
     }
+
+    /** 楼层正文的纯文本摘要（提醒列表里显示回复内容用）：去标签、压空白。 */
+    fun plainText(html: String): String =
+        doc(html).text().replace(Regex("""\s+"""), " ").trim()
 
     /**
      * 「我的」→「消息提醒」的某个类别页（home.php?mod=space&do=notice&view=…）。
@@ -736,7 +743,19 @@ object ForumParser {
             .map { it.attr("href") }
             .mapNotNull { href -> RE_NOTICE_PID.find(href)?.groupValues?.get(1) }
             .firstOrNull()
-        return Notice(id = tid ?: "notice-$index", text = text, timeText = time, tid = tid, pid = pid)
+        // 帖子标题超长时截断：提醒行只有一行多点，长标题会把正文挤没了
+        val titleLink = body?.select("a[href]")?.firstOrNull {
+            RE_NOTICE_TID.containsMatchIn(it.attr("href"))
+        }
+        val fullTitle = titleLink?.text()?.trim()?.ifBlank { null }
+        if (fullTitle != null && fullTitle.length > NOTICE_TITLE_MAX) {
+            text = text.replace(fullTitle, fullTitle.take(NOTICE_TITLE_MAX) + "…")
+        }
+        // 站点给每条提醒一个稳定 id（屏蔽链接的 a_note_NNNN）；列表 key 用它，
+        // 新消息插到前面时后面的行不会因为下标平移而整批重建
+        val noteId = li.selectFirst("a[id^=a_note_]")?.id()?.removePrefix("a_note_")
+        val id = noteId ?: pid ?: tid ?: "notice-$index"
+        return Notice(id = id, text = text, timeText = time, tid = tid, pid = pid)
     }
 
     /** 点赞用户列表（misc.php?op=recommend）：昵称取自链接文本，需剔掉图标字体私用区字符。 */
