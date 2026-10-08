@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -37,7 +38,16 @@ class AppLoggerTest {
 
     /** 等所有异步写盘的任务结束，再断言落库结果。 */
     private suspend fun settle() {
-        job.children.forEach { it.join() }
+        // children 是父任务上的活链表：先物化再 join，并加超时兜底，
+        // 否则遍历中节点被摘除可能漏等，协程卡住则测试永久挂死
+        withTimeout(SETTLE_TIMEOUT_MS) {
+            job.children.toList().forEach { it.join() }
+        }
+    }
+
+    private companion object {
+        /** 等异步写盘的上限：正常远小于此，超时即视为实现有问题。 */
+        const val SETTLE_TIMEOUT_MS = 5_000L
     }
 
     @Test
@@ -45,13 +55,32 @@ class AppLoggerTest {
         val logger = tempLogger()
         logger.setLevel(LogLevel.INFO)
 
+        // 每条写完各自等一次：两条 launch 到 Default 池上是竞争的，不保序就断言不了顺序
         logger.error("HttpClient", "GET 失败")
+        settle()
         logger.info("Session", "已恢复会话")
         settle()
 
-        // 落库顺序为旧 → 新，列表接口再倒序
-        assertEquals(listOf("GET 失败", "已恢复会话"), store.entries().reversed().map { it.message })
+        // entries() 新的在前
+        assertEquals(listOf("已恢复会话", "GET 失败"), store.entries().map { it.message })
         assertEquals(2, mirrored.size)
+    }
+
+    @Test
+    fun `WARN 等级下只拦 INFO`() = runBlocking {
+        val logger = tempLogger()
+        logger.setLevel(LogLevel.WARN)
+        assertEquals(LogLevel.WARN, logger.level.value)
+
+        logger.info("Session", "不该入库")
+        settle()
+        logger.warn("HttpClient", "该入库")
+        settle()
+        logger.error("Crash", "更该入库")
+        settle()
+
+        assertEquals(listOf("更该入库", "该入库"), store.entries().map { it.message })
+        assertEquals(3, mirrored.size)
     }
 
     @Test
