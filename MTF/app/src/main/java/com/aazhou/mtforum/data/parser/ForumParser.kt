@@ -233,6 +233,7 @@ object ForumParser {
     fun parseThreadPage(html: String, page: Int): ThreadPage {
         val document = doc(html)
         val subject = document.title().removeSuffix("- MT论坛").trim()
+        val tid = extractTid(document, html)
         val postNodes = document.select("div.comiis_postli[id^=pid]")
         // 楼层号是帖子内绝对楼层（第 2 页起是「11#」这类数字标签，第 1 页常整页不给标签），
         // 而标题栏给的是作者 uid，故只能由「本页第一个带楼层标签的节点 + 页内偏移」推出。
@@ -277,13 +278,13 @@ object ForumParser {
         val action = parseActionState(document, html)
         val follow = parseFollowState(document)
         return ThreadPage(
-            tid = extractTid(document, html),
+            tid = tid,
             subject = subject,
             // 详情页顶部面包屑给出所属版块（如「求助问答」）
             forumName = document.selectFirst("a.kmtit")?.text()?.trim(),
             posts = posts,
             page = page,
-            totalPages = parseTotalPages(document),
+            totalPages = parseTotalPages(document, tid),
             formhash = parseFormhash(html),
             replyUrl = replyUrl,
             fid = JS_FID.find(html)?.groupValues?.get(1)
@@ -841,19 +842,30 @@ object ForumParser {
      * 站点分页链接有两种形态：正序是 `thread-{tid}-{page}-1.html`，
      * 倒序（带 ordertype 等参数）是 `...&page={page}`（页码在查询串里）；
      * 只认前一种会让倒序页恒得出 1 页，从而只加载首屏。
+     *
+     * 只统计指向本帖 [tid] 的分页链接：正文里引用的其它帖子地址
+     * （`thread-其它tid-178-1.html`、`...tid=其它&page=178`）不是本页的分页元素，
+     * 采信它们会把总页数抬成随便一篇被引帖的页码，续拉据此一直去敲不存在的页。
      */
-    private fun parseTotalPages(document: Document): Int {
+    private fun parseTotalPages(document: Document, tid: String): Int {
         var max = 1
         for (a in document.select("a[href*=thread-], a[href*=page]")) {
             val href = a.attr("href")
-            val n = Regex("thread-\\d+-(\\d+)-1\\.html").find(href)?.groupValues?.get(1)?.toIntOrNull()
+            val page = Regex("thread-\\d+-(\\d+)-1\\.html").find(href)?.groupValues?.get(1)?.toIntOrNull()
                 ?: Regex("[?&]page=(\\d+)").find(href)?.groupValues?.get(1)?.toIntOrNull()
                 ?: Regex("page-(\\d+)\\.html").find(href)?.groupValues?.get(1)?.toIntOrNull()
                 ?: continue
-            if (n > max) max = n
+            // 只排除「明确指向其它帖子」的分页链接：正文引用的其它帖地址会带别的
+            // tid；不带 tid 的链接（部分分页形态会省略）视为本页分页，不能误排
+            if (page > max && (tid.isBlank() || linkTid(href)?.let { it == tid } != false)) max = page
         }
         return max
     }
+
+    /** 分页链接指向的帖子 tid；链接不带 tid 时返回 null。 */
+    private fun linkTid(href: String): String? =
+        Regex("thread-(\\d+)-").find(href)?.groupValues?.get(1)
+            ?: Regex("[?&]tid=(\\d+)").find(href)?.groupValues?.get(1)
 
     private fun hasNextPage(document: Document): Boolean =
         document.selectFirst("a.nxt, a[href*=page=] i.icon-next") != null

@@ -206,6 +206,39 @@ class ForumParserTest {
     }
 
     @Test
+    fun totalPagesIgnoresLinkedOtherThreads() {
+        // 正文里引用的其它帖子地址（thread-其它tid-178-1.html、...tid=其它&page=178）
+        // 不是本页分页元素；采信它们会把总页数抬成被引帖的页码，
+        // 续拉据此一直去敲不存在的页、永不收手。
+        val html = """
+            <html><head><title>帖子 - MT论坛</title>
+            <link rel="canonical" href="https://bbs.binmt.cc/thread-174050-1-1.html"></head>
+            <body>
+              <div class="comiis_a">参见
+                <a href="https://bbs.binmt.cc/thread-999001-178-1.html">另一帖</a>
+                <a href="https://bbs.binmt.cc/forum.php?mod=viewthread&tid=999002&page=178">另一帖</a>
+              </div>
+              <a href="https://bbs.binmt.cc/thread-174050-3-1.html">3</a>
+            </body></html>
+        """.trimIndent()
+        assertEquals(3, ForumParser.parseThreadPage(html, 1).totalPages)
+    }
+
+    @Test
+    fun totalPagesReadsTidParamForm() {
+        // 倒序分页的页码在查询串里（带 tid），不带 tid 的分页链接也不误排
+        val html = """
+            <html><head><title>帖子</title>
+            <link rel="canonical" href="https://bbs.binmt.cc/thread-174050-1-1.html"></head>
+            <body>
+              <a href="https://bbs.binmt.cc/forum.php?mod=viewthread&tid=174050&page=5&ordertype=1">5</a>
+              <a href="thread-174050-2-1.html">2</a>
+            </body></html>
+        """.trimIndent()
+        assertEquals(5, ForumParser.parseThreadPage(html, 1).totalPages)
+    }
+
+    @Test
     fun quoteWithLocationAndPidLink() {
         val html = """
             <div class="comiis_a comiis_message_table cl">

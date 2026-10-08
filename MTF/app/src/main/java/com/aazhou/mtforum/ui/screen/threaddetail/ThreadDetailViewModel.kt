@@ -146,6 +146,16 @@ class ThreadDetailViewModel(
      */
     private val shortPageRetry = HashMap<String, Pair<Int, Int>>()
 
+    /**
+     * 已判定「拉到的都是真实末尾之后的空页」的口径。
+     *
+     * 越界探测页会被站点夹成末页：池子不再有新增，页码也不再前进。此时若继续按
+     * maxPage + 1 发请求，每批都会去敲同一页，自动续拉链与滑动预加载交替空转成
+     * 无限请求。故整批空转一次即判定该口径到底，收手不发请求；一次真实页拉回来
+     * （进帖、切筛选、下拉刷新、回复后刷新）会清掉标记，重新按最新计数评估。
+     */
+    private val exhaustedViews = HashSet<String>()
+
     /** 不随分页与排序变化的帖子级字段。 */
     private var subject: String? = null
     private var forumName: String? = null
@@ -545,19 +555,16 @@ class ThreadDetailViewModel(
                 val added = mergeIntoPool(data)
                 newInBatch += added
                 lastFetched = next
+                // 拉到过就记页码，哪怕整页都是已入库楼层：定位楼层会把目标页提前合入
+                // 池子却不记 progress，续拉走到那一页时若守住页码不动，就会反复敲同一页
+                recordProgress(authorId, next, saneTotalPages)
                 if (added > 0) {
-                    // 本页有新楼层入库，才算「已拉到」
-                    recordProgress(authorId, next, saneTotalPages)
                     lastProductivePage = next
-                } else if (next <= knownTotalPages) {
-                    // 范围内却没新楼层（重拉末页）：不推进页码，只更新总页数
-                    recordProgress(authorId, progressOf(authorId).maxPage, saneTotalPages)
-                } else {
+                } else if (next > knownTotalPages) {
                     // 越界探测页什么都没带来：站点把它夹成了末页，解析出的页数跟着请求
                     // 页码涨。把 maxPage/totalPages 收回到真实交付过楼层的最后一页，
                     // 续拉才不会每次进入都去敲 178、179 这种不存在的页码；真正的新
                     // 评论由末页重拉与站点计数变化发现。
-                    recordProgress(authorId, progressOf(authorId).maxPage, saneTotalPages)
                     val healed = lastProductivePage.coerceAtLeast(1)
                     viewProgress[progressKey(authorId)] =
                         PageProgress(authorId = authorId, maxPage = healed, totalPages = healed)
@@ -575,8 +582,13 @@ class ThreadDetailViewModel(
             _loadingMore.value = false
             return failed
         }
-        // 池子仍少于站点计数：记下这次补拉的页码，下次同一页码再来一次还没补上就收手
         val key = progressKey(authorId)
+        // 本批确实拉到过页、却一条新楼层都没入库：后面都是真实末尾之后的空页，
+        // 再拉只会空转。failed 不判定——那只是没拉到，不是没有。
+        if (!failed && newInBatch == 0) {
+            exhaustedViews.add(key)
+        }
+        // 池子仍少于站点计数：记下这次补拉的页码，下次同一页码再来一次还没补上就收手
         val stillShort = expectedPoolSize()?.let { pool.size < it } ?: false
         if (stillShort) {
             val page = if (lastFetched > 0) lastFetched else startPage
@@ -646,6 +658,9 @@ class ThreadDetailViewModel(
         if (fid == null) fid = data.fid
         data.totalReplies?.let { totalReplies = it }
         session = data.copy(posts = emptyList())
+        // 这次页数与计数都是新鲜的：之前判定的「已到底」作废，续拉重新评估，
+        // 下拉刷新与回复后刷新才能重新发现新增评论
+        exhaustedViews.clear()
     }
 
     /**
@@ -664,6 +679,8 @@ class ThreadDetailViewModel(
      */
     private fun nextPageToFetch(authorId: String?): Int {
         val key = progressKey(authorId)
+        // 上一次已整批空转（请求到的都是真实末尾之后的空页）：收手，不再发请求
+        if (key in exhaustedViews) return 0
         val expected = expectedPoolSize()
         // 池子已按站点计数收齐：任何口径（楼主/正序/倒序）都不必再发请求
         if (expected != null && pool.size >= expected) return 0
