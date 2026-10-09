@@ -28,6 +28,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.GlobalToastHost
+import com.aazhou.mtforum.ui.common.maskAccessibility
 import com.aazhou.mtforum.ui.screen.forumlist.ForumListScreen
 import com.aazhou.mtforum.ui.screen.downloads.DownloadsScreen
 import com.aazhou.mtforum.ui.screen.guide.GuideScreen
@@ -114,7 +115,12 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
     val selectedIndex = tabRoutes.indexOf(currentRoute)
     val showBottomBar = selectedIndex >= 0
 
-    Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            // 屏蔽本应用的无障碍内容：开着 GKD 等无障碍服务时快滑必卡，详见 AccessibilityMask.kt
+            .maskAccessibility(),
+    ) {
         val background = MaterialTheme.colorScheme.background
         // 主题色必须经 state 间接读取再画进 backdrop：rememberLayerBackdrop 把 onDraw
         // 这个 lambda 当 remember key，直接捕获背景色的话，一换主题 lambda 就变、

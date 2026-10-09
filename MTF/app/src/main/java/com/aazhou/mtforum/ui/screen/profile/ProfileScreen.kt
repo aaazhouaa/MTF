@@ -41,6 +41,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.UserProfile
+import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.accountIconModel
 import com.aazhou.mtforum.ui.common.appViewModel
@@ -173,7 +174,7 @@ private fun InfoCard(
             ) {
                 if (loggedIn) {
                     AsyncImage(
-                        model = profile?.avatarUrl,
+                        model = smallImageRequest(profile?.avatarUrl),
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize().dimImageInDark(),
                     )

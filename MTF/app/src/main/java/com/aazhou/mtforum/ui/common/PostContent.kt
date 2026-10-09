@@ -72,8 +72,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.PostQuote
+import com.aazhou.mtforum.image.GridImageSize
 import com.aazhou.mtforum.image.ImageAspectCache
 import com.aazhou.mtforum.image.imageAspectRatio
+import com.aazhou.mtforum.image.postImageRequest
+import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.DarkBrightTextAlpha
@@ -512,7 +515,7 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val maxImageWidth = maxWidth * 0.92f
         AsyncImage(
-            model = url,
+            model = postImageRequest(url),
             contentDescription = null,
             contentScale = ContentScale.Fit,
             onSuccess = { state ->
@@ -572,7 +575,7 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
                             ),
                     ) {
                         AsyncImage(
-                            model = url,
+                            model = postImageRequest(url, maxSize = GridImageSize),
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             onError = { state ->
@@ -629,7 +632,7 @@ private fun InlineVideo(url: String, poster: String?, onPlay: (() -> Unit)?) {
         ) {
             if (poster != null) {
                 AsyncImage(
-                    model = poster,
+                    model = postImageRequest(poster),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     onError = { state ->
@@ -753,7 +756,7 @@ internal fun smileyInlineContent(smiles: Map<Char, String>): Map<String, InlineT
             ),
         ) {
             AsyncImage(
-                model = url,
+                model = smallImageRequest(url),
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
                 // 表情与配图/头像同套深色压暗：站点表情多为浅色线条画，深色底上很跳。

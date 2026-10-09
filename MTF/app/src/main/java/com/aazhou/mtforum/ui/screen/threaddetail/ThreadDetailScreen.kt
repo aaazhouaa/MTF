@@ -87,6 +87,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.imageLoader
 import com.aazhou.mtforum.data.model.Post
+import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.BottomBarBottomMargin
 import com.aazhou.mtforum.ui.common.EmptyBox
@@ -678,7 +679,7 @@ fun ThreadDetailScreen(
                                     .padding(vertical = 6.dp),
                             ) {
                                 AsyncImage(
-                                    model = user.avatarUrl,
+                                    model = smallImageRequest(user.avatarUrl),
                                     contentDescription = null,
                                     modifier = Modifier
                                         .size(32.dp)
@@ -969,7 +970,7 @@ internal fun ThreadDetailTopBar(
         )
         Spacer(Modifier.width(6.dp))
         AsyncImage(
-            model = post?.avatarUrl,
+            model = smallImageRequest(post?.avatarUrl),
             contentDescription = null,
             modifier = Modifier
                 .size(36.dp)
@@ -1401,7 +1402,7 @@ internal fun ReplyBlock(
     ) {
         Row(verticalAlignment = Alignment.Top) {
             AsyncImage(
-                model = reply.avatarUrl,
+                model = smallImageRequest(reply.avatarUrl),
                 contentDescription = null,
                 modifier = Modifier
                     .size(30.dp)
@@ -1566,7 +1567,7 @@ private fun NestedReply(
         Column(Modifier.fillMaxWidth().flashHighlight(highlight)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
-                model = child.avatarUrl,
+                model = smallImageRequest(child.avatarUrl),
                 contentDescription = null,
                 modifier = Modifier
                     .size(22.dp)

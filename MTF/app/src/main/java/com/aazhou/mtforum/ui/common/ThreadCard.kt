@@ -38,6 +38,9 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.Thread
+import com.aazhou.mtforum.image.GridImageSize
+import com.aazhou.mtforum.image.postImageRequest
+import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.MtfColors
@@ -75,7 +78,7 @@ fun ThreadCard(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
-                model = thread.avatarUrl,
+                model = smallImageRequest(thread.avatarUrl),
                 contentDescription = null,
                 modifier = Modifier
                     .size(30.dp)
@@ -178,7 +181,7 @@ private fun CardSingleImage(url: String, onClick: () -> Unit) {
     val colors = LocalMtfColors.current
     val shape = RoundedCornerShape(10.dp)
     AsyncImage(
-        model = url,
+        model = postImageRequest(url),
         contentDescription = null,
         contentScale = ContentScale.Crop,
         modifier = Modifier
@@ -294,7 +297,7 @@ private fun RowScope.cardCellModifier(
 private fun CardImage(url: String, modifier: Modifier) {
     val context = LocalContext.current
     AsyncImage(
-        model = url,
+        model = postImageRequest(url, maxSize = GridImageSize),
         contentDescription = null,
         contentScale = ContentScale.Crop,
         onError = { state ->

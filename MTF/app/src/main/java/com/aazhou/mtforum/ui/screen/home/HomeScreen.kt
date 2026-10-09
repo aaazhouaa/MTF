@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.Thread
+import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.ImagePreview
@@ -225,7 +226,7 @@ private fun HomeTopBar(
             )
         } else {
             AsyncImage(
-                model = avatarUrl,
+                model = smallImageRequest(avatarUrl),
                 contentDescription = "个人主页",
                 modifier = Modifier
                     .size(32.dp)

@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.Forum
+import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
@@ -99,7 +100,7 @@ private fun ForumRow(forum: Forum, onClick: () -> Unit) {
     ) {
         if (forum.icon != null) {
             AsyncImage(
-                model = forum.icon,
+                model = smallImageRequest(forum.icon),
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.size(32.dp),

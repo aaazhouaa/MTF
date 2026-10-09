@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.Thread
+import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
@@ -125,7 +126,7 @@ private fun GuideRow(thread: Thread, onClick: () -> Unit) {
             .padding(16.dp),
     ) {
         AsyncImage(
-            model = thread.avatarUrl,
+            model = smallImageRequest(thread.avatarUrl),
             contentDescription = null,
             modifier = Modifier.size(36.dp).clip(CircleShape).dimImageInDark(),
         )

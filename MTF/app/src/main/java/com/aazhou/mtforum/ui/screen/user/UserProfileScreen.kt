@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.data.model.UserProfile
+import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
@@ -120,7 +121,7 @@ private fun InfoCard(profile: UserProfile) {
     ProfileCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
-                model = profile.avatarUrl,
+                model = smallImageRequest(profile.avatarUrl),
                 contentDescription = null,
                 modifier = Modifier
                     .size(72.dp)

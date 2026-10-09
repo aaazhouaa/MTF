@@ -53,6 +53,7 @@ import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.Notice
+import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
@@ -180,13 +181,13 @@ private fun NoticeRow(notice: Notice, onUserClick: (String) -> Unit, onClick: ()
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .then(
                 if (clickable) Modifier.clickable(onClick = onClick) else Modifier,
-            ),
+            )
     ) {
         Row(verticalAlignment = Alignment.Top) {
             val avatarUrl = notice.avatarUrl
             if (avatarUrl != null) {
                 AsyncImage(
-                    model = avatarUrl,
+                    model = smallImageRequest(avatarUrl),
                     contentDescription = null,
                     modifier = Modifier
                         .size(38.dp)
