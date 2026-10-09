@@ -932,10 +932,23 @@ class ForumParserTest {
               <p>第二行 &lt;b&gt;粗&lt;/b&gt; [#呵呵]</p>
             </div>
         """.trimIndent()
-        val notice = ForumParser.replyQuoteNotice("勇敢的心", "2026-10-9 23:16", html)
+        val notice = ForumParser.replyQuoteNotice("勇敢的心", "2026-10-9 23:16", html, "11935213", "174328")
         assertEquals(
-            "[quote][color=#999999]勇敢的心 发表于 2026-10-9 23:16[/color]\n" +
-                "[color=#999999]第一行正文 &amp; 符号\n第二行 &lt;b&gt;粗&lt;/b&gt;[/color][/quote]",
+            "[quote][size=2][url=forum.php?mod=redirect&goto=findpost&pid=11935213&ptid=174328]" +
+                "[color=#999999]勇敢的心 发表于 2026-10-9 23:16[/color][/url][/size]\n" +
+                "第一行正文 & 符号\n第二行 <b>粗</b>[/quote]",
+            notice,
+        )
+    }
+
+    @Test
+    fun `reply quote notice keeps raw entities for server side escaping`() {
+        val html = "<div class=\"comiis_a\"><p>a &amp; b &lt;tag&gt;</p></div>"
+        val notice = ForumParser.replyQuoteNotice("甲&乙", null, html, "1", "2")
+        // 服务端会对整块做一次 dhtmlspecialchars，客户端再转义就成了双转义
+        assertEquals(
+            "[quote][size=2][url=forum.php?mod=redirect&goto=findpost&pid=1&ptid=2]" +
+                "[color=#999999]甲&乙 发表于[/color][/url][/size]\na & b <tag>[/quote]",
             notice,
         )
     }
@@ -946,6 +959,12 @@ class ForumParserTest {
         val html = "<div class=\"comiis_a\"><p>$long</p><p>尾部</p></div>"
         val snippet = ForumParser.replyQuoteSnippet(html)
         assertEquals("字".repeat(100) + " ...", snippet)
+    }
+
+    @Test
+    fun `reply quote snippet keeps only three lines like the site does`() {
+        val html = (1..5).joinToString("") { "<p>第$it 行</p>" }
+        assertEquals("第1 行\n第2 行\n第3 行", ForumParser.replyQuoteSnippet(html))
     }
 
     @Test

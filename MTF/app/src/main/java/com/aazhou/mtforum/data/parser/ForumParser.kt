@@ -57,9 +57,8 @@ object ForumParser {
     private const val QUOTE_SNIPPET_LIMIT = 100
     private const val QUOTE_SNIPPET_DOT = " ..."
 
-    /** 站点对 hidden 字段做 HTML 实体转义，引用块里的作者/时间/快照都要过一遍。 */
-    private fun escapeHtml(text: String): String =
-        text.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    /** 站点快照最多保留的行数：messagecutstr 之后还过了一道 array_slice(explode, 0, 3)。 */
+    private const val QUOTE_SNIPPET_MAX_LINES = 3
 
     /**
      * 配图过滤规则：命中任一者都不是帖子附件图。
@@ -528,20 +527,32 @@ object ForumParser {
      * 站点把它原样拼在回复正文最前面（noticetrimstr + "\n\n" + message），是引用
      * 回复的唯一依据；只传正文摘录不会生成引用块，回复就只是一条普通评论。
      *
-     * 排版与站点移动端回复页 hidden 字段一致：
-     * `[quote][color=#999999]作者 发表于 时间[/color]\n[color=#999999]快照[/color][/quote]`
+     * 排版用站点 PC 版引用块：meta 行套 [url=...pid] 链接。服务端只对整块做一次
+     * dhtmlspecialchars，这里不能再转义，否则引用块里会留下 `&amp;` 这类双转义字样。
+     *
+     * 带上 pid 链接是为了让渲染出来的引用块含被引楼层 pid：客户端提交后自己也要解析
+     * 这个页面，[parseQuote] 靠它把楼中楼父子关系钉死，短正文（如「嗯嗯」）才不会
+     * 退化成按昵称猜父楼层。
      */
-    fun replyQuoteNotice(author: String, time: String?, contentHtml: String): String {
-        val meta = "${escapeHtml(author)} 发表于 ${escapeHtml(time.orEmpty())}".trimEnd()
-        return "[quote][color=#999999]$meta[/color]\n" +
-            "[color=#999999]${escapeHtml(replyQuoteSnippet(contentHtml))}[/color][/quote]"
+    fun replyQuoteNotice(
+        author: String,
+        time: String?,
+        contentHtml: String,
+        quotePid: String,
+        tid: String,
+    ): String {
+        val meta = "$author 发表于 ${time.orEmpty()}".trimEnd()
+        val url = "forum.php?mod=redirect&goto=findpost&pid=$quotePid&ptid=$tid"
+        return "[quote][size=2][url=$url][color=#999999]$meta[/color][/url][/size]\n" +
+            "${replyQuoteSnippet(contentHtml)}[/quote]"
     }
 
     /**
-     * 引用快照正文：取楼层纯文本，保留块间换行，按站点同款长度截断。
+     * 引用快照正文：取楼层纯文本，保留块间换行，按站点同款长度与行数截断。
      *
      * 站点截断的是数据库里的 BBCode 原文，客户端手上只有渲染后的 HTML，只能提取
-     * 纯文本；长度与省略后缀对齐站点的 messagecutstr(message, 100)。
+     * 纯文本；长度对齐站点的 messagecutstr(message, 100)，行数对齐其后的
+     * array_slice(explode, 0, 3)——快照超过三行时站点也只留前三行。
      */
     fun replyQuoteSnippet(contentHtml: String): String {
         val lines = RE_BLOCK_END.replace(contentHtml, "\n")
@@ -555,11 +566,12 @@ object ForumParser {
             }
             .filter { it.isNotEmpty() }
         val snippet = lines.joinToString("\n")
-        return if (snippet.length <= QUOTE_SNIPPET_LIMIT) {
+        val cut = if (snippet.length <= QUOTE_SNIPPET_LIMIT) {
             snippet
         } else {
             snippet.take(QUOTE_SNIPPET_LIMIT).trimEnd() + QUOTE_SNIPPET_DOT
         }
+        return cut.split("\n").take(QUOTE_SNIPPET_MAX_LINES).joinToString("\n")
     }
 
     /** 登录页的 formhash（在 input#formhash）。 */

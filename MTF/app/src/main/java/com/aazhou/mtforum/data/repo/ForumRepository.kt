@@ -143,13 +143,13 @@ class ForumRepository(
     }
 
     /**
-     * 回复帖子：[noticeTrimStr] 非空即引用回复，[noticeAuthor] 为被回复者或快速回复框隐藏域。
+     * 回复帖子：[noticeTrimStr] 非空即引用回复，[noticeAuthor] 为快速回复框隐藏域。
      * 返回站点回执结果。
      *
      * 站点把 noticetrimstr 原样拼在回复正文最前面，因此它必须是完整 [quote] 块（见
      * [com.aazhou.mtforum.data.parser.ForumParser.replyQuoteNotice]）；只传正文摘录
-     * 不会生成引用块，回复就只是一条普通评论。repquote/reppost 只服务于站点渲染回复
-     * 表单，提交阶段服务端不读，故不进请求体。
+     * 不会生成引用块，回复就只是一条普通评论。repquote/reppost/noticeauthormsg 只
+     * 服务于站点渲染回复表单，提交阶段服务端不读，故不进请求体。
      */
     suspend fun reply(
         fid: String,
@@ -158,7 +158,6 @@ class ForumRepository(
         message: String,
         noticeAuthor: String? = null,
         noticeTrimStr: String? = null,
-        noticeAuthorMsg: String? = null,
     ): ReplyResult = withContext(Dispatchers.IO) {
         // 站点快速回复框由 JS 代发，且仅在带 inajax=1 时返回 XML 回执；否则回整页 HTML，
         // 老的「无错误词即成功」判据会把整页 HTML 误判成成功。replysubmit 是 type=button，
@@ -173,7 +172,6 @@ class ForumRepository(
         )
         if (!noticeAuthor.isNullOrBlank()) params["noticeauthor"] = noticeAuthor
         if (!noticeTrimStr.isNullOrBlank()) params["noticetrimstr"] = noticeTrimStr
-        if (!noticeAuthorMsg.isNullOrBlank()) params["noticeauthormsg"] = noticeAuthorMsg
         val body = http.post(url, params, referer = "https://bbs.binmt.cc/thread-$tid-1-1.html")
         val result = ForumParser.parseReplyResult(body)
         // 未拿到 XML 回执（无 succeedhandle_/errorhandle_，如会话过期被重定向到登录页）时一律判

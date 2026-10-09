@@ -1037,9 +1037,8 @@ class ThreadDetailViewModel(
             return
         }
         val target = _replyTarget.value
-        val snippet = target?.let { ForumParser.replyQuoteSnippet(it.contentHtml) }
         val notice = target?.let {
-            ForumParser.replyQuoteNotice(it.authorName, it.timeText, it.contentHtml)
+            ForumParser.replyQuoteNotice(it.authorName, it.timeText, it.contentHtml, it.pid, tid)
         }
         // 站点用的 noticeauthor 是 authcode 加密的作者 id，客户端构造不出来；只有不指定
         // 回复对象时才沿用详情页快速回复框里站点给的隐藏域。
@@ -1054,7 +1053,6 @@ class ThreadDetailViewModel(
                     message = message,
                     noticeAuthor = noticeAuthor,
                     noticeTrimStr = notice,
-                    noticeAuthorMsg = snippet,
                 )
                 if (result.success) {
                     _replyTarget.value = null
