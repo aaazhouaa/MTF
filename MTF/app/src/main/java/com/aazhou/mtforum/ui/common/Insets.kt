@@ -34,3 +34,20 @@ val MtfTopBarHeight: Dp = TopBarVerticalPadding * 2 + 36.dp
 fun bottomBarContentPadding(): Dp =
     BottomBarHeight + BottomBarBottomMargin +
         WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
+/** 帖子详情底部回复栏的上下留白（在系统导航栏避让之外）。 */
+val ReplyBarTopPadding = 6.dp
+
+/** 回复栏两个胶囊（输入框 / 评论点赞收藏分享）的高度。 */
+val ReplyBarCapsuleHeight = 48.dp
+
+/**
+ * 回复栏悬浮在列表之上时，列表底部需要避让的高度。
+ *
+ * 与 [bottomBarContentPadding] 同理：内容必须铺到屏幕底部，回复栏的半透明毛玻璃才有东西
+ * 可采样，故只能用列表自身的 contentPadding 留白，不能把内容顶起来。
+ */
+@Composable
+fun replyBarContentPadding(): Dp =
+    ReplyBarTopPadding + ReplyBarCapsuleHeight + BottomBarBottomMargin +
+        WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()

@@ -34,6 +34,9 @@ object ForumParser {
     private val RE_FORMHASH_INPUT = Regex("formhash[\"']?\\s+value=[\"']([0-9a-fA-F]+)")
     private val RE_FORMHASH_JS = Regex("formhash\\s*=\\s*['\"]([0-9a-fA-F]+)['\"]")
     private val RE_LOGINHASH = Regex("loginhash=([A-Za-z0-9]+)")
+    // 贴图上传凭据：comiis 模板把 uid/hash 写进帖子页内联的上传配置里
+    private val RE_UPLOAD_UID = Regex("uploadformdata:\\{uid:\"(\\d+)\"")
+    private val RE_UPLOAD_HASH = Regex("uploadformdata:\\{uid:\"\\d+\",\\s*hash:\"([0-9a-fA-F]+)\"")
     private val RE_QUOTE_PID = Regex("pid=(\\d+)")
     private val RE_BR = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
     private val RE_FLOOR_NUMBER = Regex("^(\\d+)")
@@ -299,6 +302,8 @@ object ForumParser {
             favoritedStateKnown = action.favoritedKnown,
             isFollowingOp = follow.first,
             followingStateKnown = follow.second,
+            uploadUid = RE_UPLOAD_UID.find(html)?.groupValues?.get(1),
+            uploadHash = RE_UPLOAD_HASH.find(html)?.groupValues?.get(1),
         )
     }
 

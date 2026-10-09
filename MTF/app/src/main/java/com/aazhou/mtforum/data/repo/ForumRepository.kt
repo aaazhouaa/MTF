@@ -13,8 +13,11 @@ import com.aazhou.mtforum.data.model.ThreadPage
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.parser.ForumParser
+import com.aazhou.mtforum.data.parser.SmileyPack
+import com.aazhou.mtforum.data.parser.SmileyParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /** 回复/操作失败响应里会出现的提示词。 */
 private val REPLY_ERROR_PATTERN = Regex("抱歉|非法操作|请先登录|需要先登录|没有权限|审核")
@@ -48,12 +51,28 @@ class ForumRepository(
     private val http: HttpClient,
 ) {
 
+    /** 会话内缓存的表情包：站点不常变，避免每次打开表情面板都拉一次。 */
+    private var smileyCache: List<SmileyPack>? = null
+
+
     /** 发帖页的 formhash（新版帖接口必需）。 */
     suspend fun postFormhash(fid: String): String? = withContext(Dispatchers.IO) {
         ForumParser.parseFormhash(http.get(http.url("forum.php?mod=post&action=newthread&fid=$fid&mobile=2")))
     }
 
     fun isLoggedIn(): Boolean = http.isLoggedIn()
+
+    /**
+     * 表情包列表（回复面板的表情 tab 用）。
+     *
+     * 站点把笑脸表放在 CDN 上的一个 JS 缓存文件里，一次会话拉一次即可：站点加新表情
+     * 也只会在下次进应用时生效，不值得每次打开面板都请求。
+     */
+    suspend fun smileyPacks(): List<SmileyPack> = withContext(Dispatchers.IO) {
+        smileyCache ?: SmileyParser.parse(
+            http.get("${HttpClient.BASE_URL}data/cache/common_smilies_var.js"),
+        ).also { smileyCache = it }
+    }
 
     /** 当前会话 Cookie 头，供登录后持久化。 */
     fun sessionCookieHeader(): String = http.cookieHeader()
@@ -111,6 +130,28 @@ class ForumRepository(
         if (!quotePid.isNullOrBlank()) params["quotepid"] = quotePid
         val body = http.post(url, params, referer = "https://bbs.binmt.cc/thread-$tid-1-1.html")
         body.isNotBlank() && !REPLY_ERROR_PATTERN.containsMatchIn(body)
+    }
+
+    /**
+     * 上传回复里要贴的图，返回附件 id（回复正文用 `[attachimg]<aid>[/attachimg]` 引用）。
+     *
+     * 与网页端一致：multipart 的 [HttpClient.upload] 带 uid/hash，站点按会话校验。
+     * 失败返回 null（体积超限、类型不允许、令牌过期等，提示词由调用方给）。
+     */
+    suspend fun uploadReplyImage(
+        file: File,
+        uid: String,
+        hash: String,
+    ): String? = withContext(Dispatchers.IO) {
+        val body = http.upload(
+            url = "${HttpClient.BASE_URL}misc.php?mod=swfupload&operation=upload&type=image&inajax=yes&infloat=yes&simple=2",
+            file = file,
+            fieldName = "Filedata",
+            extraFields = mapOf("uid" to uid, "hash" to hash),
+        )
+        // 响应为 DISCUZUPLOAD|1|0|<aid>|<...>|<附件路径>|<文件名>|...，第 3 段为状态码
+        val parts = body.split('|')
+        if (parts.size >= 4 && parts[0] == "DISCUZUPLOAD" && parts[2] == "0") parts[3] else null
     }
 
     /**

@@ -83,6 +83,9 @@ data class ThreadPage(
     val isFollowingOp: Boolean = false,
     /** 页面是否明确给出关注状态（登录态且站点渲染了关注控件）。 */
     val followingStateKnown: Boolean = false,
+    /** 贴图上传接口的 uid / hash（帖子页内联脚本里，一次性，随页面刷新）。 */
+    val uploadUid: String? = null,
+    val uploadHash: String? = null,
 )
 
 /** 单个楼层/回复。 */
