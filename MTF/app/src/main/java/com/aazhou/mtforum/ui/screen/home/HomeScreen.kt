@@ -287,21 +287,24 @@ private fun HomeTopBar(
                 .size(36.dp)
                 .clip(CircleShape)
                 .clickable(onClick = onMessages),
+            contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                painterResource(com.aazhou.mtforum.R.drawable.ic_mail_line),
-                contentDescription = "消息提醒",
-                tint = colors.iconSecondary,
-                modifier = Modifier.padding(7.dp),
-            )
-            if (hasUnreadNotices) {
-                // 小圆点贴在信封图标右上角（图标本体 22dp，四周留 7dp 点击区）
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .size(9.dp)
-                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+            Box(Modifier.size(22.dp)) {
+                Icon(
+                    painterResource(com.aazhou.mtforum.R.drawable.ic_mail_line),
+                    contentDescription = "消息提醒",
+                    tint = colors.iconSecondary,
+                    modifier = Modifier.fillMaxSize(),
                 )
+                if (hasUnreadNotices) {
+                    // 小圆点贴在信封图标右上角（6dp，位于 36dp 居中内部，完整不被 clip 裁剪）
+                    Box(
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .size(6.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                    )
+                }
             }
         }
     }

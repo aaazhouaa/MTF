@@ -9,8 +9,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.requiredSize
@@ -39,12 +40,10 @@ import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,10 +69,15 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
@@ -93,6 +97,7 @@ import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -126,39 +131,68 @@ internal fun ReplyComposer(
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
     var panel by remember { mutableStateOf(ComposerPanel.None) }
-    var inserting by remember { mutableStateOf<InsertKind?>(null) }
+    var uploading by remember { mutableStateOf(false) }
+
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null || uploadCredentials == null) return@rememberLauncherForActivityResult
+        uploading = true
+        scope.launch {
+            try {
+                val file = prepareUploadFile(context, uri)
+                val aid = onUploadImage(file)
+                if (aid != null) {
+                    onValueChange(value.insertAtSelection("[attachimg]$aid[/attachimg]"))
+                } else {
+                    AppToast.show("上传失败，可能超出大小限制或凭据已过期")
+                }
+            } catch (e: Exception) {
+                AppToast.show(e.message ?: "上传失败")
+            } finally {
+                uploading = false
+            }
+        }
+    }
 
     // 打开面板即聚焦并把键盘请出来
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
     }
 
+    val density = LocalDensity.current
+    var activeInsertKind by remember { mutableStateOf<InsertKind?>(null) }
+    var inlineUrlInput by remember { mutableStateOf("") }
+    var inlineTitleInput by remember { mutableStateOf("") }
+
     val smileyByCode = remember(smileyPacks) {
         smileyPacks.flatMap { it.items }.associateBy { it.code }
     }
 
-    // 输入框里的表情：BasicTextField 没有 inlineContent 参数（javap 核实过各版本都没有），
-    // 所以走「文字隐形 + 上层按布局坐标贴图」：visualTransformation 只把表情码染成透明色，
-    // 文本长度一个字符都没变，OffsetMapping 用 Identity，光标与选区才不会错位
-    val smileyVisualTransformation = remember(smileyByCode) {
+    val smileyVisualTransformation = remember(smileyByCode, colors) {
         VisualTransformation { text ->
-            if (smileyByCode.isEmpty() || !text.text.contains('[')) {
-                TransformedText(text, OffsetMapping.Identity)
-            } else {
-                TransformedText(text.withHiddenSmileys(smileyByCode), OffsetMapping.Identity)
-            }
+            TransformedText(
+                formatRichComposerText(text.text, smileyByCode, colors),
+                OffsetMapping.Identity,
+            )
         }
     }
     // 文本布局结果：没有它就不知道每个表情码画在哪
     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
 
-    // 退格一次删掉整个表情：IME 只删光标前一个字符，删完发现光标仍落在表情码内部，
-    // 就把删除范围扩大到整个表情码，不然用户得按五六次才能删掉一个表情
+    // 退格时智能联动删除成对标签（如 [audio]...[/audio]）或整个表情码
     fun onComposerValueChange(next: TextFieldValue) {
         val shrunkByOne = next.text.length == value.text.length - 1 &&
             next.selection.collapsed && value.selection.collapsed
         if (shrunkByOne) {
+            // 1. 优先检查成对 BBCode 标签：按删除键一体化全删两边的代码
+            val tagPairResult = handleTagPairDeletion(value, next)
+            if (tagPairResult != null) {
+                onValueChange(tagPairResult)
+                return
+            }
+
+            // 2. 检查表情码：退格一次删掉整个表情
             val codeStart = smileyCodeStartBefore(value.text, value.selection.start)
             if (codeStart >= 0) {
                 val codeEnd = value.text.indexOf(']', codeStart) + 1
@@ -222,16 +256,31 @@ internal fun ReplyComposer(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(ReplyComposerInputHeight)
-                    // indication 置空：这层只是让整个输入区都能响应点击，
-                    // 不需要按下水波纹——按一下灰一片很违和
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) {
-                        // 表情面板开着就先收起它；键盘已弹出时 show 是空操作，不会把它收掉
-                        if (panel == ComposerPanel.Smiley) panel = ComposerPanel.None
-                        focusRequester.requestFocus()
-                        keyboard?.show()
+                    .pointerInput(value.text) {
+                        detectTapGestures { offset ->
+                            val layout = textLayout
+                            val len = value.text.length
+                            if (layout == null || len == 0) {
+                                onValueChange(value.copy(selection = TextRange(len)))
+                            } else {
+                                val topPadPx = with(density) { 8.dp.toPx() }
+                                val lastLine = layout.lineCount - 1
+                                val lastLineBottom = layout.getLineBottom(lastLine) + topPadPx
+                                val lastLineTop = layout.getLineTop(lastLine) + topPadPx
+                                val lastLineRight = layout.getLineRight(lastLine)
+                                // 点在所有文字行下方，或者点在末行文字右侧的空白区域 -> 瞬移到文本末尾
+                                if (offset.y > lastLineBottom || (offset.y >= lastLineTop && offset.x > lastLineRight)) {
+                                    onValueChange(value.copy(selection = TextRange(len)))
+                                } else {
+                                    val relY = (offset.y - topPadPx).coerceAtLeast(0f)
+                                    val pos = layout.getOffsetForPosition(Offset(offset.x, relY))
+                                    onValueChange(value.copy(selection = TextRange(pos)))
+                                }
+                            }
+                            if (panel == ComposerPanel.Smiley) panel = ComposerPanel.None
+                            focusRequester.requestFocus()
+                            keyboard?.show()
+                        }
                     },
                 contentAlignment = Alignment.TopStart,
             ) {
@@ -255,16 +304,7 @@ internal fun ReplyComposer(
                         .padding(top = 8.dp)
                         .focusRequester(focusRequester)
                         // 聚焦状态回传上层：遮罩和返回键靠它区分「该收键盘」还是「该收回复框」
-                        .onFocusChanged { onFocusedChange(it.isFocused) }
-                        // 同上：点输入框任意位置都把键盘请回来
-                        .pointerInput(Unit) {
-                            awaitEachGesture {
-                                awaitFirstDown(requireUnconsumed = false)
-                                if (panel == ComposerPanel.Smiley) panel = ComposerPanel.None
-                                focusRequester.requestFocus()
-                                keyboard?.show()
-                            }
-                        },
+                        .onFocusChanged { onFocusedChange(it.isFocused) },
                     // 表情贴图层：BasicTextField 没有 inlineContent 参数，只能自己按布局坐标贴图。
                     // 文字已被 visualTransformation 染成透明色，这一层垫在输入框下面，光标与
                     // 选区仍由输入框自己画，不会被图片盖住
@@ -295,19 +335,25 @@ internal fun ReplyComposer(
                         keyboard?.show()
                     }
                 }
-                ComposerToolButton(R.drawable.ic_image, "图片") { inserting = InsertKind.Image }
-                ComposerToolButton(R.drawable.ic_at, "提到朋友") { inserting = InsertKind.At }
-                ComposerToolButton(R.drawable.ic_hash, "话题") {
-                    onValueChange(value.insertAtSelection("#话题#", cursorOffsetInInserted = 1))
+                ComposerToolButton(R.drawable.ic_image, "图片") {
+                    if (uploadCredentials != null) {
+                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    } else {
+                        AppToast.show("上传凭据已失效，返回帖子重进试试")
+                    }
+                }
+                ComposerToolButton(R.drawable.ic_at, "提到朋友") {
+                    onValueChange(value.wrapSelectionOrInsert("@", " "))
+                    focusRequester.requestFocus()
+                    keyboard?.show()
                 }
                 ComposerToolButton(R.drawable.ic_add, "插入") {
                     panel = if (panel == ComposerPanel.Insert) ComposerPanel.None else ComposerPanel.Insert
                 }
                 Spacer(Modifier.weight(1f))
-                if (sending) {
+                if (sending || uploading) {
                     CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 } else {
-                    // 纯空格不算有内容：置灰且不可点，有内容才点亮
                     val publishReady = value.text.isNotBlank()
                     Text(
                         "发布",
@@ -329,11 +375,64 @@ internal fun ReplyComposer(
             // 不依赖键盘高度或剩余空间——那两种依赖都让网格塌成过一条 tab 栏
             when (panel) {
                 // 没展开面板时只摆一行最近用过的，够 8 个为止
-                ComposerPanel.None -> RecentSmileyRow(recentRow) { code -> pickSmiley(code) }
+                ComposerPanel.None -> {
+                    val currentInsert = activeInsertKind
+                    if (currentInsert != null) {
+                        InlineInsertBar(
+                            kind = currentInsert,
+                            urlInput = inlineUrlInput,
+                            titleInput = inlineTitleInput,
+                            onUrlChange = { inlineUrlInput = it },
+                            onTitleChange = { inlineTitleInput = it },
+                            onDismiss = {
+                                activeInsertKind = null
+                                focusRequester.requestFocus()
+                                keyboard?.show()
+                            },
+                            onConfirm = {
+                                val inserted = when (currentInsert) {
+                                    InsertKind.Url -> {
+                                        val u = inlineUrlInput.trim()
+                                        val t = inlineTitleInput.trim().ifEmpty { u }
+                                        "[url=$u]$t[/url]"
+                                    }
+                                    InsertKind.NetImage -> "[img]${inlineUrlInput.trim()}[/img]"
+                                    InsertKind.Audio -> "[audio]${inlineUrlInput.trim()}[/audio]"
+                                    InsertKind.Video -> "[media=x,500,375]${inlineUrlInput.trim()}[/media]"
+                                    InsertKind.Flash -> "[flash]${inlineUrlInput.trim()}[/flash]"
+                                    InsertKind.Quote -> "[quote]${inlineUrlInput.trim()}[/quote]"
+                                    InsertKind.Code -> "[code]${inlineUrlInput.trim()}[/code]"
+                                }
+                                onValueChange(value.insertAtSelection(inserted))
+                                activeInsertKind = null
+                                focusRequester.requestFocus()
+                                keyboard?.show()
+                            },
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    } else {
+                        RecentSmileyRow(recentRow) { code -> pickSmiley(code) }
+                    }
+                }
                 ComposerPanel.Insert -> InsertPanel(
                     onPick = { kind ->
-                        inserting = kind
-                        panel = ComposerPanel.None
+                        // 如果有选中文本且为引用/代码，可直接包裹
+                        val selStart = min(value.selection.min, value.selection.max)
+                        val selEnd = max(value.selection.min, value.selection.max)
+                        val selected = if (selEnd > selStart) value.text.substring(selStart, selEnd) else ""
+                        if (selected.isNotEmpty() && (kind == InsertKind.Quote || kind == InsertKind.Code)) {
+                            val tag = if (kind == InsertKind.Quote) "quote" else "code"
+                            onValueChange(value.wrapSelectionOrInsert("[$tag]", "[/$tag]"))
+                            panel = ComposerPanel.None
+                            focusRequester.requestFocus()
+                            keyboard?.show()
+                        } else {
+                            // 打开就地内联条，键盘完全不收起，0 弹窗 0 闪烁
+                            activeInsertKind = kind
+                            inlineUrlInput = ""
+                            inlineTitleInput = selected
+                            panel = ComposerPanel.None
+                        }
                     },
                     modifier = Modifier.padding(top = 4.dp),
                 )
@@ -345,63 +444,6 @@ internal fun ReplyComposer(
                 )
             }
         }
-    }
-
-    when (inserting) {
-        InsertKind.Image -> ImageInsertDialog(
-            hasCredentials = uploadCredentials != null,
-            onDismiss = { inserting = null },
-            onUpload = { uri ->
-                val file = prepareUploadFile(context, uri)
-                val aid = onUploadImage(file)
-                if (aid != null) {
-                    onValueChange(value.insertAtSelection("[attachimg]$aid[/attachimg]"))
-                } else {
-                    AppToast.show("上传失败，可能超出大小限制或凭据已过期")
-                }
-            },
-            onInsertUrl = { url ->
-                // 网络图片站点是直接引用的，不用过上传：上传接口只认本机文件
-                onValueChange(value.insertAtSelection("[img]$url[/img]"))
-            },
-        )
-        InsertKind.At -> TextInsertDialog(
-            title = "提到朋友",
-            label = "用户名",
-            onDismiss = { inserting = null },
-            onConfirm = { name -> onValueChange(value.insertAtSelection("@$name ")) },
-        )
-        InsertKind.Url -> TextInsertDialog(
-            title = "文字链接",
-            label = "链接网址",
-            onDismiss = { inserting = null },
-            onConfirm = { url -> onValueChange(value.insertAtSelection("[url=$url]$url[/url]")) },
-        )
-        InsertKind.Audio -> TextInsertDialog(
-            title = "音乐",
-            label = "音频地址",
-            onDismiss = { inserting = null },
-            onConfirm = { url -> onValueChange(value.insertAtSelection("[audio]$url[/audio]")) },
-        )
-        InsertKind.Video -> TextInsertDialog(
-            title = "视频",
-            label = "视频地址",
-            onDismiss = { inserting = null },
-            onConfirm = { url -> onValueChange(value.insertAtSelection("[media=x,500,375]$url[/media]")) },
-        )
-        InsertKind.Quote -> TextInsertDialog(
-            title = "引用",
-            label = "引用内容",
-            onDismiss = { inserting = null },
-            onConfirm = { text -> onValueChange(value.insertAtSelection("[quote]$text[/quote]")) },
-        )
-        InsertKind.Code -> TextInsertDialog(
-            title = "代码",
-            label = "代码",
-            onDismiss = { inserting = null },
-            onConfirm = { text -> onValueChange(value.insertAtSelection("[code]$text[/code]")) },
-        )
-        null -> Unit
     }
 }
 
@@ -443,23 +485,97 @@ private fun smileyRangesOf(text: String, smileyByCode: Map<String, Smiley>): Lis
     return found
 }
 
-/** 表情码染成透明色：文本长度不变，OffsetMapping 才仍能用 Identity，图片由上层按坐标贴。 */
-private fun AnnotatedString.withHiddenSmileys(smileyByCode: Map<String, Smiley>): AnnotatedString {
-    val source = text
-    if (smileyByCode.isEmpty()) return this
+/**
+ * 把正文里的表情码（`[#呵呵]`）染成透明，同时把 BBCode 标记（链接、引用、代码等）施加富文本视觉样式。
+ *
+ * 关键约束：字符总数与每个字符的下标必须 100% 保持不变，这样 OffsetMapping 用 Identity
+ * 才能杜绝任何输入法 IME 光标抖动或越界崩溃。
+ */
+private fun formatRichComposerText(
+    source: String,
+    smileyByCode: Map<String, Smiley>,
+    colors: com.aazhou.mtforum.ui.theme.MtfColors,
+): AnnotatedString {
     return buildAnnotatedString {
-        var index = 0
-        while (index < source.length) {
-            val close = if (source[index] == '[') source.indexOf(']', index + 1) else -1
-            if (close > index + 1 && smileyByCode.containsKey(source.substring(index, close + 1))) {
-                withStyle(SpanStyle(color = Color.Transparent)) {
-                    append(source.substring(index, close + 1))
-                }
-                index = close + 1
-            } else {
-                append(source[index])
-                index++
+        append(source)
+        if (source.isEmpty()) return@buildAnnotatedString
+
+        // 1. 表情码染成透明色（图片在 Overlay 层绘制）
+        if (smileyByCode.isNotEmpty() && source.contains('[')) {
+            val smileyRanges = smileyRangesOf(source, smileyByCode)
+            for ((range, _) in smileyRanges) {
+                addStyle(SpanStyle(color = Color.Transparent), range.first, range.last + 1)
             }
+        }
+
+        // 2. 文字链接富文本：[url=网址]链接文字[/url]
+        val urlRegex = Regex("""\[url=([^\]]+)\]([\s\S]*?)\[/url\]""", RegexOption.IGNORE_CASE)
+        for (match in urlRegex.findAll(source)) {
+            val entireRange = match.range
+            val openTagLen = match.groups[1]!!.range.first - entireRange.first // "[url="
+            val openTagEnd = match.groups[1]!!.range.last + 2 // 包含结尾 "]"
+            val textGroup = match.groups[2]!!
+
+            // 弱化 [url=网址] 前缀标签
+            addStyle(
+                SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp),
+                entireRange.first,
+                openTagEnd,
+            )
+            // 高亮链接文字：蓝色 + 下划线 + 加粗，呈现真实的链接属性
+            addStyle(
+                SpanStyle(
+                    color = Color(0xFF2563EB),
+                    textDecoration = TextDecoration.Underline,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                textGroup.range.first,
+                textGroup.range.last + 1,
+            )
+            // 弱化 [/url] 闭合标签
+            addStyle(
+                SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp),
+                textGroup.range.last + 1,
+                entireRange.last + 1,
+            )
+        }
+
+        // 3. 引用块富文本：[quote]...[/quote]
+        val quoteRegex = Regex("""\[quote\]([\s\S]*?)\[/quote\]""", RegexOption.IGNORE_CASE)
+        for (match in quoteRegex.findAll(source)) {
+            val entireRange = match.range
+            val textGroup = match.groups[1]!!
+            // 弱化标签
+            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), entireRange.first, textGroup.range.first)
+            // 引用内容：斜体 + 次级文本颜色
+            addStyle(SpanStyle(color = colors.textSecondary, fontStyle = FontStyle.Italic), textGroup.range.first, textGroup.range.last + 1)
+            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), textGroup.range.last + 1, entireRange.last + 1)
+        }
+
+        // 4. 代码块富文本：[code]...[/code]
+        val codeRegex = Regex("""\[code\]([\s\S]*?)\[/code\]""", RegexOption.IGNORE_CASE)
+        for (match in codeRegex.findAll(source)) {
+            val entireRange = match.range
+            val textGroup = match.groups[1]!!
+            // 弱化标签
+            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), entireRange.first, textGroup.range.first)
+            // 代码内容：等宽字体 + 浅底色
+            addStyle(
+                SpanStyle(fontFamily = FontFamily.Monospace, background = colors.textHint.copy(alpha = 0.12f)),
+                textGroup.range.first,
+                textGroup.range.last + 1,
+            )
+            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), textGroup.range.last + 1, entireRange.last + 1)
+        }
+
+        // 5. 多媒体标签弱化：[img]、[audio]、[media]、[flash]、[attachimg]
+        val mediaRegex = Regex("""\[(img|audio|media[^\]]*|flash|attachimg)\]([\s\S]*?)\[/\1\]""", RegexOption.IGNORE_CASE)
+        for (match in mediaRegex.findAll(source)) {
+            val entireRange = match.range
+            val textGroup = match.groups[2]!!
+            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), entireRange.first, textGroup.range.first)
+            addStyle(SpanStyle(color = colors.textSecondary, fontSize = 13.sp), textGroup.range.first, textGroup.range.last + 1)
+            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), textGroup.range.last + 1, entireRange.last + 1)
         }
     }
 }
@@ -509,15 +625,15 @@ private fun SmileyOverlay(
     }
 }
 
-/** 「插入」面板里的条目，也决定点开后弹哪种输入框。 */
+/** 「插入」面板里的条目：与网页端 7 项完全一致。 */
 private enum class InsertKind(val label: String) {
     Url("文字链接"),
-    Image("网络图片"),
-    Audio("音乐"),
-    Video("视频"),
+    NetImage("网络图片"),
+    Audio("MP3 音乐"),
+    Video("网络视频"),
+    Flash("Flash"),
     Quote("引用"),
     Code("代码"),
-    At("提到朋友"),
 }
 
 /** 在光标处插入 [text]，插完光标落在插入内容里第 [cursorOffsetInInserted] 个字符处。 */
@@ -530,6 +646,40 @@ private fun TextFieldValue.insertAtSelection(
     val merged = this.text.substring(0, start) + text + this.text.substring(end)
     val cursor = start + cursorOffsetInInserted.coerceIn(0, text.length)
     return copy(text = merged, selection = TextRange(cursor))
+}
+
+/**
+ * 包装当前选区，或在光标处插入带前缀/后缀的模板；
+ * 若无选区，光标自动停在 [prefix] 之后供用户立即输入。
+ */
+private fun TextFieldValue.wrapSelectionOrInsert(
+    prefix: String,
+    suffix: String,
+): TextFieldValue {
+    val start = min(selection.min, selection.max).coerceIn(0, text.length)
+    val end = max(selection.min, selection.max).coerceIn(0, text.length)
+    val selected = text.substring(start, end)
+    return if (selected.isNotEmpty()) {
+        val merged = text.substring(0, start) + prefix + selected + suffix + text.substring(end)
+        copy(text = merged, selection = TextRange(start + prefix.length + selected.length + suffix.length))
+    } else {
+        val merged = text.substring(0, start) + prefix + suffix + text.substring(end)
+        copy(text = merged, selection = TextRange(start + prefix.length))
+    }
+}
+
+/** 包装或插入链接 BBCode，光标停在网址位置。 */
+private fun TextFieldValue.wrapUrl(): TextFieldValue {
+    val start = min(selection.min, selection.max).coerceIn(0, text.length)
+    val end = max(selection.min, selection.max).coerceIn(0, text.length)
+    val selected = text.substring(start, end)
+    return if (selected.isNotEmpty()) {
+        val merged = text.substring(0, start) + "[url=]" + selected + "[/url]" + text.substring(end)
+        copy(text = merged, selection = TextRange(start + 5))
+    } else {
+        val merged = text.substring(0, start) + "[url=][/url]" + text.substring(end)
+        copy(text = merged, selection = TextRange(start + 5))
+    }
 }
 
 @Composable
@@ -667,11 +817,11 @@ private fun SmileyCell(smiley: Smiley, onPick: (String) -> Unit, modifier: Modif
     )
 }
 
-/** 「插入」面板：列出可插入的标记类型（@朋友 在工具栏单独有入口）。 */
+/** 「插入」面板：列出可插入的标记类型，与网页端 7 项完全一致。 */
 @Composable
 private fun InsertPanel(onPick: (InsertKind) -> Unit, modifier: Modifier = Modifier) {
     LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(InsertKind.values().filter { it != InsertKind.At }) { kind ->
+        items(InsertKind.values()) { kind ->
             Text(
                 kind.label,
                 style = MaterialTheme.typography.labelMedium,
@@ -685,129 +835,185 @@ private fun InsertPanel(onPick: (InsertKind) -> Unit, modifier: Modifier = Modif
     }
 }
 
-/**
- * 图片插入：相册选图后压到站点限制内再上传，插 `[attachimg]id[/attachimg]`；
- * 也可直接贴网络图片地址，插 `[img]url[/img]`。
- */
+/** 就地内联插入条：在键盘保持升起状态下直接输入网址/标题并插入，0 弹窗 0 闪烁。 */
 @Composable
-private fun ImageInsertDialog(
-    hasCredentials: Boolean,
+private fun InlineInsertBar(
+    kind: InsertKind,
+    urlInput: String,
+    titleInput: String,
+    onUrlChange: (String) -> Unit,
+    onTitleChange: (String) -> Unit,
     onDismiss: () -> Unit,
-    onUpload: suspend (Uri) -> Unit,
-    onInsertUrl: (String) -> Unit,
+    onConfirm: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
-    var urlMode by remember { mutableStateOf(false) }
-    var url by remember { mutableStateOf("") }
+    val colors = LocalMtfColors.current
+    val isUrl = kind == InsertKind.Url
+    val ready = if (isUrl) urlInput.isNotBlank() else urlInput.isNotBlank()
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null || !hasCredentials) return@rememberLauncherForActivityResult
-        busy = true
-        scope.launch {
-            try {
-                onUpload(uri)
-                onDismiss()
-            } catch (e: Exception) {
-                AppToast.show(e.message ?: "上传失败")
-            } finally {
-                busy = false
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(colors.background, AbsoluteRoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = kind.label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+            )
+            BasicTextField(
+                value = urlInput,
+                onValueChange = onUrlChange,
+                singleLine = true,
+                textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                decorationBox = { inner ->
+                    if (urlInput.isEmpty()) {
+                        Text(
+                            text = when (kind) {
+                                InsertKind.Url -> "请输入链接网址 (https://...)"
+                                InsertKind.NetImage -> "请输入图片网址"
+                                InsertKind.Audio -> "请输入音频网址"
+                                InsertKind.Video -> "请输入视频网址"
+                                InsertKind.Flash -> "请输入 Flash 网址"
+                                InsertKind.Quote -> "请输入引用内容"
+                                InsertKind.Code -> "请输入代码"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.textHint,
+                        )
+                    }
+                    inner()
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .background(colors.surface, AbsoluteRoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            )
+            Text(
+                text = "插入",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (ready) Color.White else colors.textHint,
+                modifier = Modifier
+                    .background(
+                        if (ready) ComposerPublishColor else colors.textHint.copy(alpha = 0.2f),
+                        AbsoluteRoundedCornerShape(50),
+                    )
+                    .clickable(enabled = ready, onClick = onConfirm)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+            Text(
+                text = "✕",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textHint,
+                modifier = Modifier
+                    .clickable(onClick = onDismiss)
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+            )
+        }
+        if (isUrl) {
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "文字",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.textSecondary,
+                )
+                BasicTextField(
+                    value = titleInput,
+                    onValueChange = onTitleChange,
+                    singleLine = true,
+                    textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    decorationBox = { inner ->
+                        if (titleInput.isEmpty()) {
+                            Text("显示文字（选填，留空则同网址）", style = MaterialTheme.typography.bodySmall, color = colors.textHint)
+                        }
+                        inner()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.surface, AbsoluteRoundedCornerShape(8.dp))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
             }
         }
     }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (urlMode) "网络图片" else "插入图片") },
-        text = {
-            when {
-                urlMode -> BasicTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    singleLine = true,
-                    textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                busy -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text("上传中…", style = MaterialTheme.typography.bodyMedium)
-                }
-                else -> Text(
-                    if (hasCredentials) {
-                        "从相册选图上传，超过 1MB 会自动压缩"
-                    } else {
-                        "上传凭据已失效，返回帖子重进试试"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        },
-        confirmButton = {
-            if (urlMode) {
-                TextButton(
-                    enabled = url.isNotBlank(),
-                    onClick = {
-                        onInsertUrl(url.trim())
-                        urlMode = false
-                        onDismiss()
-                    },
-                ) { Text("插入") }
-            } else {
-                TextButton(
-                    enabled = hasCredentials && !busy,
-                    onClick = {
-                        picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    },
-                ) { Text("选择图片") }
-            }
-        },
-        dismissButton = {
-            Row {
-                if (!urlMode && !busy) {
-                    TextButton(onClick = { urlMode = true }) { Text("用网址") }
-                }
-                TextButton(onClick = { if (urlMode) urlMode = false else onDismiss() }) {
-                    Text(if (urlMode) "返回" else "取消")
-                }
-            }
-        },
-    )
 }
 
-/** 单行文本输入弹窗（@朋友、链接、音频、视频、引用、代码共用）。 */
-@Composable
-private fun TextInsertDialog(
-    title: String,
-    label: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
-    var text by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                Text(label, style = MaterialTheme.typography.labelMedium, color = LocalMtfColors.current.textSecondary)
-                Spacer(Modifier.height(6.dp))
-                BasicTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    singleLine = true,
-                    textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+/**
+ * 成对 BBCode 标签匹配正则（audio、url、img、media、flash、quote、code、attachimg）。
+ * Group 1: 开始标签（如 `[audio]` 或 `[url=...]`）
+ * Group 2: 标签名
+ * Group 3: 中间包含的内容（可为空）
+ * Group 4: 闭合标签（如 `[/audio]` 或 `[/url]`）
+ */
+private val COMPOSER_TAG_PAIR_REGEX = Regex(
+    """(\[(url(?:=[^\]]*)?|audio|img|media(?:=[^\]]*)?|flash|quote|code|attachimg)\])([\s\S]*?)(\[/(?:url|audio|img|media|flash|quote|code|attachimg)\])""",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * 智能成对标签退格：
+ * 当用户按退格键（Backspace）删除了某个 BBCode 标签的一部分，或在标签边缘退格时，
+ * 将两边的配对代码（如 `[audio]` 与 `[/audio]`）一体化删除：
+ * - 若内容为空（如 `[audio][/audio]`），整对标签彻底消失；
+ * - 若内容非空（如 `[audio]哈哈[/audio]`），两边的代码整体移除，保留正文内容 `哈哈`。
+ */
+internal fun handleTagPairDeletion(oldValue: TextFieldValue, newValue: TextFieldValue): TextFieldValue? {
+    val oldText = oldValue.text
+    val deletedIndex = newValue.selection.start
+    if (deletedIndex < 0 || deletedIndex >= oldText.length) return null
+
+    val matches = COMPOSER_TAG_PAIR_REGEX.findAll(oldText)
+    for (match in matches) {
+        val openGroup = match.groups[1] ?: continue
+        val contentGroup = match.groups[3] ?: continue
+        val closeGroup = match.groups[4] ?: continue
+        val entireRange = match.range
+
+        val openRange = openGroup.range
+        val contentRange = contentGroup.range
+        val closeRange = closeGroup.range
+
+        // 判定是否在删除该标签对：
+        // 1. 被删字符落在闭合标签内（例如在 [/audio] 后按退格）
+        // 2. 被删字符落在开始标签内（例如在 [audio] 处按退格）
+        // 3. 内容为空且在两对标签交界处退格
+        val isDeletingCloseTag = deletedIndex in closeRange
+        val isDeletingOpenTag = deletedIndex in openRange
+        val isDeletingEmptyPair = contentRange.isEmpty() && (deletedIndex == openRange.last || deletedIndex == closeRange.first)
+
+        if (isDeletingCloseTag || isDeletingOpenTag || isDeletingEmptyPair) {
+            val content = if (contentRange.isEmpty()) "" else oldText.substring(contentRange.first, contentRange.last + 1)
+            return if (content.isEmpty()) {
+                // 内容为空：彻底把整个 [tag][/tag] 删除
+                val resultText = oldText.removeRange(entireRange.first, entireRange.last + 1)
+                TextFieldValue(resultText, selection = TextRange(entireRange.first))
+            } else {
+                // 内容非空：将两边的配对标签代码一体化删除，保留中间的内容文本
+                val resultText = oldText.substring(0, entireRange.first) + content + oldText.substring(entireRange.last + 1)
+                val newCursor = if (isDeletingCloseTag) {
+                    entireRange.first + content.length
+                } else {
+                    entireRange.first
+                }
+                TextFieldValue(resultText, selection = TextRange(newCursor))
             }
-        },
-        confirmButton = {
-            TextButton(enabled = text.isNotBlank(), onClick = { onConfirm(text.trim()) }) { Text("插入") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
+        }
+    }
+    return null
 }
 
 /** 把相册选中的图压到站点限制内（长边 1500px、≤1MB），返回待上传的缓存文件。 */
