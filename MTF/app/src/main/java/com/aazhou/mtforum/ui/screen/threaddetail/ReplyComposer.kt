@@ -43,6 +43,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.ripple
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -134,6 +135,7 @@ internal fun ReplyComposer(
     uploadCredentials: Pair<String, String>?,
     onUploadImage: suspend (File) -> String?,
     onSend: () -> Unit,
+    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalMtfColors.current
@@ -289,9 +291,11 @@ internal fun ReplyComposer(
         keyboard?.show()
     }
 
-    // 表情面板展开时按返回键：收起表情并唤出键盘，与点表情按钮同一路径，高度全程锁定
+    // 表情面板展开时按返回键：直接整体收起输入面板，与点遮罩收起面板同一路子，
+    // 不再 intermediate 地先把键盘唤出来
     BackHandler(enabled = panel == ComposerPanel.Smiley) {
-        switchToKeyboard()
+        panel = ComposerPanel.None
+        onDismiss()
     }
 
     // 交接期只有两个出口：键盘确实升起来并停稳（改由 ime 接管、表情面板退场），或者
@@ -323,10 +327,12 @@ internal fun ReplyComposer(
     }
 
     val isSmileyOpen = panel == ComposerPanel.Smiley
-    // 底部槽高度只有一个真源：表情面板展开、切键盘交接期一律锁死在捕获到的键盘高度，
-    // 其余时候跟随 ime（键盘起落必须让位），两者都没有就只留导航栏
+    // 底部槽高度只有一个真源：表情面板展开时锁死在捕获到的键盘高度，交接期改由那 36dp
+    // 子栏承载快捷表情行（键盘升起第一帧它就出现，底部槽相应少让 36dp），其余时候跟随
+    // ime（键盘起落必须让位），两者都没有就只留导航栏
     val bottomSlotHeight = when {
-        isSmileyOpen || keyboardHandoff -> smileySlot + ComposerSubBarHeight
+        isSmileyOpen && !keyboardHandoff -> smileySlot + ComposerSubBarHeight
+        keyboardHandoff -> smileySlot
         imeHeight > 0.dp -> imeHeight
         else -> navHeight
     }
@@ -591,7 +597,7 @@ internal fun ReplyComposer(
                         .height(ComposerSubBarHeight)
                         .padding(horizontal = 14.dp, vertical = 4.dp),
                 )
-            } else if (panel == ComposerPanel.None && !keyboardHandoff) {
+            } else if (panel == ComposerPanel.None || keyboardHandoff) {
                 RecentSmileyRow(
                     smileys = recentRow,
                     onPick = { code -> pickSmiley(code) },
@@ -608,7 +614,9 @@ internal fun ReplyComposer(
                     .fillMaxWidth()
                     .height(bottomSlotHeight),
             ) {
-                if (panel == ComposerPanel.Smiley || keyboardHandoff) {
+                // 一旦开始切回键盘，表情页立刻让位变空白：底部槽只剩一块实色区域等键盘
+                // 升起来填充，不再让表情网格被键盘一点点盖上去
+                if (panel == ComposerPanel.Smiley && !keyboardHandoff) {
                     SmileyPanel(
                         packs = smileyPacks,
                         recentCodes = recentCodes,
@@ -991,43 +999,53 @@ private fun SmileyPanel(
         }
         else -> packs[packIndex - 1].items
     }
-    Column(modifier) {
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(bottom = 6.dp),
-        ) {
-            item {
-                SmileyPackTab(selected = packIndex == 0, onClick = { packIndex = 0 }) {
-                    Icon(
-                        painterResource(R.drawable.ic_recent),
-                        contentDescription = "最近使用",
-                        tint = LocalMtfColors.current.textSecondary,
-                        modifier = Modifier.size(24.dp),
-                    )
+    BoxWithConstraints(modifier) {
+        // 网格区高度 = 面板高 - 分类栏（40dp 标签 + 6dp 底部内边距）- 4dp 间隔。按 7 行均分格子
+        // 高度，任何键盘高度下都刚好铺满 7 行，不会出现矮键盘只露出半页的情况
+        val gridHeight = maxHeight - SmileyPackBarHeight - 4.dp
+        val cellHeight = ((gridHeight - 8.dp - 6.dp * (SmileyGridRows - 1)) / SmileyGridRows)
+            .coerceAtLeast(24.dp)
+        val iconSize = cellHeight.coerceAtMost(34.dp)
+        Column(Modifier.fillMaxSize()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 6.dp),
+            ) {
+                item {
+                    SmileyPackTab(selected = packIndex == 0, onClick = { packIndex = 0 }) {
+                        Icon(
+                            painterResource(R.drawable.ic_recent),
+                            contentDescription = "最近使用",
+                            tint = LocalMtfColors.current.textSecondary,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                }
+                itemsIndexed(packs) { index, pack ->
+                    SmileyPackTab(selected = packIndex == index + 1, onClick = { packIndex = index + 1 }) {
+                        AsyncImage(
+                            model = pack.items.first().url,
+                            contentDescription = pack.name,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
                 }
             }
-            itemsIndexed(packs) { index, pack ->
-                SmileyPackTab(selected = packIndex == index + 1, onClick = { packIndex = index + 1 }) {
-                    AsyncImage(
-                        model = pack.items.first().url,
-                        contentDescription = pack.name,
-                        modifier = Modifier.size(24.dp),
-                    )
+            Spacer(Modifier.height(4.dp))
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(SmileyGridColumns),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
+            ) {
+                emojis.forEach { smiley ->
+                    item(key = smiley.code) {
+                        SmileyCell(smiley, onPick, Modifier.height(cellHeight), iconSize)
+                    }
                 }
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(8),
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            contentPadding = PaddingValues(vertical = 4.dp),
-        ) {
-            emojis.forEach { smiley ->
-                item(key = smiley.code) { SmileyCell(smiley, onPick) }
             }
         }
     }
@@ -1075,7 +1093,12 @@ private fun RecentSmileyRow(
 }
 
 @Composable
-private fun SmileyCell(smiley: Smiley, onPick: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun SmileyCell(
+    smiley: Smiley,
+    onPick: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = 24.dp,
+) {
     Box(
         modifier = modifier
             .fillMaxHeight()
@@ -1090,7 +1113,7 @@ private fun SmileyCell(smiley: Smiley, onPick: (String) -> Unit, modifier: Modif
         AsyncImage(
             model = smiley.url,
             contentDescription = smiley.code,
-            modifier = Modifier.size(24.dp),
+            modifier = Modifier.size(iconSize),
         )
     }
 }
@@ -1380,6 +1403,13 @@ private const val RecentSmileyLimit = 8
 
 /** 工具栏下方的子栏高度（快捷表情行、排版插入栏）。两者高度完全保持一致（36.dp）。 */
 private val ComposerSubBarHeight = 36.dp
+
+/** 表情网格规格：6 列 7 行。格子高度按面板实际高度均分，键盘再矮也是整 7 行。 */
+private const val SmileyGridColumns = 6
+private const val SmileyGridRows = 7
+
+/** 表情包分类栏高度：40dp 标签 + 6dp 底部内边距。 */
+private val SmileyPackBarHeight = 46.dp
 
 /** 低于这个高度的 ime 不算软键盘（分屏预览、悬浮窗边缘的残值）。 */
 private val MinKeyboardHeight = 100.dp

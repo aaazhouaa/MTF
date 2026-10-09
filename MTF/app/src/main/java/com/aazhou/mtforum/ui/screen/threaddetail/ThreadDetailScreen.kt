@@ -730,6 +730,7 @@ fun ThreadDetailScreen(
                         viewModel.reply(draft.text)
                     }
                 },
+                onDismiss = { composerVisible = false },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
