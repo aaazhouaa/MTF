@@ -166,15 +166,18 @@ internal fun ReplyComposer(
     var activeInsertKind by remember { mutableStateOf<InsertKind?>(null) }
     var inlineUrlInput by remember { mutableStateOf("") }
     var inlineTitleInput by remember { mutableStateOf("") }
+    var pendingSelection by remember { mutableStateOf<TextRange?>(null) }
 
     val smileyByCode = remember(smileyPacks) {
         smileyPacks.flatMap { it.items }.associateBy { it.code }
     }
 
-    val smileyVisualTransformation = remember(smileyByCode, colors) {
+    val primaryColor = MaterialTheme.colorScheme.primary
+
+    val smileyVisualTransformation = remember(smileyByCode, colors, primaryColor) {
         VisualTransformation { text ->
             TransformedText(
-                formatRichComposerText(text.text, smileyByCode, colors),
+                formatRichComposerText(text.text, smileyByCode, colors, primaryColor),
                 OffsetMapping.Identity,
             )
         }
@@ -361,6 +364,7 @@ internal fun ReplyComposer(
                     CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 } else {
                     val publishReady = value.text.isNotBlank()
+                    val primaryColor = MaterialTheme.colorScheme.primary
                     Text(
                         "发布",
                         style = MaterialTheme.typography.labelLarge,
@@ -368,7 +372,7 @@ internal fun ReplyComposer(
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .background(
-                                if (publishReady) ComposerPublishColor else colors.textHint.copy(alpha = 0.2f),
+                                if (publishReady) primaryColor.copy(alpha = 0.69f) else colors.textHint.copy(alpha = 0.2f),
                                 AbsoluteRoundedCornerShape(50),
                             )
                             .clickable(enabled = publishReady, onClick = onSend)
@@ -413,7 +417,13 @@ internal fun ReplyComposer(
                                     InsertKind.Quote -> "[quote]${inlineUrlInput.trim()}[/quote]"
                                     InsertKind.Code -> "[code]${inlineUrlInput.trim()}[/code]"
                                 }
-                                onValueChange(value.insertAtSelection(inserted))
+                                val targetRange = pendingSelection ?: value.selection
+                                val start = min(targetRange.min, targetRange.max).coerceIn(0, value.text.length)
+                                val end = max(targetRange.min, targetRange.max).coerceIn(0, value.text.length)
+                                val merged = value.text.substring(0, start) + inserted + value.text.substring(end)
+                                val cursor = start + inserted.length
+                                onValueChange(value.copy(text = merged, selection = TextRange(cursor)))
+                                pendingSelection = null
                                 activeInsertKind = null
                                 focusRequester.requestFocus()
                                 keyboard?.show()
@@ -424,7 +434,9 @@ internal fun ReplyComposer(
                         RecentSmileyRow(
                             smileys = recentRow,
                             onPick = { code -> pickSmiley(code) },
-                            modifier = Modifier.padding(horizontal = 14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 4.dp),
                         )
                     }
                 }
@@ -461,6 +473,7 @@ internal fun ReplyComposer(
                             activeInsertKind = kind
                             inlineUrlInput = ""
                             inlineTitleInput = selected
+                            pendingSelection = value.selection
                             panel = ComposerPanel.None
                         }
                     },
@@ -528,6 +541,7 @@ private fun formatRichComposerText(
     source: String,
     smileyByCode: Map<String, Smiley>,
     colors: com.aazhou.mtforum.ui.theme.MtfColors,
+    primaryColor: Color,
 ): AnnotatedString {
     return buildAnnotatedString {
         append(source)
@@ -584,7 +598,7 @@ private fun formatRichComposerText(
                 closeRange = closeGroup.range,
                 contentRange = contentGroup.range,
                 contentStyle = SpanStyle(
-                    color = Color(0xFF2563EB),
+                    color = primaryColor,
                     textDecoration = TextDecoration.Underline,
                     fontWeight = FontWeight.SemiBold,
                 ),
@@ -895,11 +909,7 @@ private fun RecentSmileyRow(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier
-            .fillMaxWidth()
-            // 不占满剩余高度：这一行现在是内容列的直接子节点，fillMaxHeight 会把它一路撑到
-            // 键盘正上方，中间空出几百 dp
-            .padding(top = EmojiRowToolbarGap),
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -915,20 +925,28 @@ private fun RecentSmileyRow(
 
 @Composable
 private fun SmileyCell(smiley: Smiley, onPick: (String) -> Unit, modifier: Modifier = Modifier) {
-    AsyncImage(
-        model = smiley.url,
-        contentDescription = smiley.code,
+    Box(
         modifier = modifier
-            .aspectRatio(1f)
-            .padding(8.dp)
-            .clickable { onPick(smiley.code) },
-    )
+            .clickable { onPick(smiley.code) }
+            .padding(vertical = 1.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        AsyncImage(
+            model = smiley.url,
+            contentDescription = smiley.code,
+            modifier = Modifier.size(26.dp),
+        )
+    }
 }
 
 /** 「插入」面板：列出可插入的标记类型（粗斜体/下划线/删除线排在文字链接前）。 */
 @Composable
 private fun InsertPanel(onPick: (InsertKind) -> Unit, modifier: Modifier = Modifier) {
-    LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         items(InsertKind.values()) { kind ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -956,7 +974,7 @@ private fun InsertPanel(onPick: (InsertKind) -> Unit, modifier: Modifier = Modif
     }
 }
 
-/** 就地内联插入条：在键盘保持升起状态下直接输入网址/标题并插入，0 弹窗 0 闪烁。 */
+/** 就地内联插入条：打开即自动聚焦输入框并保持软键盘升起，保留选中状态与内容。 */
 @Composable
 private fun InlineInsertBar(
     kind: InsertKind,
@@ -969,8 +987,16 @@ private fun InlineInsertBar(
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalMtfColors.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val urlFocusRequester = remember { FocusRequester() }
     val isUrl = kind == InsertKind.Url
     val ready = if (isUrl) urlInput.isNotBlank() else urlInput.isNotBlank()
+
+    LaunchedEffect(kind) {
+        delay(60)
+        urlFocusRequester.requestFocus()
+        keyboard?.show()
+    }
 
     Column(
         modifier = modifier
@@ -995,6 +1021,11 @@ private fun InlineInsertBar(
                 singleLine = true,
                 textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier
+                    .weight(1f)
+                    .background(colors.surface, AbsoluteRoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .focusRequester(urlFocusRequester),
                 decorationBox = { inner ->
                     if (urlInput.isEmpty()) {
                         Text(
@@ -1017,18 +1048,15 @@ private fun InlineInsertBar(
                     }
                     inner()
                 },
-                modifier = Modifier
-                    .weight(1f)
-                    .background(colors.surface, AbsoluteRoundedCornerShape(8.dp))
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
             )
+            val primaryColor = MaterialTheme.colorScheme.primary
             Text(
                 text = "插入",
                 style = MaterialTheme.typography.labelMedium,
                 color = if (ready) Color.White else colors.textHint,
                 modifier = Modifier
                     .background(
-                        if (ready) ComposerPublishColor else colors.textHint.copy(alpha = 0.2f),
+                        if (ready) primaryColor.copy(alpha = 0.69f) else colors.textHint.copy(alpha = 0.2f),
                         AbsoluteRoundedCornerShape(50),
                     )
                     .clickable(enabled = ready, onClick = onConfirm)
