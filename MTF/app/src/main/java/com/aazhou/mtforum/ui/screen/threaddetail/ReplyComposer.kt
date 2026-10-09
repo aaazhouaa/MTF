@@ -1,8 +1,10 @@
 package com.aazhou.mtforum.ui.screen.threaddetail
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +42,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.ripple
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -54,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
@@ -85,6 +92,7 @@ import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.ContentScale
@@ -160,6 +168,7 @@ internal fun ReplyComposer(
     // 打开面板即聚焦并把键盘请出来
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
+        keyboard?.show()
     }
 
     val density = LocalDensity.current
@@ -231,23 +240,95 @@ internal fun ReplyComposer(
     val imeHeight = with(density) { imeInsets.getBottom(density).toDp() }
     val navHeight = with(density) { navInsets.getBottom(density).toDp() }
 
-    var keyboardHeight by remember { mutableStateOf(ComposerSmileyPanelTotalHeight) }
-    if (imeHeight > 100.dp && imeHeight != keyboardHeight) {
-        keyboardHeight = maxOf(ComposerSmileyPanelTotalHeight, imeHeight)
+    // 表情面板占位高度：打开那一刻捕获到的真实键盘高度，之后恒定不变，直到下次再打开。
+    // 表情面板与键盘共用这一个底部槽，二者严格等高，切换时面板既不上窜也不下塌
+    var smileySlot by remember {
+        mutableStateOf(KeyboardTracker.getInitialHeight(context, density))
     }
-    val isKeyboardOpen = imeHeight > 100.dp
 
-    LaunchedEffect(isKeyboardOpen) {
-        if (isKeyboardOpen && panel == ComposerPanel.Smiley) {
+    var keyboardHeight by remember {
+        mutableStateOf(KeyboardTracker.getInitialHeight(context, density))
+    }
+
+    // 只在键盘停稳之后记录它的高度。起落动画途中的 ime 值是中间值，键盘收起时高度一路
+    // 递减，边收边记会把记录值越写越小，之后打开表情面板就按这个残值占位，面板明显比
+    // 刚才的键盘矮一截。连续多帧同一高度才算停稳，双向更新，切换更矮的键盘也能跟上
+    LaunchedEffect(Unit) {
+        var lastPx = -1
+        var stableFrames = 0
+        while (true) {
+            withFrameNanos { }
+            val px = imeInsets.getBottom(density)
+            if (px > 0) {
+                if (px == lastPx) stableFrames++ else { lastPx = px; stableFrames = 0 }
+                if (stableFrames >= STABLE_KEYBOARD_FRAMES) {
+                    val height = with(density) { px.toDp() }
+                    if (height > MinKeyboardHeight) {
+                        keyboardHeight = height
+                        KeyboardTracker.save(context, px)
+                    }
+                    lastPx = -1
+                    stableFrames = 0
+                }
+            } else {
+                lastPx = -1
+                stableFrames = 0
+            }
+        }
+    }
+
+    // 从表情面板切回键盘的交接期：期间底部槽仍锁死在表情面板的高度，键盘从屏幕底部
+    // 升起、把表情面板逐步盖住，升到位后才改由 ime 接管，全程高度不变
+    var keyboardHandoff by remember { mutableStateOf(false) }
+
+    fun switchToKeyboard() {
+        if (panel == ComposerPanel.Smiley) {
+            keyboardHandoff = true
+        }
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
+
+    // 表情面板展开时按返回键：收起表情并唤出键盘，与点表情按钮同一路径，高度全程锁定
+    BackHandler(enabled = panel == ComposerPanel.Smiley) {
+        switchToKeyboard()
+    }
+
+    // 交接期只有两个出口：键盘确实升起来并停稳（改由 ime 接管、表情面板退场），或者
+    // 半天没动静（放弃交接，表情面板原地留在原位，高度依旧不变）。不用固定时长的兜底：
+    // 到点硬切会把面板从锁定高度直接掉到当时的 ime 高度，键盘起得慢一下就塌一截
+    LaunchedEffect(keyboardHandoff) {
+        if (!keyboardHandoff) return@LaunchedEffect
+        var lastPx = -1
+        var stableFrames = 0
+        var idleFrames = 0
+        while (keyboardHandoff) {
+            withFrameNanos { }
+            val px = imeInsets.getBottom(density)
+            if (px > 0) {
+                idleFrames = 0
+                if (px == lastPx) stableFrames++ else { lastPx = px; stableFrames = 0 }
+                if (stableFrames >= STABLE_KEYBOARD_FRAMES) break
+            } else {
+                lastPx = -1
+                stableFrames = 0
+                idleFrames++
+                if (idleFrames >= HANDOFF_GIVEUP_FRAMES) break
+            }
+        }
+        keyboardHandoff = false
+        if (imeInsets.getBottom(density) > 0 && panel == ComposerPanel.Smiley) {
             panel = ComposerPanel.None
         }
     }
 
     val isSmileyOpen = panel == ComposerPanel.Smiley
-    val bottomSlotHeight = if (isSmileyOpen) {
-        maxOf(keyboardHeight, imeHeight)
-    } else {
-        maxOf(navHeight, imeHeight)
+    // 底部槽高度只有一个真源：表情面板展开、切键盘交接期一律锁死在捕获到的键盘高度，
+    // 其余时候跟随 ime（键盘起落必须让位），两者都没有就只留导航栏
+    val bottomSlotHeight = when {
+        isSmileyOpen || keyboardHandoff -> smileySlot + ComposerSubBarHeight
+        imeHeight > 0.dp -> imeHeight
+        else -> navHeight
     }
 
     Box(
@@ -321,6 +402,19 @@ internal fun ReplyComposer(
                             }
                         },
                     )
+                    // 表情面板展开时，点击输入文字区域平滑切回键盘
+                    if (panel == ComposerPanel.Smiley) {
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                ) {
+                                    switchToKeyboard()
+                                },
+                        )
+                    }
                 }
                 // 文字下方的空白点击区：点击跳转到末尾，不与文字区域的选词/拖拽手势重叠
                 Spacer(
@@ -332,9 +426,7 @@ internal fun ReplyComposer(
                             interactionSource = remember { MutableInteractionSource() },
                         ) {
                             onValueChange(value.copy(selection = TextRange(value.text.length)))
-                            if (panel == ComposerPanel.Smiley) panel = ComposerPanel.None
-                            focusRequester.requestFocus()
-                            keyboard?.show()
+                            switchToKeyboard()
                         },
                 )
             }
@@ -352,11 +444,18 @@ internal fun ReplyComposer(
                 ) {
                     ComposerToolButton(R.drawable.ic_smiley, "表情") {
                         if (panel == ComposerPanel.Smiley) {
-                            panel = ComposerPanel.None
-                            focusRequester.requestFocus()
-                            keyboard?.show()
+                            switchToKeyboard()
                         } else {
+                            keyboardHandoff = false
+                            // 捕获这一刻的真实键盘高度：键盘还开着就直接取现值，正在收起或
+                            // 已经收起就退回停稳记录值。这样表情面板与刚才那个键盘严格等高
+                            smileySlot = if (imeHeight > MinKeyboardHeight && imeHeight >= keyboardHeight) {
+                                imeHeight
+                            } else {
+                                keyboardHeight
+                            }
                             panel = ComposerPanel.Smiley
+                            focusManager.clearFocus()
                             keyboard?.hide()
                         }
                     }
@@ -369,10 +468,12 @@ internal fun ReplyComposer(
                     }
                     ComposerToolButton(R.drawable.ic_at, "提到朋友") {
                         onValueChange(value.wrapSelectionOrInsert("@", " "))
-                        focusRequester.requestFocus()
-                        keyboard?.show()
+                        switchToKeyboard()
                     }
                     ComposerToolButton(R.drawable.ic_add, "插入") {
+                        if (panel == ComposerPanel.Smiley) {
+                            keyboardHandoff = true
+                        }
                         panel = if (panel == ComposerPanel.Insert) ComposerPanel.None else ComposerPanel.Insert
                         focusRequester.requestFocus()
                         keyboard?.show()
@@ -485,14 +586,18 @@ internal fun ReplyComposer(
                             panel = ComposerPanel.None
                         }
                     },
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(ComposerSubBarHeight)
+                        .padding(horizontal = 14.dp, vertical = 4.dp),
                 )
-            } else if (panel == ComposerPanel.None) {
+            } else if (panel == ComposerPanel.None && !keyboardHandoff) {
                 RecentSmileyRow(
                     smileys = recentRow,
                     onPick = { code -> pickSmiley(code) },
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(ComposerSubBarHeight)
                         .padding(horizontal = 14.dp, vertical = 4.dp),
                 )
             }
@@ -503,7 +608,7 @@ internal fun ReplyComposer(
                     .fillMaxWidth()
                     .height(bottomSlotHeight),
             ) {
-                if (panel == ComposerPanel.Smiley) {
+                if (panel == ComposerPanel.Smiley || keyboardHandoff) {
                     SmileyPanel(
                         packs = smileyPacks,
                         recentCodes = recentCodes,
@@ -739,34 +844,39 @@ private fun SmileyOverlay(
     layout: TextLayoutResult?,
     smileyByCode: Map<String, Smiley>,
 ) {
-    if (layout == null) return
-    // 区间只能按布局自己的文本算：插入表情时文本先变、布局回调后到，用旧的布局配新的区间
-    // 会 getBoundingBox 越界直接崩（offset 超出 [0, 0)）。对不上就等下一帧，不画这一帧
+    if (layout == null || smileyByCode.isEmpty()) return
+    // 区间按布局自己的文本算，确保坐标计算绝对安全；不因 text 与 layout 存在单帧时差而直接 return，
+    // 彻底消除插入新表情时已有表情整帧丢失导致的闪烁。
     val source = layout.layoutInput.text.text
-    if (source != text || smileyByCode.isEmpty()) return
     val ranges = remember(source, smileyByCode) { smileyRangesOf(source, smileyByCode) }
     if (ranges.isEmpty()) return
     val density = LocalDensity.current
     Box(Modifier.fillMaxSize()) {
         ranges.forEach { (range, code) ->
             val smiley = smileyByCode[code] ?: return@forEach
+            if (range.first >= layout.layoutInput.text.length) return@forEach
             val first = layout.getBoundingBox(range.first)
-            val last = if (range.last > range.first) layout.getBoundingBox(range.last) else first
+            val last = if (range.last < layout.layoutInput.text.length && range.last > range.first) {
+                layout.getBoundingBox(range.last)
+            } else {
+                first
+            }
             // 表情码被行尾截断时首末字符不同行：只按首字符那一格画，画不全但不越界
             val box = if (last.top != first.top) first else Rect(first.left, first.top, last.right, last.bottom)
-            // 取行高做边长、水平居中：字符区间是按 `[#呵呵]` 五个方括号字符算的，直接铺会拉宽变形
             with(density) {
                 val side = 22.dp.toPx()
                 val left = box.left + (box.width - side) / 2f
                 val top = box.top + (box.height - side) / 2f
-                AsyncImage(
-                    model = smiley.url,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .absoluteOffset(left.toDp(), top.toDp())
-                        .requiredSize(22.dp),
-                )
+                key(range.first to code) {
+                    AsyncImage(
+                        model = smiley.url,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .absoluteOffset(left.toDp(), top.toDp())
+                            .requiredSize(22.dp),
+                    )
+                }
             }
         }
     }
@@ -882,7 +992,10 @@ private fun SmileyPanel(
         else -> packs[packIndex - 1].items
     }
     Column(modifier) {
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(bottom = 6.dp),
+        ) {
             item {
                 SmileyPackTab(selected = packIndex == 0, onClick = { packIndex = 0 }) {
                     Icon(
@@ -903,12 +1016,15 @@ private fun SmileyPanel(
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(4.dp))
         LazyVerticalGrid(
             columns = GridCells.Fixed(8),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(ComposerSmileyPanelHeight),
+                .weight(1f),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(vertical = 4.dp),
         ) {
             emojis.forEach { smiley ->
                 item(key = smiley.code) { SmileyCell(smiley, onPick) }
@@ -962,14 +1078,19 @@ private fun RecentSmileyRow(
 private fun SmileyCell(smiley: Smiley, onPick: (String) -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .clickable { onPick(smiley.code) }
-            .padding(vertical = 1.dp),
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(
+                indication = ripple(bounded = true, radius = 16.dp),
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = { onPick(smiley.code) },
+            ),
         contentAlignment = Alignment.Center,
     ) {
         AsyncImage(
             model = smiley.url,
             contentDescription = smiley.code,
-            modifier = Modifier.size(26.dp),
+            modifier = Modifier.size(24.dp),
         )
     }
 }
@@ -1257,9 +1378,51 @@ private val ReplyComposerInputHeight = 84.dp
 /** 最近使用那一行摆几个。 */
 private const val RecentSmileyLimit = 8
 
-/** 键盘一次都没起来过时，表情面板按这个高度占位。 */
-private val ComposerSmileyPanelHeight = 310.dp
-private val ComposerSmileyPanelTotalHeight = 358.dp
+/** 工具栏下方的子栏高度（快捷表情行、排版插入栏）。两者高度完全保持一致（36.dp）。 */
+private val ComposerSubBarHeight = 36.dp
+
+/** 低于这个高度的 ime 不算软键盘（分屏预览、悬浮窗边缘的残值）。 */
+private val MinKeyboardHeight = 100.dp
+
+/** ime 高度连续这么多帧不变才认定为停稳，此时的高度才是键盘真实高度。 */
+private const val STABLE_KEYBOARD_FRAMES = 6
+
+/** 切回键盘的交接最多等这么多帧（约 0.5s）：还没起来就放弃，表情面板留在原位。 */
+private const val HANDOFF_GIVEUP_FRAMES = 30
+
+/** 键盘一次都没起来过时，表情面板按这个高度占位兜底（主流设备键盘常见高度）。 */
+private val DefaultKeyboardHeight = 280.dp
+
+/** 持久化记录软键盘真实高度，避免冷启动或跨回复弹框时高度不一致跳跃。 */
+internal object KeyboardTracker {
+    private const val PREF_NAME = "mtf_keyboard_pref"
+    private const val KEY_HEIGHT_PX = "keyboard_height_px"
+    @Volatile
+    private var cachedHeightPx: Int = 0
+
+    fun getInitialHeight(context: Context, density: androidx.compose.ui.unit.Density): Dp {
+        if (cachedHeightPx > 0) {
+            return with(density) { cachedHeightPx.toDp() }
+        }
+        val sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val saved = sp.getInt(KEY_HEIGHT_PX, 0)
+        if (saved > 0) {
+            cachedHeightPx = saved
+            return with(density) { saved.toDp() }
+        }
+        return DefaultKeyboardHeight
+    }
+
+    fun save(context: Context, heightPx: Int) {
+        if (heightPx > 0 && heightPx != cachedHeightPx) {
+            cachedHeightPx = heightPx
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_HEIGHT_PX, heightPx)
+                .apply()
+        }
+    }
+}
 
 /** 工具栏与表情行之间的间距。 */
 private val EmojiRowToolbarGap = 2.dp

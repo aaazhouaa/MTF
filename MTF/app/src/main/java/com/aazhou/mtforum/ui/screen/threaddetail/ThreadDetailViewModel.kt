@@ -1045,13 +1045,6 @@ class ThreadDetailViewModel(
             ?.trim()
             ?.take(80)
             .orEmpty()
-        val quoteTag = if (target != null) {
-            val time = target.timeText ?: ""
-            "[quote][size=2][url=forum.php?mod=redirect&goto=findpost&pid=${target.pid}&ptid=$tid][color=#999999]${target.authorName} 发表于 $time[/color][/url][/size]\n$cleanSnippet[/quote]\n"
-        } else {
-            ""
-        }
-        val fullMessage = quoteTag + message
         _replyState.value = ReplyState.Sending
         viewModelScope.launch {
             try {
@@ -1059,10 +1052,10 @@ class ThreadDetailViewModel(
                     fid = fid,
                     tid = tid,
                     formhash = formhash,
-                    message = fullMessage,
+                    message = message,
                     quotePid = quotePid,
                     noticeAuthor = noticeAuthor,
-                    noticeTrimStr = if (target != null) quoteTag.trim() else null,
+                    noticeTrimStr = if (target != null) cleanSnippet else null,
                     noticeAuthorMsg = if (target != null) cleanSnippet else null,
                 )
                 if (result.success) {

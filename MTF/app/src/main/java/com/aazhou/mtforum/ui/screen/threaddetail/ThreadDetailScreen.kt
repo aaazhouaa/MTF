@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -694,23 +695,14 @@ fun ThreadDetailScreen(
                 Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.2f))
-                    // 第一次点只收键盘、面板留着；键盘已经不在了才收面板。
-                    // 在 DOWN 就判定：等抬手的话 UP 会被窗口重排改成 CANCEL，点击整段丢失
+                    // 遮罩只响应在回复框外部（空白区域）的点按，绝不误吞回复框内部按钮的操作
                     .pointerInput(composerKeyboardVisible) {
-                        awaitEachGesture {
-                            awaitFirstDown(requireUnconsumed = false).consume()
+                        detectTapGestures {
                             if (composerKeyboardVisible) {
                                 focusManager.clearFocus()
                                 keyboardController?.hide()
                             } else {
                                 composerVisible = false
-                            }
-                            // 这次手势剩下的 move/up 全吃掉：遮罩本来就该挡误点，不消费的话
-                            // 点按会连底层一起触发——盖在楼主头像上就顺手把用户主页点开了
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                event.changes.forEach { it.consume() }
-                                if (event.changes.none { it.pressed }) break
                             }
                         }
                     },

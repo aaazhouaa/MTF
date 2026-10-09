@@ -379,7 +379,7 @@ object ForumParser {
         // 正文里可能同时有引用回复与「隐藏内容」提示两大类引用块，只有前者构成楼中楼，
         // 其余的（如隐藏内容提示）会从正文里摘掉，改由客户端的锁卡呈现。
         var quote: PostQuote? = null
-        for (el in contentEl?.select("div.comiis_quote").orEmpty()) {
+        for (el in contentEl?.select("div.comiis_quote, div.quote").orEmpty()) {
             val parsed = parseQuote(el)
             if (parsed != null) {
                 quote = parsed
