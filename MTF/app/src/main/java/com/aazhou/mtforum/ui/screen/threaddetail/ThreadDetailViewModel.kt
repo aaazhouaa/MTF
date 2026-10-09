@@ -10,6 +10,7 @@ import com.aazhou.mtforum.data.model.PageProgress
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.model.ThreadPage
 import com.aazhou.mtforum.data.model.ThreadSnapshot
+import com.aazhou.mtforum.data.parser.ForumParser
 import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.ui.common.UiState
@@ -1036,15 +1037,13 @@ class ThreadDetailViewModel(
             return
         }
         val target = _replyTarget.value
-        val quotePid = target?.pid
-        val noticeAuthor = if (target == null) current.data.noticeAuthor else target.authorName
-        val cleanSnippet = target?.contentHtml
-            ?.replace(Regex("<[^>]+>"), " ")
-            ?.replace("&nbsp;", " ")
-            ?.replace(Regex("\\s+"), " ")
-            ?.trim()
-            ?.take(80)
-            .orEmpty()
+        val snippet = target?.let { ForumParser.replyQuoteSnippet(it.contentHtml) }
+        val notice = target?.let {
+            ForumParser.replyQuoteNotice(it.authorName, it.timeText, it.contentHtml)
+        }
+        // 站点用的 noticeauthor 是 authcode 加密的作者 id，客户端构造不出来；只有不指定
+        // 回复对象时才沿用详情页快速回复框里站点给的隐藏域。
+        val noticeAuthor = if (target == null) current.data.noticeAuthor else null
         _replyState.value = ReplyState.Sending
         viewModelScope.launch {
             try {
@@ -1053,10 +1052,9 @@ class ThreadDetailViewModel(
                     tid = tid,
                     formhash = formhash,
                     message = message,
-                    quotePid = quotePid,
                     noticeAuthor = noticeAuthor,
-                    noticeTrimStr = if (target != null) cleanSnippet else null,
-                    noticeAuthorMsg = if (target != null) cleanSnippet else null,
+                    noticeTrimStr = notice,
+                    noticeAuthorMsg = snippet,
                 )
                 if (result.success) {
                     _replyTarget.value = null

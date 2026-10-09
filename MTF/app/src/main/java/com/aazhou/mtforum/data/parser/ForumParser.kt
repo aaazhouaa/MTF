@@ -40,10 +40,26 @@ object ForumParser {
     private val RE_UPLOAD_HASH = Regex("uploadformdata:\\{uid:\"\\d+\",\\s*hash:\"([0-9a-fA-F]+)\"")
     private val RE_QUOTE_PID = Regex("pid=(\\d+)")
     private val RE_BR = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
+    private val RE_TAG = Regex("<[^>]+>")
+    private val RE_BLOCK_END = Regex(
+        "</(?:p|div|li|ul|ol|blockquote|quote|h[1-6]|tr|table|pre|hr)>",
+        RegexOption.IGNORE_CASE,
+    )
+    private val RE_WHITESPACE = Regex("\\s+")
+    /** 站点笑脸码形如 [#呵呵]：渲染成 img 前会以文本形式留在正文里。 */
+    private val RE_SMILEY_CODE = Regex("\\[#[^\\]\\s]*]")
     private val RE_FLOOR_NUMBER = Regex("^(\\d+)")
 
     /** 列表卡片配图张数上限：卡片最多铺 3 张，剩下的用右上角「N图」角标概括。 */
     private const val MAX_CARD_IMAGES = 9
+
+    /** 引用快照的截断长度与省略后缀，与站点截断被引正文的入参一致。 */
+    private const val QUOTE_SNIPPET_LIMIT = 100
+    private const val QUOTE_SNIPPET_DOT = " ..."
+
+    /** 站点对 hidden 字段做 HTML 实体转义，引用块里的作者/时间/快照都要过一遍。 */
+    private fun escapeHtml(text: String): String =
+        text.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
     /**
      * 配图过滤规则：命中任一者都不是帖子附件图。
@@ -505,6 +521,46 @@ object ForumParser {
     /** 登录页的 loginhash。 */
     fun extractLoginHash(html: String): String? =
         RE_LOGINHASH.find(html)?.groupValues?.get(1)
+
+    /**
+     * 回复某楼层时提交的 noticetrimstr。
+     *
+     * 站点把它原样拼在回复正文最前面（noticetrimstr + "\n\n" + message），是引用
+     * 回复的唯一依据；只传正文摘录不会生成引用块，回复就只是一条普通评论。
+     *
+     * 排版与站点移动端回复页 hidden 字段一致：
+     * `[quote][color=#999999]作者 发表于 时间[/color]\n[color=#999999]快照[/color][/quote]`
+     */
+    fun replyQuoteNotice(author: String, time: String?, contentHtml: String): String {
+        val meta = "${escapeHtml(author)} 发表于 ${escapeHtml(time.orEmpty())}".trimEnd()
+        return "[quote][color=#999999]$meta[/color]\n" +
+            "[color=#999999]${escapeHtml(replyQuoteSnippet(contentHtml))}[/color][/quote]"
+    }
+
+    /**
+     * 引用快照正文：取楼层纯文本，保留块间换行，按站点同款长度截断。
+     *
+     * 站点截断的是数据库里的 BBCode 原文，客户端手上只有渲染后的 HTML，只能提取
+     * 纯文本；长度与省略后缀对齐站点的 messagecutstr(message, 100)。
+     */
+    fun replyQuoteSnippet(contentHtml: String): String {
+        val lines = RE_BLOCK_END.replace(contentHtml, "\n")
+            .split("\n")
+            .map { line ->
+                val text = Jsoup.parse(line.replace(RE_TAG, " ")).text()
+                RE_SMILEY_CODE.replace(text, "")
+                    .replace('\u00A0', ' ')
+                    .replace(RE_WHITESPACE, " ")
+                    .trim()
+            }
+            .filter { it.isNotEmpty() }
+        val snippet = lines.joinToString("\n")
+        return if (snippet.length <= QUOTE_SNIPPET_LIMIT) {
+            snippet
+        } else {
+            snippet.take(QUOTE_SNIPPET_LIMIT).trimEnd() + QUOTE_SNIPPET_DOT
+        }
+    }
 
     /** 登录页的 formhash（在 input#formhash）。 */
     fun extractLoginFormhash(html: String): String? =

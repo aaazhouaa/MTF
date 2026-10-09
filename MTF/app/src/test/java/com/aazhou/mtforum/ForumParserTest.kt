@@ -923,4 +923,40 @@ class ForumParserTest {
         assertEquals(88, profile.gold)
         assertEquals("128 小时", profile.onlineTime)
     }
+
+    @Test
+    fun `reply quote notice wraps author time and snippet in quote bbcode`() {
+        val html = """
+            <div class="comiis_a">
+              <p>第一行正文 &amp; 符号</p>
+              <p>第二行 &lt;b&gt;粗&lt;/b&gt; [#呵呵]</p>
+            </div>
+        """.trimIndent()
+        val notice = ForumParser.replyQuoteNotice("勇敢的心", "2026-10-9 23:16", html)
+        assertEquals(
+            "[quote][color=#999999]勇敢的心 发表于 2026-10-9 23:16[/color]\n" +
+                "[color=#999999]第一行正文 &amp; 符号\n第二行 &lt;b&gt;粗&lt;/b&gt;[/color][/quote]",
+            notice,
+        )
+    }
+
+    @Test
+    fun `reply quote snippet keeps block breaks and truncates to site length`() {
+        val long = "字".repeat(120)
+        val html = "<div class=\"comiis_a\"><p>$long</p><p>尾部</p></div>"
+        val snippet = ForumParser.replyQuoteSnippet(html)
+        assertEquals("字".repeat(100) + " ...", snippet)
+    }
+
+    @Test
+    fun `reply quote snippet drops smiley codes and collapses blank blocks`() {
+        val html = """
+            <div class="comiis_a">
+              <p>&nbsp;</p>
+              <p>看看 [#哈哈]</p>
+              <p><img src="https://bbs.binmt.cc/x.png"></p>
+            </div>
+        """.trimIndent()
+        assertEquals("看看", ForumParser.replyQuoteSnippet(html))
+    }
 }
