@@ -211,29 +211,49 @@ internal fun ReplyComposer(
 
     fun pickSmiley(code: String) {
         onValueChange(value.insertAtSelection(code))
-        onSmileyUsed(code)
+        if (code !in DefaultSmileyCodes) {
+            onSmileyUsed(code)
+        }
     }
 
-    // 默认那一行：先用最近用过的，不足 8 个按默认表情表补满
+    // 快捷表情行：最近使用的排在最前（不含这 8 个默认表情）；不足 8 个按默认表情表顺延往前补齐替换
     val recentRow = run {
-        val used = recentCodes.mapNotNull { smileyByCode[it] }
+        val nonDefaultRecent = recentCodes.filter { it !in DefaultSmileyCodes }
+        val used = nonDefaultRecent.mapNotNull { smileyByCode[it] }
         val wanted = DefaultSmileyCodes.mapNotNull { smileyByCode[it] }
-        // 默认表一个都取不到（站点改了 code 写法或表情被下架）时退回第一个包的开头：
-        // 宁可显示别的，也不能让这一行整行消失
-        val filler = wanted.ifEmpty {
-            smileyPacks.firstOrNull()?.items?.filter { smiley -> recentCodes.none { it == smiley.code } }
-                .orEmpty()
-        }.filter { smiley -> recentCodes.none { it == smiley.code } }
+        val filler = wanted.filter { smiley -> nonDefaultRecent.none { it == smiley.code } }
         (used + filler).take(RecentSmileyLimit)
+    }
+
+    val imeInsets = WindowInsets.ime
+    val navInsets = WindowInsets.navigationBars
+
+    val imeHeight = with(density) { imeInsets.getBottom(density).toDp() }
+    val navHeight = with(density) { navInsets.getBottom(density).toDp() }
+
+    var keyboardHeight by remember { mutableStateOf(ComposerSmileyPanelTotalHeight) }
+    if (imeHeight > 100.dp && imeHeight != keyboardHeight) {
+        keyboardHeight = maxOf(ComposerSmileyPanelTotalHeight, imeHeight)
+    }
+    val isKeyboardOpen = imeHeight > 100.dp
+
+    LaunchedEffect(isKeyboardOpen) {
+        if (isKeyboardOpen && panel == ComposerPanel.Smiley) {
+            panel = ComposerPanel.None
+        }
+    }
+
+    val isSmileyOpen = panel == ComposerPanel.Smiley
+    val bottomSlotHeight = if (isSmileyOpen) {
+        maxOf(keyboardHeight, imeHeight)
+    } else {
+        maxOf(navHeight, imeHeight)
     }
 
     Box(
         modifier
             .fillMaxWidth()
-            // 键盘升起按 ime 避让、收起按导航栏避让：取两者较大值，不能相加（否则多留一条导航栏）
-            .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
-            // 通栏实色底（浅色白、深色取 surface）、只圆上角、底部贴键盘：
-            // 输入框以下整块被盖住，帖子内容不从边角和底缘透出来
+            // 通栏实色底（浅色白、深色取 surface）、只圆上角、底部贴底栏/键盘：
             .background(colors.surface, RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)),
     ) {
         // 底色本身不吃触摸：面板空白处（按钮两侧、四周留白）的点按和滑动会漏到下层遮罩，
@@ -277,7 +297,7 @@ internal fun ReplyComposer(
                     BasicTextField(
                         value = value,
                         onValueChange = ::onComposerValueChange,
-                        textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp),
+                        textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp, lineHeight = 22.sp),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         visualTransformation = smileyVisualTransformation,
                         onTextLayout = { textLayout = it },
@@ -331,16 +351,13 @@ internal fun ReplyComposer(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     ComposerToolButton(R.drawable.ic_smiley, "表情") {
-                        val opening = panel != ComposerPanel.Smiley
-                        panel = if (opening) ComposerPanel.Smiley else ComposerPanel.None
-                        if (opening) {
-                            // 必须先失焦再收键盘：只 hide 的话输入框仍持焦，输入法会在下次布局或
-                            // 改字时立刻弹回来，表情面板和键盘就同时叠在屏幕上
-                            focusManager.clearFocus()
-                            keyboard?.hide()
-                        } else {
+                        if (panel == ComposerPanel.Smiley) {
+                            panel = ComposerPanel.None
                             focusRequester.requestFocus()
                             keyboard?.show()
+                        } else {
+                            panel = ComposerPanel.Smiley
+                            keyboard?.hide()
                         }
                     }
                     ComposerToolButton(R.drawable.ic_image, "图片") {
@@ -357,6 +374,8 @@ internal fun ReplyComposer(
                     }
                     ComposerToolButton(R.drawable.ic_add, "插入") {
                         panel = if (panel == ComposerPanel.Insert) ComposerPanel.None else ComposerPanel.Insert
+                        focusRequester.requestFocus()
+                        keyboard?.show()
                     }
                 }
                 Spacer(Modifier.width(8.dp))
@@ -381,68 +400,58 @@ internal fun ReplyComposer(
                 }
             }
 
-            // 展开哪个面板就排哪个：表情面板是内容列的一部分，网格高度由自己写死，
-            // 不依赖键盘高度或剩余空间——那两种依赖都让网格塌成过一条 tab 栏
-            when (panel) {
-                // 没展开面板时只摆一行最近用过的，够 8 个为止
-                ComposerPanel.None -> {
-                    val currentInsert = activeInsertKind
-                    if (currentInsert != null) {
-                        InlineInsertBar(
-                            kind = currentInsert,
-                            urlInput = inlineUrlInput,
-                            titleInput = inlineTitleInput,
-                            onUrlChange = { inlineUrlInput = it },
-                            onTitleChange = { inlineTitleInput = it },
-                            onDismiss = {
-                                activeInsertKind = null
-                                focusRequester.requestFocus()
-                                keyboard?.show()
-                            },
-                            onConfirm = {
-                                val inserted = when (currentInsert) {
-                                    InsertKind.Bold -> "[b]${inlineUrlInput.trim()}[/b]"
-                                    InsertKind.Italic -> "[i]${inlineUrlInput.trim()}[/i]"
-                                    InsertKind.Underline -> "[u]${inlineUrlInput.trim()}[/u]"
-                                    InsertKind.Strikethrough -> "[s]${inlineUrlInput.trim()}[/s]"
-                                    InsertKind.Url -> {
-                                        val u = inlineUrlInput.trim()
-                                        val t = inlineTitleInput.trim().ifEmpty { u }
-                                        "[url=$u]$t[/url]"
-                                    }
-                                    InsertKind.NetImage -> "[img]${inlineUrlInput.trim()}[/img]"
-                                    InsertKind.Audio -> "[audio]${inlineUrlInput.trim()}[/audio]"
-                                    InsertKind.Video -> "[media=x,500,375]${inlineUrlInput.trim()}[/media]"
-                                    InsertKind.Flash -> "[flash]${inlineUrlInput.trim()}[/flash]"
-                                    InsertKind.Quote -> "[quote]${inlineUrlInput.trim()}[/quote]"
-                                    InsertKind.Code -> "[code]${inlineUrlInput.trim()}[/code]"
-                                }
-                                val targetRange = pendingSelection ?: value.selection
-                                val start = min(targetRange.min, targetRange.max).coerceIn(0, value.text.length)
-                                val end = max(targetRange.min, targetRange.max).coerceIn(0, value.text.length)
-                                val merged = value.text.substring(0, start) + inserted + value.text.substring(end)
-                                val cursor = start + inserted.length
-                                onValueChange(value.copy(text = merged, selection = TextRange(cursor)))
-                                pendingSelection = null
-                                activeInsertKind = null
-                                focusRequester.requestFocus()
-                                keyboard?.show()
-                            },
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    } else {
-                        RecentSmileyRow(
-                            smileys = recentRow,
-                            onPick = { code -> pickSmiley(code) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 4.dp),
-                        )
-                    }
-                }
-                ComposerPanel.Insert -> InsertPanel(
+            // 工具栏下方的内容区：
+            // 1. 若正在输入链接/媒体：显示 InlineInsertBar
+            // 2. 若点击了「+」号：显示 InsertPanel（软键盘保持升起）
+            // 3. 正常打字（None）：显示 8 个快捷表情行
+            // 4. 打开大表情面板（Smiley）：不显示快捷行，避免上下重复
+            val currentInsert = activeInsertKind
+            if (currentInsert != null) {
+                InlineInsertBar(
+                    kind = currentInsert,
+                    urlInput = inlineUrlInput,
+                    titleInput = inlineTitleInput,
+                    onUrlChange = { inlineUrlInput = it },
+                    onTitleChange = { inlineTitleInput = it },
+                    onDismiss = {
+                        activeInsertKind = null
+                        focusRequester.requestFocus()
+                        keyboard?.show()
+                    },
+                    onConfirm = {
+                        val inserted = when (currentInsert) {
+                            InsertKind.Bold -> "[b]${inlineUrlInput.trim()}[/b]"
+                            InsertKind.Italic -> "[i]${inlineUrlInput.trim()}[/i]"
+                            InsertKind.Underline -> "[u]${inlineUrlInput.trim()}[/u]"
+                            InsertKind.Strikethrough -> "[s]${inlineUrlInput.trim()}[/s]"
+                            InsertKind.Url -> {
+                                val u = inlineUrlInput.trim()
+                                val t = inlineTitleInput.trim().ifEmpty { u }
+                                "[url=$u]$t[/url]"
+                            }
+                            InsertKind.NetImage -> "[img]${inlineUrlInput.trim()}[/img]"
+                            InsertKind.Audio -> "[audio]${inlineUrlInput.trim()}[/audio]"
+                            InsertKind.Video -> "[media=x,500,375]${inlineUrlInput.trim()}[/media]"
+                            InsertKind.Flash -> "[flash]${inlineUrlInput.trim()}[/flash]"
+                            InsertKind.Quote -> "[quote]${inlineUrlInput.trim()}[/quote]"
+                            InsertKind.Code -> "[code]${inlineUrlInput.trim()}[/code]"
+                        }
+                        val targetRange = pendingSelection ?: value.selection
+                        val start = min(targetRange.min, targetRange.max).coerceIn(0, value.text.length)
+                        val end = max(targetRange.min, targetRange.max).coerceIn(0, value.text.length)
+                        val merged = value.text.substring(0, start) + inserted + value.text.substring(end)
+                        val cursor = start + inserted.length
+                        onValueChange(value.copy(text = merged, selection = TextRange(cursor)))
+                        pendingSelection = null
+                        activeInsertKind = null
+                        focusRequester.requestFocus()
+                        keyboard?.show()
+                    },
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            } else if (panel == ComposerPanel.Insert) {
+                InsertPanel(
                     onPick = { kind ->
-                        // 如果有选中文本且为支持文本包裹的类型，可直接包裹
                         val selStart = min(value.selection.min, value.selection.max)
                         val selEnd = max(value.selection.min, value.selection.max)
                         val selected = if (selEnd > selStart) value.text.substring(selStart, selEnd) else ""
@@ -469,7 +478,6 @@ internal fun ReplyComposer(
                             focusRequester.requestFocus()
                             keyboard?.show()
                         } else {
-                            // 打开就地内联条，键盘完全不收起，0 弹窗 0 闪烁
                             activeInsertKind = kind
                             inlineUrlInput = ""
                             inlineTitleInput = selected
@@ -479,12 +487,32 @@ internal fun ReplyComposer(
                     },
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
                 )
-                ComposerPanel.Smiley -> SmileyPanel(
-                    packs = smileyPacks,
-                    recentCodes = recentCodes,
+            } else if (panel == ComposerPanel.None) {
+                RecentSmileyRow(
+                    smileys = recentRow,
                     onPick = { code -> pickSmiley(code) },
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 4.dp),
                 )
+            }
+
+            // 键盘与表情面板的下部容器：高度锁定为 bottomSlotHeight，键盘收起/弹出时输入框纹丝不动
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(bottomSlotHeight),
+            ) {
+                if (panel == ComposerPanel.Smiley) {
+                    SmileyPanel(
+                        packs = smileyPacks,
+                        recentCodes = recentCodes,
+                        onPick = { code -> pickSmiley(code) },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 14.dp, vertical = 4.dp),
+                    )
+                }
             }
         }
     }
@@ -577,10 +605,14 @@ private fun formatRichComposerText(
         }
 
         // 1. 表情码染成透明色（图片在 Overlay 层绘制）
+        // 关键优化：整段表情码统一按 (40f / len).sp 缩放，使多字符表情码总测量宽度稳定在约 20~22dp，
+        // 紧贴单表情尺寸，字符平滑横向展开，彻底消除多余空白与重叠。
         if (smileyByCode.isNotEmpty() && source.contains('[')) {
             val smileyRanges = smileyRangesOf(source, smileyByCode)
             for ((range, _) in smileyRanges) {
-                addStyle(SpanStyle(color = Color.Transparent), range.first, range.last + 1)
+                val len = range.last - range.first + 1
+                val emojiCharSize = (40f / len).coerceIn(6f, 10f).sp
+                addStyle(SpanStyle(color = Color.Transparent, fontSize = emojiCharSize), range.first, range.last + 1)
             }
         }
 
@@ -723,16 +755,17 @@ private fun SmileyOverlay(
             // 表情码被行尾截断时首末字符不同行：只按首字符那一格画，画不全但不越界
             val box = if (last.top != first.top) first else Rect(first.left, first.top, last.right, last.bottom)
             // 取行高做边长、水平居中：字符区间是按 `[#呵呵]` 五个方括号字符算的，直接铺会拉宽变形
-            val side = box.height
-            val left = box.left + (box.width - side) / 2f
             with(density) {
+                val side = 22.dp.toPx()
+                val left = box.left + (box.width - side) / 2f
+                val top = box.top + (box.height - side) / 2f
                 AsyncImage(
                     model = smiley.url,
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
-                        .absoluteOffset(left.toDp(), box.top.toDp())
-                        .requiredSize(side.toDp()),
+                        .absoluteOffset(left.toDp(), top.toDp())
+                        .requiredSize(22.dp),
                 )
             }
         }
@@ -807,9 +840,13 @@ private fun ComposerToolButton(iconRes: Int, label: String, onClick: () -> Unit)
         contentDescription = label,
         tint = LocalMtfColors.current.textSecondary,
         modifier = Modifier
-            .size(44.dp)
-            .clickable(onClick = onClick)
-            .padding(12.dp),
+            .size(40.dp)
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onClick,
+            )
+            .padding(6.dp),
     )
 }
 
@@ -834,7 +871,7 @@ private fun SmileyPanel(
     // 不该拿它当默认页——用过几个表情的人一开面板只看到那几个，整页就像空了一样
     var packIndex by remember(packs.isEmpty()) { mutableStateOf(if (packs.isEmpty()) 0 else 1) }
     val smileyByCode = remember(packs) { packs.flatMap { it.items }.associateBy { it.code } }
-    val recent = recentCodes.mapNotNull { smileyByCode[it] }
+    val recent = recentCodes.filter { it !in DefaultSmileyCodes }.mapNotNull { smileyByCode[it] }
     // 最近使用为空时不能就此空格：按默认表情表补，站点里没有才退回第一个包。
     // 否则没用过表情的人一点开表情面板，看到的只有分类栏、网格全空
     val emojis = when (packIndex) {
@@ -867,8 +904,6 @@ private fun SmileyPanel(
             }
         }
         Spacer(Modifier.height(8.dp))
-        // 固定高度：表情少的时候也占和满表情一样高，不会忽大忽小。不拿 Column 的剩余空间——
-        // 外部高度一旦随键盘变化，网格就会被压成一条 tab 栏
         LazyVerticalGrid(
             columns = GridCells.Fixed(8),
             modifier = Modifier
@@ -1224,6 +1259,7 @@ private const val RecentSmileyLimit = 8
 
 /** 键盘一次都没起来过时，表情面板按这个高度占位。 */
 private val ComposerSmileyPanelHeight = 310.dp
+private val ComposerSmileyPanelTotalHeight = 358.dp
 
 /** 工具栏与表情行之间的间距。 */
 private val EmojiRowToolbarGap = 2.dp

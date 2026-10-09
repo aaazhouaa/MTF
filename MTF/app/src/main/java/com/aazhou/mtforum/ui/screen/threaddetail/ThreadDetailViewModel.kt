@@ -1035,12 +1035,36 @@ class ThreadDetailViewModel(
             _replyState.value = ReplyState.Error("缺少回复令牌，请重新进入帖子")
             return
         }
-        val quotePid = _replyTarget.value?.pid
-        val noticeAuthor = current.data.noticeAuthor
+        val target = _replyTarget.value
+        val quotePid = target?.pid
+        val noticeAuthor = if (target == null) current.data.noticeAuthor else target.authorName
+        val cleanSnippet = target?.contentHtml
+            ?.replace(Regex("<[^>]+>"), " ")
+            ?.replace("&nbsp;", " ")
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.take(80)
+            .orEmpty()
+        val quoteTag = if (target != null) {
+            val time = target.timeText ?: ""
+            "[quote][size=2][url=forum.php?mod=redirect&goto=findpost&pid=${target.pid}&ptid=$tid][color=#999999]${target.authorName} 发表于 $time[/color][/url][/size]\n$cleanSnippet[/quote]\n"
+        } else {
+            ""
+        }
+        val fullMessage = quoteTag + message
         _replyState.value = ReplyState.Sending
         viewModelScope.launch {
             try {
-                val result = repository.reply(fid, tid, formhash, message, quotePid, noticeAuthor)
+                val result = repository.reply(
+                    fid = fid,
+                    tid = tid,
+                    formhash = formhash,
+                    message = fullMessage,
+                    quotePid = quotePid,
+                    noticeAuthor = noticeAuthor,
+                    noticeTrimStr = if (target != null) quoteTag.trim() else null,
+                    noticeAuthorMsg = if (target != null) cleanSnippet else null,
+                )
                 if (result.success) {
                     _replyTarget.value = null
                     _replyState.value = ReplyState.Success
