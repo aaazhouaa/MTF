@@ -62,6 +62,8 @@ data class ThreadPage(
     val totalPages: Int,
     val formhash: String?,
     val replyUrl: String?,
+    /** 快速回复框 form#fastpostform 的 noticeauthor 隐藏域（每次进页面都会变，AJAX 回复必需）。 */
+    val noticeAuthor: String? = null,
     val fid: String? = null,
     /** 楼主 uid（关注接口需要）。 */
     val opUid: String? = null,
@@ -203,6 +205,12 @@ data class LikeResult(
     val remainingToday: Int? = null,
     val serverCount: Int? = null,
     /** 服务端提示原文（成功或失败）。 */
+    val message: String? = null,
+)
+
+/** 快速回复结果：[message] 为站点回执的提示原文（成功时通常为空）。 */
+data class ReplyResult(
+    val success: Boolean,
     val message: String? = null,
 )
 

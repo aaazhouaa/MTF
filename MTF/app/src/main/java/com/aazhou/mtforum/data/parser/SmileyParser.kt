@@ -1,6 +1,9 @@
 package com.aazhou.mtforum.data.parser
 
+import kotlinx.serialization.Serializable
+
 /** 一个表情包（站点后台的一套笑脸）。 */
+@Serializable
 data class SmileyPack(
     val id: String,
     val name: String,
@@ -9,6 +12,7 @@ data class SmileyPack(
 )
 
 /** 单个笑脸：[code] 是写进正文的标记（如 `[呵呵]`、`[#滑稽]`），[url] 是它的图片。 */
+@Serializable
 data class Smiley(
     val code: String,
     val url: String,

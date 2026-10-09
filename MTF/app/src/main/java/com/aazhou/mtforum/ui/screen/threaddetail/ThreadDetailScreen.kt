@@ -55,7 +55,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -200,8 +199,8 @@ fun ThreadDetailScreen(
     var highlightPid by remember { mutableStateOf<String?>(null) }
 
     var composerVisible by remember { mutableStateOf(false) }
-    // 最近用过的表情码：放在屏幕级，反复开关输入面板不丢
-    val recentSmileyCodes = remember { mutableStateListOf<String>() }
+    // 最近用过的表情码：落在本地，反复开关输入面板、重启应用都不丢
+    val recentCodes by container.smileyStore.recent.collectAsStateWithLifecycle(initialValue = emptyList())
     var smileyPacks by remember { mutableStateOf<List<SmileyPack>>(emptyList()) }
     // 草稿按回复对象各存一份（key 为空即评论本帖）：关掉面板不丢、换个楼层再回来还在，
     // 离开本帖时随这屏的状态一起销毁。用 TextFieldValue 而不是 String：工具栏要在光标处
@@ -567,9 +566,12 @@ fun ThreadDetailScreen(
                                         onVideoClick = openVideo,
                                         pageImages = pageImages,
                                         onUnlock = {
-                                            // 隐藏内容需回复后解锁：把回复目标复位到本帖，并提示到底部输入框回复
-                                            viewModel.setReplyTarget(null)
-                                            todo("回复本帖后刷新即可解锁")
+                                            // 隐藏内容需回复后解锁：把回复目标复位到本帖并直接弹出输入面板，
+                                            // 面板自己会聚焦把键盘请出来，不用再提示去底部找入口
+                                            if (requireLogin(LOGIN_HINT_REPLY)) {
+                                                viewModel.setReplyTarget(null)
+                                                composerVisible = true
+                                            }
                                         },
                                         onLinkClick = { url ->
                                             openForumLink(context, url, container.httpClient.host, onThreadClick)
@@ -721,7 +723,8 @@ fun ThreadDetailScreen(
                 target = replyTarget,
                 sending = replyState is ThreadDetailViewModel.ReplyState.Sending,
                 smileyPacks = smileyPacks,
-                recentCodes = recentSmileyCodes,
+                recentCodes = recentCodes,
+                onSmileyUsed = { code -> scope.launch { container.smileyStore.addRecent(code) } },
                 onFocusedChange = { composerFocused = it },
                 uploadCredentials = uploadCredentials,
                 onUploadImage = { file ->

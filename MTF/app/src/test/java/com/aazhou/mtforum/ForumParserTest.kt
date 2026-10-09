@@ -239,6 +239,99 @@ class ForumParserTest {
     }
 
     @Test
+    fun totalPagesCountsThisThreadDespiteLeadingOtherThreadLink() {
+        // 真实帖子第 1 页：无 canonical，正文前部有指向其它帖的链接（thread-173642-1-1.html），
+        // 真实 tid 只出现在页面 JS 里。老逻辑扫 thread-\d+ 会误取 173642，令指向 173660 的分页
+        // 链接全被 parseTotalPages 过滤、总页数算成 1，于是「全部评论 260」只显示第 1 页那
+        // 十几条就到底。
+        val html = """
+            <html><head><title>某帖 - MT论坛</title></head>
+            <body>
+              <script>var replyreload, tid = '173660', authorid = '123498', formhash = '9f4db49e';</script>
+              <div class="comiis_a">相关帖子
+                <a href="https://bbs.binmt.cc/thread-173642-1-1.html">另一帖</a>
+              </div>
+              <div class="comiis_pgt">
+                <a href="https://bbs.binmt.cc/thread-173660-2-1.html">2</a>
+                <a href="https://bbs.binmt.cc/thread-173660-3-1.html">3</a>
+                <a href="https://bbs.binmt.cc/thread-173660-4-1.html">4</a>
+                <a href="https://bbs.binmt.cc/thread-173660-21-1.html">21</a>
+              </div>
+            </body></html>
+        """.trimIndent()
+        val page = ForumParser.parseThreadPage(html, 1)
+        assertEquals("173660", page.tid)
+        assertEquals(21, page.totalPages)
+    }
+
+    @Test
+    fun tidPrefersJsAssignmentOverBodyLink() {
+        // 无 canonical、无 fastpostform 时，tid 应取页面 JS 的赋值，而非正文里被引帖的链接
+        val html = """
+            <html><head><title>某帖 - MT论坛</title></head>
+            <body>
+              <div class="comiis_a">引用
+                <a href="https://bbs.binmt.cc/thread-173642-1-1.html">被引帖</a>
+              </div>
+              <script>var tid = '173660';</script>
+            </body></html>
+        """.trimIndent()
+        assertEquals("173660", ForumParser.parseThreadPage(html, 1).tid)
+    }
+
+    @Test
+    fun parsesNoticeAuthor() {
+        // 快速回复框的 noticeauthor 隐藏域：AJAX 回复必需，每次进页面都会变
+        val html = """
+            <html><head><title>某帖 - MT论坛</title>
+            <link rel="canonical" href="https://bbs.binmt.cc/thread-174050-1-1.html"></head>
+            <body>
+              <form id="fastpostform" action="forum.php?mod=post&amp;action=reply&amp;fid=42&amp;tid=174050&amp;replysubmit=yes&amp;mobile=2">
+                <input type="hidden" name="formhash" value="b6a540bd" />
+                <input type="hidden" name="noticeauthor" value="e3eaJPllHExBDgHFQTeqXXcU6I7Zbh1pqyEHSfjk">
+              </form>
+            </body></html>
+        """.trimIndent()
+        assertEquals(
+            "e3eaJPllHExBDgHFQTeqXXcU6I7Zbh1pqyEHSfjk",
+            ForumParser.parseThreadPage(html, 1).noticeAuthor,
+        )
+        // 没有 noticeauthor 隐藏域时为 null（未登录/站点未渲染）
+        val bare =
+            """<html><body><form id="fastpostform" action="forum.php?mod=post&action=reply&fid=42&tid=174050"></form></body></html>"""
+        assertNull(ForumParser.parseThreadPage(bare, 1).noticeAuthor)
+    }
+
+    @Test
+    fun replyResultReadsInajaxXmlContract() {
+        // 带 inajax=1 时站点回 XML：CDATA 里是 succeedhandle_（成功）或 errorhandle_（失败）。
+        // 老的「无错误词即成功」会把整页 HTML 误判成成功，这里要求按 handle 标记判定、失败摘站点原文。
+        val successXml =
+            """<root><![CDATA[<script>succeedhandle_fastpost('回复发布成功', {});</script>]]></root>"""
+        val ok = ForumParser.parseReplyResult(successXml)
+        assertTrue(ok.success)
+        assertNull(ok.message)
+
+        val failXml =
+            """<root><![CDATA[<div class="comiis_tip"><p>抱歉，您尚未输入标题或内容<script>if(typeof errorhandle_fastpost=='function'){errorhandle_fastpost('抱歉，您尚未输入标题或内容',{});}</script></p></div>]]></root>"""
+        val fail = ForumParser.parseReplyResult(failXml)
+        assertTrue(!fail.success)
+        assertEquals("抱歉，您尚未输入标题或内容", fail.message)
+
+        // 回执是 inajax XML 却没带任何处理脚本：失败一定会带 errorhandle_，故按成功算，
+        // 避免把已发出的回复报成失败、诱使用户重发
+        val silentXml = """<?xml version="1.0" encoding="utf-8"?><root><![CDATA[]]></root>"""
+        assertTrue(ForumParser.parseReplyResult(silentXml).success)
+
+        // 既不是 inajax 回执也不带错误脚本（被重定向到登录页/风控页）：判失败，
+        // 并把页面里的提示原文带给上层
+        val html = """<html><body><p>抱歉，您尚未登录</p></body></html>"""
+        val unknown = ForumParser.parseReplyResult(html)
+        assertTrue(!unknown.success)
+        assertEquals("抱歉，您尚未登录", unknown.message)
+    }
+
+    @Test
     fun quoteWithLocationAndPidLink() {
         val html = """
             <div class="comiis_a comiis_message_table cl">

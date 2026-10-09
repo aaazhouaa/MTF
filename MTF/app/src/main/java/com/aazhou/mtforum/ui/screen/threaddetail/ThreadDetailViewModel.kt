@@ -1036,15 +1036,16 @@ class ThreadDetailViewModel(
             return
         }
         val quotePid = _replyTarget.value?.pid
+        val noticeAuthor = current.data.noticeAuthor
         _replyState.value = ReplyState.Sending
         viewModelScope.launch {
             try {
-                val ok = repository.reply(fid, tid, formhash, message, quotePid)
-                if (ok) {
+                val result = repository.reply(fid, tid, formhash, message, quotePid, noticeAuthor)
+                if (result.success) {
                     _replyTarget.value = null
                     _replyState.value = ReplyState.Success
                 } else {
-                    _replyState.value = ReplyState.Error("回复被拒绝（可能需登录或触发风控）")
+                    _replyState.value = ReplyState.Error(result.message ?: "回复被拒绝（可能需登录或触发风控）")
                 }
             } catch (e: Exception) {
                 _replyState.value = ReplyState.Error(e.message ?: "回复失败")

@@ -8,6 +8,7 @@ import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
 import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticePage
+import com.aazhou.mtforum.data.model.ReplyResult
 import com.aazhou.mtforum.data.model.SearchResult
 import com.aazhou.mtforum.data.model.ThreadPage
 import com.aazhou.mtforum.data.model.UserProfile
@@ -19,7 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** 回复/操作失败响应里会出现的提示词。 */
+/** 回复未拿到 inajax XML 回执时（整页 HTML）兜底判失败、提示重新登录的提示词。 */
 private val REPLY_ERROR_PATTERN = Regex("抱歉|非法操作|请先登录|需要先登录|没有权限|审核")
 
 /** 点赞/收藏失败提示词。 */
@@ -46,9 +47,16 @@ private val REWARD_FAIL_PATTERN = Regex(
     "24小时|24 小时|已经评分|已评价|已评分|重复评分|评分失败|积分不足|余额不足|formhash错误|非法操作|没有权限|请先登录",
 )
 
+/** 站点笑脸表地址：CDN 上的 JS 缓存文件，支持 HTTP 条件请求。 */
+private val SMILEY_URL = "${HttpClient.BASE_URL}data/cache/common_smilies_var.js"
+
+/** 表情表的保鲜期：超过这个时间才带 etag 回站确认一次，期内零网络请求。 */
+private const val SMILEY_REVALIDATE_INTERVAL_MS = 12 * 60 * 60 * 1000L
+
 /** 论坛数据入口：封装请求 + 解析，UI 层只与它交互。 */
 class ForumRepository(
     private val http: HttpClient,
+    private val smileyStore: SmileyStore,
 ) {
 
     /** 会话内缓存的表情包：站点不常变，避免每次打开表情面板都拉一次。 */
@@ -65,13 +73,34 @@ class ForumRepository(
     /**
      * 表情包列表（回复面板的表情 tab 用）。
      *
-     * 站点把笑脸表放在 CDN 上的一个 JS 缓存文件里，一次会话拉一次即可：站点加新表情
-     * 也只会在下次进应用时生效，不值得每次打开面板都请求。
+     * 站点把笑脸表放在 CDN 上的一个 JS 缓存文件里，内容不常变但站点会加表情：整份存本地，
+     * 应用重启不必重拉；超过保鲜期才带上次的 etag 回站确认一次，没变只记时间，变了才换新。
      */
     suspend fun smileyPacks(): List<SmileyPack> = withContext(Dispatchers.IO) {
-        smileyCache ?: SmileyParser.parse(
-            http.get("${HttpClient.BASE_URL}data/cache/common_smilies_var.js"),
-        ).also { smileyCache = it }
+        // 空列表不认账：拉取失败时存进内存会让整个进程期都不再重试
+        smileyCache ?: loadSmileyPacks().also { packs -> if (packs.isNotEmpty()) smileyCache = packs }
+    }
+
+    private suspend fun loadSmileyPacks(): List<SmileyPack> {
+        val cached = smileyStore.packs() ?: run {
+            // 本地没有（首次安装或刚清理过）：整份拉回来存上；拉不动就空着，面板提示加载失败
+            val body = runCatching { http.get(SMILEY_URL) }.getOrNull() ?: return emptyList()
+            return SmileyParser.parse(body).also { smileyStore.savePacks(it, null) }
+        }
+        if (System.currentTimeMillis() - cached.checkedAt < SMILEY_REVALIDATE_INTERVAL_MS) return cached.packs
+
+        val fetched = try {
+            http.getIfChanged(SMILEY_URL, cached.etag)
+        } catch (e: Exception) {
+            // 断网、超时或被 WAF 拦下：本地那份照常用，也不推进确认时间，下次开门接着试
+            return cached.packs
+        }
+        // 304：站点内容没变，只推进确认时间
+        if (fetched == null) {
+            smileyStore.markChecked()
+            return cached.packs
+        }
+        return SmileyParser.parse(fetched.body).also { smileyStore.savePacks(it, fetched.etag) }
     }
 
     /** 当前会话 Cookie 头，供登录后持久化。 */
@@ -113,23 +142,37 @@ class ForumRepository(
         )
     }
 
-    /** 回复帖子时携带的引用信息：[quotePid] 非空则引用该楼层。返回是否成功。 */
+    /** 回复帖子：[quotePid] 非空则引用该楼层，[noticeAuthor] 为快速回复框隐藏域。返回站点回执结果。 */
     suspend fun reply(
         fid: String,
         tid: String,
         formhash: String,
         message: String,
         quotePid: String? = null,
-    ): Boolean = withContext(Dispatchers.IO) {
-        val url = http.url("forum.php?mod=post&action=reply&fid=$fid&tid=$tid&replysubmit=yes&mobile=2")
+        noticeAuthor: String? = null,
+    ): ReplyResult = withContext(Dispatchers.IO) {
+        // 站点快速回复框由 JS 代发，且仅在带 inajax=1 时返回 XML 回执；否则回整页 HTML，
+        // 老的「无错误词即成功」判据会把整页 HTML 误判成成功。replysubmit 是 type=button，
+        // 不进序列化请求体，只需出现在 URL 查询串里。
+        val url = http.url(
+            "forum.php?mod=post&action=reply&fid=$fid&tid=$tid&extra=&replysubmit=yes&mobile=2" +
+                "&handlekey=fastpost&loc=1&inajax=1",
+        )
         val params = mutableMapOf(
             "formhash" to formhash,
             "message" to message,
-            "replysubmit" to "yes",
         )
+        if (!noticeAuthor.isNullOrBlank()) params["noticeauthor"] = noticeAuthor
         if (!quotePid.isNullOrBlank()) params["quotepid"] = quotePid
         val body = http.post(url, params, referer = "https://bbs.binmt.cc/thread-$tid-1-1.html")
-        body.isNotBlank() && !REPLY_ERROR_PATTERN.containsMatchIn(body)
+        val result = ForumParser.parseReplyResult(body)
+        // 未拿到 XML 回执（无 succeedhandle_/errorhandle_，如会话过期被重定向到登录页）时一律判
+        // 失败；命中错误词则提示重新登录，而不是笼统的「可能风控」。
+        if (!result.success && !body.contains("errorhandle_") && REPLY_ERROR_PATTERN.containsMatchIn(body)) {
+            ReplyResult(success = false, message = "尚未登录或会话已过期，请重新进入帖子")
+        } else {
+            result
+        }
     }
 
     /**

@@ -26,6 +26,10 @@ import java.util.concurrent.TimeUnit
  * 2. 真人验证兜底——本地求解后仍被拦（算法失配）时，[get] 会挂起并置位
  *    [pendingVerificationFlow]，由界面拉起 WebView 让用户过验证，拿到的 cookie 回灌后自动重试。
  */
+
+/** 条件 GET 取回的正文，[etag] 是本次响应带的校验值，下次原样回传即可。 */
+data class FetchedPage(val body: String, val etag: String?)
+
 class HttpClient(
     val baseUrl: String = BASE_URL,
     val cookieStore: CookieStore = CookieStore(),
@@ -88,24 +92,23 @@ class HttpClient(
      */
     @Throws(IOException::class)
     suspend fun getWithFinalUrl(url: String, userAgent: String = MOBILE_UA): Pair<String, String> {
-        var (finalUrl, body) = try {
+        var latest = try {
             executeGet(url, userAgent)
         } catch (e: IOException) {
             onLog?.invoke(LogLevel.ERROR, TAG, "GET 失败：$url", e)
             throw e
         }
-        if (!WafSolver.looksLikeChallenge(body)) return finalUrl to body
+        if (!WafSolver.looksLikeChallenge(latest.body)) return latest.finalUrl to latest.body
 
         onLog?.invoke(LogLevel.WARN, TAG, "命中 WAF 挑战，尝试本地求解：$url", null)
-        WafSolver.solve(body)?.let { value ->
+        WafSolver.solve(latest.body)?.let { value ->
             cookieStore.setCookie(host, WafSolver.COOKIE_NAME, value)
             val retried = executeGet(url, userAgent)
-            if (!WafSolver.looksLikeChallenge(retried.second)) {
+            if (!WafSolver.looksLikeChallenge(retried.body)) {
                 onLog?.invoke(LogLevel.INFO, TAG, "WAF 本地求解通过：$url", null)
-                return retried
+                return retried.finalUrl to retried.body
             }
-            finalUrl = retried.first
-            body = retried.second
+            latest = retried
         }
 
         // 本地求解无法通过：交给真人验证，验证完成后用新 cookie 重试
@@ -114,10 +117,46 @@ class HttpClient(
         if (verifiedCookie != null) {
             applyCookieHeader(verifiedCookie)
             onLog?.invoke(LogLevel.INFO, TAG, "真人验证 cookie 已回灌：$url", null)
-            return executeGet(url, userAgent)
+            val retried = executeGet(url, userAgent)
+            return retried.finalUrl to retried.body
         }
         onLog?.invoke(LogLevel.WARN, TAG, "真人验证未完成（超时或取消），按挑战页返回：$url", null)
-        return finalUrl to body
+        return latest.finalUrl to latest.body
+    }
+
+    /**
+     * 带 If-None-Match 的条件 GET：站点内容没变时返回 null（一个 304，不带正文），
+     * 变了才返回正文与新的校验值。
+     *
+     * 表情表这类「不常变但站点会更新」的静态资源靠它保鲜：[etag] 由调用方从上次的响应里
+     * 存着，原样回传即可。挑战页与 [get] 一样本地求解一次；仍不过就抛异常——调用方手上
+     * 已有旧数据，留着它比把一段挑战 JS 当正文收下强。
+     */
+    @Throws(IOException::class)
+    suspend fun getIfChanged(
+        url: String,
+        etag: String?,
+        userAgent: String = MOBILE_UA,
+    ): FetchedPage? {
+        var latest = try {
+            executeGet(url, userAgent, etag)
+        } catch (e: IOException) {
+            onLog?.invoke(LogLevel.ERROR, TAG, "条件 GET 失败：$url", e)
+            throw e
+        }
+        if (WafSolver.looksLikeChallenge(latest.body)) {
+            onLog?.invoke(LogLevel.WARN, TAG, "命中 WAF 挑战，尝试本地求解：$url", null)
+            WafSolver.solve(latest.body)?.let { value ->
+                cookieStore.setCookie(host, WafSolver.COOKIE_NAME, value)
+                latest = executeGet(url, userAgent, etag)
+            }
+            if (WafSolver.looksLikeChallenge(latest.body)) {
+                onLog?.invoke(LogLevel.WARN, TAG, "WAF 本地求解失配：$url", null)
+                throw IOException("WAF 挑战未能通过：$url")
+            }
+            onLog?.invoke(LogLevel.INFO, TAG, "WAF 本地求解通过：$url", null)
+        }
+        return if (latest.notModified) null else FetchedPage(latest.body, latest.etag)
     }
 
     @Throws(IOException::class)
@@ -259,17 +298,31 @@ class HttpClient(
         }
     }
 
-    private fun executeGet(url: String, userAgent: String): Pair<String, String> {
-        val request = Request.Builder()
+/** 一次 GET 的原始结果：最终地址、正文、站点给的校验值、是否 304 未修改。 */
+private data class GetResult(
+    val finalUrl: String,
+    val body: String,
+    val etag: String?,
+    val notModified: Boolean,
+)
+
+    private fun executeGet(url: String, userAgent: String, etag: String? = null): GetResult {
+        val builder = Request.Builder()
             .url(url)
             .header("User-Agent", userAgent)
             .header("Accept", ACCEPT)
             .header("Accept-Language", ACCEPT_LANGUAGE)
             .get()
-            .build()
+        if (!etag.isNullOrEmpty()) builder.header("If-None-Match", etag)
+        val request = builder.build()
         return client.newCall(request).execute().use { response ->
-            // 跟随重定向后的最终地址（中转链接 302 到帖子页），以及响应体
-            response.request.url.toString() to (response.body?.string() ?: "")
+            GetResult(
+                // 跟随重定向后的最终地址（中转链接 302 到帖子页）
+                finalUrl = response.request.url.toString(),
+                body = response.body?.string() ?: "",
+                etag = response.header("ETag"),
+                notModified = response.code == HTTP_NOT_MODIFIED,
+            )
         }
     }
 
@@ -294,6 +347,8 @@ class HttpClient(
         private const val ACCEPT_LANGUAGE = "zh-CN,zh;q=0.9,en;q=0.8"
 
         private const val VERIFY_TIMEOUT_MS = 5 * 60 * 1000L
+
+        private const val HTTP_NOT_MODIFIED = 304
 
         /** 网络层事件的日志 tag：日志页按它筛选用。 */
         private const val TAG = "HttpClient"

@@ -11,6 +11,7 @@ import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticePage
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.model.PostQuote
+import com.aazhou.mtforum.data.model.ReplyResult
 import com.aazhou.mtforum.data.model.SearchResult
 import com.aazhou.mtforum.data.model.Thread
 import com.aazhou.mtforum.data.model.ThreadPage
@@ -70,6 +71,8 @@ object ForumParser {
 
     private val JS_FID = Regex("var\\s+fid\\s*=\\s*parseInt\\(['\"](\\d+)")
     private val JS_AUTHOR_ID = Regex("authorid\\s*=\\s*['\"](\\d+)")
+    // 帖子页 JS 里的 tid 赋值（tid = '173660'）；parseInt('173660') 形态紧随其后同值，不必另行匹配
+    private val RE_JS_TID = Regex("\\btid\\s*=\\s*['\"](\\d+)")
 
     /** 页面 JS 里的当前登录用户 uid（未登录为 "0"）。 */
     private val RE_UID_VAR = Regex("uid\\s*=\\s*['\"](\\d+)['\"]")
@@ -278,6 +281,8 @@ object ForumParser {
         val favoriteCount = document.selectFirst("span.comiis_favorite_a_num")
             ?.text()?.let { numberFromText(it) }
         val replyUrl = document.selectFirst("form#fastpostform")?.attr("action")
+        val noticeAuthor = document.selectFirst("form#fastpostform input[name=noticeauthor]")
+            ?.attr("value")?.trim()?.ifBlank { null }
         val action = parseActionState(document, html)
         val follow = parseFollowState(document)
         return ThreadPage(
@@ -290,6 +295,7 @@ object ForumParser {
             totalPages = parseTotalPages(document, tid),
             formhash = parseFormhash(html),
             replyUrl = replyUrl,
+            noticeAuthor = noticeAuthor,
             fid = JS_FID.find(html)?.groupValues?.get(1)
                 ?: Regex("fid=(\\d+)").find(replyUrl ?: "")?.groupValues?.get(1),
             opUid = authorId,
@@ -810,6 +816,42 @@ object ForumParser {
         return LikeResult(success = success, remainingToday = remaining, serverCount = count, message = message)
     }
 
+    /** inajax 响应外裹的 XML CDATA。 */
+    private val RE_CDATA = Regex("(?s)<!\\[CDATA\\[(.*?)\\]\\]>")
+
+    /** inajax 回执的 XML 外壳：站点给了处理脚本才是完整回执，没给也说明走了 inajax 分支。 */
+    private val RE_INAJAX_XML = Regex("(?s)<root>\\s*<!\\[CDATA\\[")
+
+    /** errorhandle_xxx('提示', …) 第一参：站点回执的提示原文。 */
+    private val RE_ERROR_HANDLE_MSG = Regex("errorhandle_[A-Za-z0-9_]+\\s*\\(\\s*['\"]([^'\"]+)['\"]")
+
+    /**
+     * 快速回复（inajax）接口响应判定。
+     *
+     * 带 inajax=1 时站点返回 XML，CDATA 里是 succeedhandle_（成功）或 errorhandle_（失败）
+     * 脚本；据此判成败，失败时摘出站点提示原文。失败路径一定会带 errorhandle_，故回执是
+     * inajax XML 却既无错误脚本、也没给成功脚本时按成功算——宁可放过一个静默成功，也不要把
+     * 已发出的回复报成失败、诱使用户重发。整页 HTML（未走 inajax、被重定向到登录页等）不认。
+     */
+    fun parseReplyResult(body: String): ReplyResult {
+        if (body.contains("errorhandle_")) return ReplyResult(false, extractReplyError(body))
+        val success = body.contains("succeedhandle_") || RE_INAJAX_XML.containsMatchIn(body)
+        return ReplyResult(success, if (success) null else extractReplyError(body))
+    }
+
+    /** 摘站点提示原文：优先 errorhandle_xxx('提示', …) 第一参，兜底取 CDATA 去标签纯文本。 */
+    private fun extractReplyError(body: String): String? {
+        val cdata = RE_CDATA.find(body)?.groupValues?.get(1) ?: body
+        RE_ERROR_HANDLE_MSG.find(cdata)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }?.let { return it }
+        return cdata
+            .replace(Regex("(?s)<script.*?</script>"), "")
+            .replace(Regex("<[^>]+>"), " ")
+            .replace("&nbsp;", " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .ifBlank { null }
+    }
+
     private fun numberFromText(text: String): Int? =
         Regex("\\d+").find(text)?.value?.toIntOrNull()
 
@@ -835,9 +877,17 @@ object ForumParser {
     }
 
     private fun extractTid(document: Document, html: String): String {
+        // tid 取值按可靠性排序：正文前部常引用其它帖（thread-其它tid-1-1.html），
+        // 直接扫 thread-\d+ 会误取被引帖的 tid，分页链接随之全被 parseTotalPages 过滤、
+        // 总页数算成 1。故优先用页面 JS 的 tid 赋值，再 canonical、fastpostform action，
+        // 最后才回退扫 thread-\d+。
+        RE_JS_TID.find(html)?.groupValues?.get(1)?.let { return it }
         RE_TID.find(document.selectFirst("link[rel=canonical]")?.attr("href") ?: "")?.let {
             return it.groupValues[1]
         }
+        Regex("[?&]tid=(\\d+)")
+            .find(document.selectFirst("form#fastpostform")?.attr("action") ?: "")
+            ?.groupValues?.get(1)?.let { return it }
         return RE_TID.find(html)?.groupValues?.get(1) ?: ""
     }
 

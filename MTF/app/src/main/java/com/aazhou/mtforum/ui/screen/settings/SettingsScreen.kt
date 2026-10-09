@@ -70,13 +70,14 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
     val scrollState = rememberScrollState()
     // 清理确认框
     var clearCacheOpen by remember { mutableStateOf(false) }
-    // 缓存占用：JSON 缓存 + Coil 图片磁盘缓存，IO 上算，清理后重新触发
+    // 缓存占用：JSON 缓存 + Coil 图片磁盘缓存 + 表情数据，IO 上算，清理后重新触发
     var cacheTick by remember { mutableStateOf(0) }
     val cacheBytes by produceState(initialValue = 0L, cacheTick) {
         value = withContext(Dispatchers.IO) {
             val json = container.contentCache.sizeBytes()
             val images = context.imageLoader.diskCache?.size ?: 0L
-            json + images
+            val smileys = container.smileyStore.approximateBytes()
+            json + images + smileys
         }
     }
     // 日志等级与条数：等级改完立刻反映在副标题上，条数每次回到本页重新算
@@ -172,7 +173,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
                 onClick = onOpenLogs,
             )
 
-            // 清理缓存：JSON 内容缓存与 Coil 图片磁盘缓存一起清，清完图片需重新下载
+            // 清理缓存：JSON 内容缓存、Coil 图片缓存与表情数据一起清，清完图片需重新下载
             SettingsRow(
                 title = "清理缓存",
                 subtitle = "已占用 ${formatCacheSize(cacheBytes)}",
@@ -186,13 +187,17 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
             onDismissRequest = { clearCacheOpen = false },
             title = { Text("清理缓存") },
             text = {
-                Text("将清除本地缓存的帖子内容与已下载的图片，下次浏览需要重新下载。")
+                Text(
+                    "将清除本地缓存的帖子内容与已下载的图片，以及表情数据与最近使用记录，" +
+                        "下次浏览需要重新下载。",
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
                     clearCacheOpen = false
                     scope.launch {
                         container.contentCache.clear()
+                        container.smileyStore.clear()
                         val loader = context.imageLoader
                         withContext(Dispatchers.IO) {
                             loader.diskCache?.clear()

@@ -12,21 +12,24 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.absoluteOffset
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.LazyRow
@@ -45,7 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -60,14 +63,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.Post
@@ -77,6 +91,7 @@ import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
+import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -98,7 +113,8 @@ internal fun ReplyComposer(
     target: Post?,
     sending: Boolean,
     smileyPacks: List<SmileyPack>,
-    recentCodes: MutableList<String>,
+    recentCodes: List<String>,
+    onSmileyUsed: (String) -> Unit,
     onFocusedChange: (Boolean) -> Unit,
     uploadCredentials: Pair<String, String>?,
     onUploadImage: suspend (File) -> String?,
@@ -122,20 +138,53 @@ internal fun ReplyComposer(
         smileyPacks.flatMap { it.items }.associateBy { it.code }
     }
 
-    fun pickSmiley(code: String) {
-        onValueChange(value.insertAtSelection(code))
-        recentCodes.remove(code)
-        recentCodes.add(0, code)
-        if (recentCodes.size > RecentSmileyLimit) recentCodes.removeAt(recentCodes.lastIndex)
+    // 输入框里的表情：BasicTextField 没有 inlineContent 参数（javap 核实过各版本都没有），
+    // 所以走「文字隐形 + 上层按布局坐标贴图」：visualTransformation 只把表情码染成透明色，
+    // 文本长度一个字符都没变，OffsetMapping 用 Identity，光标与选区才不会错位
+    val smileyVisualTransformation = remember(smileyByCode) {
+        VisualTransformation { text ->
+            if (smileyByCode.isEmpty() || !text.text.contains('[')) {
+                TransformedText(text, OffsetMapping.Identity)
+            } else {
+                TransformedText(text.withHiddenSmileys(smileyByCode), OffsetMapping.Identity)
+            }
+        }
+    }
+    // 文本布局结果：没有它就不知道每个表情码画在哪
+    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+
+    // 退格一次删掉整个表情：IME 只删光标前一个字符，删完发现光标仍落在表情码内部，
+    // 就把删除范围扩大到整个表情码，不然用户得按五六次才能删掉一个表情
+    fun onComposerValueChange(next: TextFieldValue) {
+        val shrunkByOne = next.text.length == value.text.length - 1 &&
+            next.selection.collapsed && value.selection.collapsed
+        if (shrunkByOne) {
+            val codeStart = smileyCodeStartBefore(value.text, value.selection.start)
+            if (codeStart >= 0) {
+                val codeEnd = value.text.indexOf(']', codeStart) + 1
+                val text = value.text.removeRange(codeStart, codeEnd)
+                onValueChange(value.copy(text = text, selection = TextRange(codeStart)))
+                return
+            }
+        }
+        onValueChange(next)
     }
 
-    // 默认那一行：先用最近用过的，不足 8 个用默认包的开头补满
+    fun pickSmiley(code: String) {
+        onValueChange(value.insertAtSelection(code))
+        onSmileyUsed(code)
+    }
+
+    // 默认那一行：先用最近用过的，不足 8 个按默认表情表补满
     val recentRow = run {
         val used = recentCodes.mapNotNull { smileyByCode[it] }
-        val filler = smileyPacks.firstOrNull()
-            ?.items
-            ?.filter { smiley -> recentCodes.none { it == smiley.code } }
-            .orEmpty()
+        val wanted = DefaultSmileyCodes.mapNotNull { smileyByCode[it] }
+        // 默认表一个都取不到（站点改了 code 写法或表情被下架）时退回第一个包的开头：
+        // 宁可显示别的，也不能让这一行整行消失
+        val filler = wanted.ifEmpty {
+            smileyPacks.firstOrNull()?.items?.filter { smiley -> recentCodes.none { it == smiley.code } }
+                .orEmpty()
+        }.filter { smiley -> recentCodes.none { it == smiley.code } }
         (used + filler).take(RecentSmileyLimit)
     }
 
@@ -166,7 +215,7 @@ internal fun ReplyComposer(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp)
-                .padding(top = 12.dp, bottom = 12.dp),
+                .padding(top = 12.dp),
         ) {
             // 输入区：占满宽度，文字顶格；回复指定楼层时占位文案带上对方昵称
             Box(
@@ -196,9 +245,11 @@ internal fun ReplyComposer(
                 }
                 BasicTextField(
                     value = value,
-                    onValueChange = onValueChange,
+                    onValueChange = ::onComposerValueChange,
                     textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    visualTransformation = smileyVisualTransformation,
+                    onTextLayout = { textLayout = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp)
@@ -214,6 +265,19 @@ internal fun ReplyComposer(
                                 keyboard?.show()
                             }
                         },
+                    // 表情贴图层：BasicTextField 没有 inlineContent 参数，只能自己按布局坐标贴图。
+                    // 文字已被 visualTransformation 染成透明色，这一层垫在输入框下面，光标与
+                    // 选区仍由输入框自己画，不会被图片盖住
+                    decorationBox = { inner ->
+                        Box(Modifier.fillMaxWidth()) {
+                            SmileyOverlay(
+                                text = value.text,
+                                layout = textLayout,
+                                smileyByCode = smileyByCode,
+                            )
+                            inner()
+                        }
+                    },
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -243,26 +307,27 @@ internal fun ReplyComposer(
                 if (sending) {
                     CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 } else {
+                    // 纯空格不算有内容：置灰且不可点，有内容才点亮
+                    val publishReady = value.text.isNotBlank()
                     Text(
                         "发布",
                         style = MaterialTheme.typography.labelLarge,
-                        color = Color.White,
+                        color = if (publishReady) Color.White else colors.textHint,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
-                            .background(ComposerPublishColor, AbsoluteRoundedCornerShape(50))
-                            .clickable(enabled = value.text.isNotBlank(), onClick = onSend)
+                            .background(
+                                if (publishReady) ComposerPublishColor else colors.textHint.copy(alpha = 0.2f),
+                                AbsoluteRoundedCornerShape(50),
+                            )
+                            .clickable(enabled = publishReady, onClick = onSend)
                             .padding(horizontal = 14.dp, vertical = 6.dp),
                     )
                 }
             }
 
+            // 展开哪个面板就排哪个：表情面板是内容列的一部分，网格高度由自己写死，
+            // 不依赖键盘高度或剩余空间——那两种依赖都让网格塌成过一条 tab 栏
             when (panel) {
-                ComposerPanel.Smiley -> SmileyPanel(
-                    packs = smileyPacks,
-                    recentCodes = recentCodes,
-                    onPick = { code -> pickSmiley(code) },
-                    modifier = Modifier.padding(top = 8.dp),
-                )
                 // 没展开面板时只摆一行最近用过的，够 8 个为止
                 ComposerPanel.None -> RecentSmileyRow(recentRow) { code -> pickSmiley(code) }
                 ComposerPanel.Insert -> InsertPanel(
@@ -270,7 +335,13 @@ internal fun ReplyComposer(
                         inserting = kind
                         panel = ComposerPanel.None
                     },
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                ComposerPanel.Smiley -> SmileyPanel(
+                    packs = smileyPacks,
+                    recentCodes = recentCodes,
+                    onPick = { code -> pickSmiley(code) },
+                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
         }
@@ -336,6 +407,108 @@ internal fun ReplyComposer(
 
 private enum class ComposerPanel { None, Smiley, Insert }
 
+/**
+ * 把正文里的表情码（`[#呵呵]`）换成行内表情占位。
+ *
+ * alternateText 必须与表情码等长：VisualTransformation 用 Identity 映射，两者一旦不等长，
+ * 光标位置与选区就会整体偏移。
+ */
+/** 光标所在位置之前是否有一个表情码：是则返回它的起始下标，否则 -1。 */
+private fun smileyCodeStartBefore(text: String, cursor: Int): Int {
+    if (cursor <= 0 || cursor > text.length) return -1
+    val open = text.lastIndexOf('[', (cursor - 1).coerceAtLeast(0))
+    if (open < 0) return -1
+    val close = text.indexOf(']', open + 1)
+    if (close < 0 || close + 1 > text.length) return -1
+    // 光标落在表情码内部或紧接其尾，才算「正在删这个表情」
+    return if (cursor <= close + 1) open else -1
+}
+
+/** 正文里的表情码：区间（起、止下标）与码本身，顺序即出现顺序。 */
+private fun smileyRangesOf(text: String, smileyByCode: Map<String, Smiley>): List<Pair<IntRange, String>> {
+    val found = mutableListOf<Pair<IntRange, String>>()
+    var index = 0
+    while (index < text.length) {
+        val close = if (text[index] == '[') text.indexOf(']', index + 1) else -1
+        if (close > index + 1) {
+            val code = text.substring(index, close + 1)
+            if (smileyByCode.containsKey(code)) {
+                found += (index until close + 1) to code
+                index = close + 1
+                continue
+            }
+        }
+        index++
+    }
+    return found
+}
+
+/** 表情码染成透明色：文本长度不变，OffsetMapping 才仍能用 Identity，图片由上层按坐标贴。 */
+private fun AnnotatedString.withHiddenSmileys(smileyByCode: Map<String, Smiley>): AnnotatedString {
+    val source = text
+    if (smileyByCode.isEmpty()) return this
+    return buildAnnotatedString {
+        var index = 0
+        while (index < source.length) {
+            val close = if (source[index] == '[') source.indexOf(']', index + 1) else -1
+            if (close > index + 1 && smileyByCode.containsKey(source.substring(index, close + 1))) {
+                withStyle(SpanStyle(color = Color.Transparent)) {
+                    append(source.substring(index, close + 1))
+                }
+                index = close + 1
+            } else {
+                append(source[index])
+                index++
+            }
+        }
+    }
+}
+
+/**
+ * 输入框里的表情贴图层：按文本布局坐标把表情码的位置替换成图片。
+ *
+ * BasicTextField 各版本都没有 inlineContent 参数（已解包 foundation 的 classes.jar 用 javap
+ * 核实），行内图片只能自己贴。这一层垫在输入框下面：文字已被染成透明色，光标与选区仍由
+ * 输入框画在最上层，不会被图片盖住。
+ */
+@Composable
+private fun SmileyOverlay(
+    text: String,
+    layout: TextLayoutResult?,
+    smileyByCode: Map<String, Smiley>,
+) {
+    if (layout == null) return
+    // 区间只能按布局自己的文本算：插入表情时文本先变、布局回调后到，用旧的布局配新的区间
+    // 会 getBoundingBox 越界直接崩（offset 超出 [0, 0)）。对不上就等下一帧，不画这一帧
+    val source = layout.layoutInput.text.text
+    if (source != text || smileyByCode.isEmpty()) return
+    val ranges = remember(source, smileyByCode) { smileyRangesOf(source, smileyByCode) }
+    if (ranges.isEmpty()) return
+    val density = LocalDensity.current
+    Box(Modifier.fillMaxSize()) {
+        ranges.forEach { (range, code) ->
+            val smiley = smileyByCode[code] ?: return@forEach
+            val first = layout.getBoundingBox(range.first)
+            val last = if (range.last > range.first) layout.getBoundingBox(range.last) else first
+            // 表情码被行尾截断时首末字符不同行：只按首字符那一格画，画不全但不越界
+            val box = if (last.top != first.top) first else Rect(first.left, first.top, last.right, last.bottom)
+            // 取行高做边长、水平居中：字符区间是按 `[#呵呵]` 五个方括号字符算的，直接铺会拉宽变形
+            val side = box.height
+            val left = box.left + (box.width - side) / 2f
+            with(density) {
+                AsyncImage(
+                    model = smiley.url,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .absoluteOffset(left.toDp(), box.top.toDp())
+                        .requiredSize(side.toDp()),
+                )
+            }
+        }
+    }
+}
+
 /** 「插入」面板里的条目，也决定点开后弹哪种输入框。 */
 private enum class InsertKind(val label: String) {
     Url("文字链接"),
@@ -389,11 +562,20 @@ private fun SmileyPanel(
         )
         return
     }
-    // 0 = 最近使用，其余按下标对应各个包
-    var packIndex by remember { mutableStateOf(0) }
+    // 0 = 最近使用，其余按下标对应各个包。默认停在第一个包：最近使用是给用过的人翻历史的，
+    // 不该拿它当默认页——用过几个表情的人一开面板只看到那几个，整页就像空了一样
+    var packIndex by remember(packs.isEmpty()) { mutableStateOf(if (packs.isEmpty()) 0 else 1) }
     val smileyByCode = remember(packs) { packs.flatMap { it.items }.associateBy { it.code } }
     val recent = recentCodes.mapNotNull { smileyByCode[it] }
-    val emojis = if (packIndex == 0) recent else packs[packIndex - 1].items
+    // 最近使用为空时不能就此空格：按默认表情表补，站点里没有才退回第一个包。
+    // 否则没用过表情的人一点开表情面板，看到的只有分类栏、网格全空
+    val emojis = when (packIndex) {
+        0 -> recent.ifEmpty {
+            DefaultSmileyCodes.mapNotNull { smileyByCode[it] }
+                .ifEmpty { packs.firstOrNull()?.items.orEmpty() }
+        }
+        else -> packs[packIndex - 1].items
+    }
     Column(modifier) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
@@ -417,7 +599,8 @@ private fun SmileyPanel(
             }
         }
         Spacer(Modifier.height(8.dp))
-        // 固定高度：表情少的时候也占和满表情一样高，不会忽大忽小
+        // 固定高度：表情少的时候也占和满表情一样高，不会忽大忽小。不拿 Column 的剩余空间——
+        // 外部高度一旦随键盘变化，网格就会被压成一条 tab 栏
         LazyVerticalGrid(
             columns = GridCells.Fixed(8),
             modifier = Modifier
@@ -450,17 +633,24 @@ private fun SmileyPackTab(selected: Boolean, onClick: () -> Unit, content: @Comp
     ) { content() }
 }
 
-/** 默认状态下工具栏下面那一行：最近用过的表情，不足 8 个用默认包补满。 */
+/** 默认状态下工具栏下面那一行：最近用过的表情，不足 8 个按默认表情表补满。 */
 @Composable
 private fun RecentSmileyRow(smileys: List<Smiley>, onPick: (String) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp),
+            // 不占满剩余高度：这一行现在是内容列的直接子节点，fillMaxHeight 会把它一路撑到
+            // 键盘正上方，中间空出几百 dp
+            .padding(top = EmojiRowToolbarGap),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        // 按 code 作 key：点一个表情后它在最近列表里前移，按位置渲染会让每个格子换成另一张图，
+        // AsyncImage 换 model 重新加载就是一下闪白
         smileys.forEach { smiley ->
-            SmileyCell(smiley, onPick, Modifier.weight(1f))
+            key(smiley.code) {
+                SmileyCell(smiley, onPick, Modifier.weight(1f))
+            }
         }
     }
 }
@@ -472,7 +662,7 @@ private fun SmileyCell(smiley: Smiley, onPick: (String) -> Unit, modifier: Modif
         contentDescription = smiley.code,
         modifier = modifier
             .aspectRatio(1f)
-            .padding(10.dp)
+            .padding(8.dp)
             .clickable { onPick(smiley.code) },
     )
 }
@@ -687,8 +877,20 @@ private val ReplyComposerInputHeight = 84.dp
 /** 最近使用那一行摆几个。 */
 private const val RecentSmileyLimit = 8
 
-/** 表情面板展开时占住键盘原来的高度。 */
+/** 键盘一次都没起来过时，表情面板按这个高度占位。 */
 private val ComposerSmileyPanelHeight = 310.dp
+
+/** 工具栏与表情行之间的间距。 */
+private val EmojiRowToolbarGap = 2.dp
 
 /** 发布按钮底色。 */
 private val ComposerPublishColor = Color(0xFF97CDAD)
+
+/**
+ * 默认表情行：最近用过的补不满时按这些补。
+ *
+ * code 必须带站点笑脸表里的方括号（SmileyParser 原样产出 `[#呵呵]`，插入正文的也正是这个
+ * 标记）；写成分组匹配的 `#呵呵` 会一个都取不到，整行表情直接消失。
+ */
+private val DefaultSmileyCodes =
+    listOf("[#呵呵]", "[#滑稽]", "[#哈哈]", "[#吐舌]", "[#啊]", "[#酷]", "[#怒]", "[#开心]")

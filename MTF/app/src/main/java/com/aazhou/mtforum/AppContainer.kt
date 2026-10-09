@@ -15,6 +15,7 @@ import com.aazhou.mtforum.data.repo.LogSettingsStore
 import com.aazhou.mtforum.data.repo.NoticeChecker
 import com.aazhou.mtforum.data.repo.NoticeUnreadStore
 import com.aazhou.mtforum.data.repo.SessionStore
+import com.aazhou.mtforum.data.repo.SmileyStore
 import com.aazhou.mtforum.data.repo.ThemeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +42,9 @@ class AppContainer(application: Application) {
     /** 已下载帖子的应用内存档（快照 + 本地图片，供离线按原格式看帖）。 */
     val archiveStore = ThreadArchiveStore(application)
     val httpClient = HttpClient()
-    val repository = ForumRepository(httpClient)
+    /** 表情表与最近使用表情的本地缓存。 */
+    val smileyStore = SmileyStore(application)
+    val repository = ForumRepository(httpClient, smileyStore)
     val noticeUnreadStore = NoticeUnreadStore(application)
     /** 后台消息轮询（15 分钟一次）；进应用时也由 [checkNoticesNow] 顺手调一次。 */
     val noticeChecker = NoticeChecker(repository, noticeUnreadStore)
