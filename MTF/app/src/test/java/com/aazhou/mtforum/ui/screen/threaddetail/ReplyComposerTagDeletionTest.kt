@@ -10,7 +10,7 @@ import org.junit.Test
 class ReplyComposerTagDeletionTest {
 
     @Test
-    fun deleteOnClosedTag_stripsBothTags_leavesContent() {
+    fun deleteOnClosedTag_removesEntireBlockWithContent() {
         // [audio]哈哈[/audio]
         val oldText = "[audio]哈哈[/audio]"
         // 用户光标原本在末尾 (下标 17)，按退格删除了最后的 ']'
@@ -19,8 +19,8 @@ class ReplyComposerTagDeletionTest {
 
         val result = handleTagPairDeletion(oldValue, newValue)
         assertNotNull(result)
-        assertEquals("哈哈", result!!.text)
-        assertEquals(2, result.selection.start)
+        assertEquals("", result!!.text)
+        assertEquals(0, result.selection.start)
     }
 
     @Test
@@ -38,7 +38,7 @@ class ReplyComposerTagDeletionTest {
     }
 
     @Test
-    fun deleteUrlTagWithContent_stripsTagsLeavesContent() {
+    fun deleteUrlTagWithContent_removesEntireBlockWithContent() {
         // [url=https://binmt.cc]我的博客[/url]
         val oldText = "[url=https://binmt.cc]我的博客[/url]"
         val len = oldText.length
@@ -47,8 +47,8 @@ class ReplyComposerTagDeletionTest {
 
         val result = handleTagPairDeletion(oldValue, newValue)
         assertNotNull(result)
-        assertEquals("我的博客", result!!.text)
-        assertEquals("我的博客".length, result.selection.start)
+        assertEquals("", result!!.text)
+        assertEquals(0, result.selection.start)
     }
 
     @Test
@@ -59,5 +59,32 @@ class ReplyComposerTagDeletionTest {
 
         val result = handleTagPairDeletion(oldValue, newValue)
         assertNull(result)
+    }
+
+    @Test
+    fun deleteBoldTagPair_removesEntireBlockWithContent() {
+        // [b]加粗文字[/b]
+        val oldText = "[b]加粗文字[/b]"
+        val len = oldText.length
+        val oldValue = TextFieldValue(oldText, TextRange(len))
+        val newValue = TextFieldValue(oldText.dropLast(1), TextRange(len - 1))
+
+        val result = handleTagPairDeletion(oldValue, newValue)
+        assertNotNull(result)
+        assertEquals("", result!!.text)
+        assertEquals(0, result.selection.start)
+    }
+
+    @Test
+    fun deleteEmptyBoldTag_removesEntireBlock() {
+        // [b][/b]
+        val oldText = "[b][/b]"
+        val oldValue = TextFieldValue(oldText, TextRange(3))
+        val newValue = TextFieldValue("[b[/b]", TextRange(2))
+
+        val result = handleTagPairDeletion(oldValue, newValue)
+        assertNotNull(result)
+        assertEquals("", result!!.text)
+        assertEquals(0, result.selection.start)
     }
 }

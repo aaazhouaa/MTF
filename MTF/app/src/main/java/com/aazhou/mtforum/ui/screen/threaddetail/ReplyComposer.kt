@@ -11,6 +11,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.absoluteOffset
@@ -248,109 +250,113 @@ internal fun ReplyComposer(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp)
                 .padding(top = 12.dp),
         ) {
-            // 输入区：占满宽度，文字顶格；回复指定楼层时占位文案带上对方昵称
-            Box(
+            // 输入区：占满宽度，文字顶格；下方留出空白点击区跳转光标，不破坏 BasicTextField 原生触摸/长按选词
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(ReplyComposerInputHeight)
-                    .pointerInput(value.text) {
-                        detectTapGestures { offset ->
-                            val layout = textLayout
-                            val len = value.text.length
-                            if (layout == null || len == 0) {
-                                onValueChange(value.copy(selection = TextRange(len)))
-                            } else {
-                                val topPadPx = with(density) { 8.dp.toPx() }
-                                val lastLine = layout.lineCount - 1
-                                val lastLineBottom = layout.getLineBottom(lastLine) + topPadPx
-                                val lastLineTop = layout.getLineTop(lastLine) + topPadPx
-                                val lastLineRight = layout.getLineRight(lastLine)
-                                // 点在所有文字行下方，或者点在末行文字右侧的空白区域 -> 瞬移到文本末尾
-                                if (offset.y > lastLineBottom || (offset.y >= lastLineTop && offset.x > lastLineRight)) {
-                                    onValueChange(value.copy(selection = TextRange(len)))
-                                } else {
-                                    val relY = (offset.y - topPadPx).coerceAtLeast(0f)
-                                    val pos = layout.getOffsetForPosition(Offset(offset.x, relY))
-                                    onValueChange(value.copy(selection = TextRange(pos)))
-                                }
+                    .padding(horizontal = 14.dp),
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.TopStart,
+                ) {
+                    if (value.text.isEmpty()) {
+                        Text(
+                            if (target != null) "回复@${target.authorName}" else "写评论",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.textHint,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                    BasicTextField(
+                        value = value,
+                        onValueChange = ::onComposerValueChange,
+                        textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        visualTransformation = smileyVisualTransformation,
+                        onTextLayout = { textLayout = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .focusRequester(focusRequester)
+                            // 聚焦状态回传上层：遮罩和返回键靠它区分「该收键盘」还是「该收回复框」
+                            .onFocusChanged { onFocusedChange(it.isFocused) },
+                        // 表情贴图层：BasicTextField 没有 inlineContent 参数，只能自己按布局坐标贴图。
+                        // 文字已被 visualTransformation 染成透明色，这一层垫在输入框下面，光标与
+                        // 选区仍由输入框自己画，不会被图片盖住
+                        decorationBox = { inner ->
+                            Box(Modifier.fillMaxWidth()) {
+                                SmileyOverlay(
+                                    text = value.text,
+                                    layout = textLayout,
+                                    smileyByCode = smileyByCode,
+                                )
+                                inner()
                             }
+                        },
+                    )
+                }
+                // 文字下方的空白点击区：点击跳转到末尾，不与文字区域的选词/拖拽手势重叠
+                Spacer(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() },
+                        ) {
+                            onValueChange(value.copy(selection = TextRange(value.text.length)))
                             if (panel == ComposerPanel.Smiley) panel = ComposerPanel.None
                             focusRequester.requestFocus()
                             keyboard?.show()
-                        }
-                    },
-                contentAlignment = Alignment.TopStart,
-            ) {
-                if (value.text.isEmpty()) {
-                    Text(
-                        if (target != null) "回复@${target.authorName}" else "写评论",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textHint,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-                BasicTextField(
-                    value = value,
-                    onValueChange = ::onComposerValueChange,
-                    textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    visualTransformation = smileyVisualTransformation,
-                    onTextLayout = { textLayout = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp)
-                        .focusRequester(focusRequester)
-                        // 聚焦状态回传上层：遮罩和返回键靠它区分「该收键盘」还是「该收回复框」
-                        .onFocusChanged { onFocusedChange(it.isFocused) },
-                    // 表情贴图层：BasicTextField 没有 inlineContent 参数，只能自己按布局坐标贴图。
-                    // 文字已被 visualTransformation 染成透明色，这一层垫在输入框下面，光标与
-                    // 选区仍由输入框自己画，不会被图片盖住
-                    decorationBox = { inner ->
-                        Box(Modifier.fillMaxWidth()) {
-                            SmileyOverlay(
-                                text = value.text,
-                                layout = textLayout,
-                                smileyByCode = smileyByCode,
-                            )
-                            inner()
-                        }
-                    },
+                        },
                 )
             }
             Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ComposerToolButton(R.drawable.ic_smiley, "表情") {
-                    val opening = panel != ComposerPanel.Smiley
-                    panel = if (opening) ComposerPanel.Smiley else ComposerPanel.None
-                    if (opening) {
-                        // 必须先失焦再收键盘：只 hide 的话输入框仍持焦，输入法会在下次布局或
-                        // 改字时立刻弹回来，表情面板和键盘就同时叠在屏幕上
-                        focusManager.clearFocus()
-                        keyboard?.hide()
-                    } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    ComposerToolButton(R.drawable.ic_smiley, "表情") {
+                        val opening = panel != ComposerPanel.Smiley
+                        panel = if (opening) ComposerPanel.Smiley else ComposerPanel.None
+                        if (opening) {
+                            // 必须先失焦再收键盘：只 hide 的话输入框仍持焦，输入法会在下次布局或
+                            // 改字时立刻弹回来，表情面板和键盘就同时叠在屏幕上
+                            focusManager.clearFocus()
+                            keyboard?.hide()
+                        } else {
+                            focusRequester.requestFocus()
+                            keyboard?.show()
+                        }
+                    }
+                    ComposerToolButton(R.drawable.ic_image, "图片") {
+                        if (uploadCredentials != null) {
+                            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        } else {
+                            AppToast.show("上传凭据已失效，返回帖子重进试试")
+                        }
+                    }
+                    ComposerToolButton(R.drawable.ic_at, "提到朋友") {
+                        onValueChange(value.wrapSelectionOrInsert("@", " "))
                         focusRequester.requestFocus()
                         keyboard?.show()
                     }
-                }
-                ComposerToolButton(R.drawable.ic_image, "图片") {
-                    if (uploadCredentials != null) {
-                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    } else {
-                        AppToast.show("上传凭据已失效，返回帖子重进试试")
+                    ComposerToolButton(R.drawable.ic_add, "插入") {
+                        panel = if (panel == ComposerPanel.Insert) ComposerPanel.None else ComposerPanel.Insert
                     }
                 }
-                ComposerToolButton(R.drawable.ic_at, "提到朋友") {
-                    onValueChange(value.wrapSelectionOrInsert("@", " "))
-                    focusRequester.requestFocus()
-                    keyboard?.show()
-                }
-                ComposerToolButton(R.drawable.ic_add, "插入") {
-                    panel = if (panel == ComposerPanel.Insert) ComposerPanel.None else ComposerPanel.Insert
-                }
-                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
                 if (sending || uploading) {
                     CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 } else {
@@ -391,6 +397,10 @@ internal fun ReplyComposer(
                             },
                             onConfirm = {
                                 val inserted = when (currentInsert) {
+                                    InsertKind.Bold -> "[b]${inlineUrlInput.trim()}[/b]"
+                                    InsertKind.Italic -> "[i]${inlineUrlInput.trim()}[/i]"
+                                    InsertKind.Underline -> "[u]${inlineUrlInput.trim()}[/u]"
+                                    InsertKind.Strikethrough -> "[s]${inlineUrlInput.trim()}[/s]"
                                     InsertKind.Url -> {
                                         val u = inlineUrlInput.trim()
                                         val t = inlineTitleInput.trim().ifEmpty { u }
@@ -411,17 +421,37 @@ internal fun ReplyComposer(
                             modifier = Modifier.padding(top = 4.dp),
                         )
                     } else {
-                        RecentSmileyRow(recentRow) { code -> pickSmiley(code) }
+                        RecentSmileyRow(
+                            smileys = recentRow,
+                            onPick = { code -> pickSmiley(code) },
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                        )
                     }
                 }
                 ComposerPanel.Insert -> InsertPanel(
                     onPick = { kind ->
-                        // 如果有选中文本且为引用/代码，可直接包裹
+                        // 如果有选中文本且为支持文本包裹的类型，可直接包裹
                         val selStart = min(value.selection.min, value.selection.max)
                         val selEnd = max(value.selection.min, value.selection.max)
                         val selected = if (selEnd > selStart) value.text.substring(selStart, selEnd) else ""
-                        if (selected.isNotEmpty() && (kind == InsertKind.Quote || kind == InsertKind.Code)) {
-                            val tag = if (kind == InsertKind.Quote) "quote" else "code"
+                        val isTextFormat = kind in listOf(
+                            InsertKind.Bold,
+                            InsertKind.Italic,
+                            InsertKind.Underline,
+                            InsertKind.Strikethrough,
+                            InsertKind.Quote,
+                            InsertKind.Code,
+                        )
+                        if (selected.isNotEmpty() && isTextFormat) {
+                            val tag = when (kind) {
+                                InsertKind.Bold -> "b"
+                                InsertKind.Italic -> "i"
+                                InsertKind.Underline -> "u"
+                                InsertKind.Strikethrough -> "s"
+                                InsertKind.Quote -> "quote"
+                                InsertKind.Code -> "code"
+                                else -> ""
+                            }
                             onValueChange(value.wrapSelectionOrInsert("[$tag]", "[/$tag]"))
                             panel = ComposerPanel.None
                             focusRequester.requestFocus()
@@ -434,13 +464,13 @@ internal fun ReplyComposer(
                             panel = ComposerPanel.None
                         }
                     },
-                    modifier = Modifier.padding(top = 4.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
                 )
                 ComposerPanel.Smiley -> SmileyPanel(
                     packs = smileyPacks,
                     recentCodes = recentCodes,
                     onPick = { code -> pickSmiley(code) },
-                    modifier = Modifier.padding(top = 4.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
                 )
             }
         }
@@ -486,7 +516,10 @@ private fun smileyRangesOf(text: String, smileyByCode: Map<String, Smiley>): Lis
 }
 
 /**
- * 把正文里的表情码（`[#呵呵]`）染成透明，同时把 BBCode 标记（链接、引用、代码等）施加富文本视觉样式。
+ * 把正文里的表情码（`[#呵呵]`）染成透明，同时把 BBCode 标记（链接、引用、代码、加粗、斜体等）施加富文本视觉样式。
+ *
+ * 针对连续引用的视觉粘连问题：为每个 BBCode 组打上统一的胶囊浅底色，开闭标签附带微徽标背景，
+ * 使每组与相邻的普通文字或另一组代码之间拥有清晰分明的实体边界。
  *
  * 关键约束：字符总数与每个字符的下标必须 100% 保持不变，这样 OffsetMapping 用 Identity
  * 才能杜绝任何输入法 IME 光标抖动或越界崩溃。
@@ -500,6 +533,35 @@ private fun formatRichComposerText(
         append(source)
         if (source.isEmpty()) return@buildAnnotatedString
 
+        val capsuleBg = colors.textHint.copy(alpha = 0.08f)
+        val tagBadgeBg = colors.textHint.copy(alpha = 0.16f)
+        val tagTextColor = colors.textHint.copy(alpha = 0.65f)
+
+        // 辅助：为成对 BBCode 整体加底色，并将开闭标签渲染为小徽标
+        fun styleTagPair(
+            entireRange: IntRange,
+            openRange: IntRange,
+            closeRange: IntRange,
+            contentRange: IntRange,
+            contentStyle: SpanStyle? = null,
+        ) {
+            // 1. 整组浅底色：把实体组从普通文本中区隔出来
+            addStyle(SpanStyle(background = capsuleBg), entireRange.first, entireRange.last + 1)
+            // 2. 开闭标签小徽标样式
+            val tagStyle = SpanStyle(
+                color = tagTextColor,
+                background = tagBadgeBg,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+            )
+            addStyle(tagStyle, openRange.first, openRange.last + 1)
+            addStyle(tagStyle, closeRange.first, closeRange.last + 1)
+            // 3. 内容富文本样式
+            if (contentStyle != null && !contentRange.isEmpty()) {
+                addStyle(contentStyle, contentRange.first, contentRange.last + 1)
+            }
+        }
+
         // 1. 表情码染成透明色（图片在 Overlay 层绘制）
         if (smileyByCode.isNotEmpty() && source.contains('[')) {
             val smileyRanges = smileyRangesOf(source, smileyByCode)
@@ -508,74 +570,112 @@ private fun formatRichComposerText(
             }
         }
 
-        // 2. 文字链接富文本：[url=网址]链接文字[/url]
-        val urlRegex = Regex("""\[url=([^\]]+)\]([\s\S]*?)\[/url\]""", RegexOption.IGNORE_CASE)
+        // 2. 文字链接富文本：[url=网址]链接文字[/url] 或 [url]网址[/url]
+        val urlRegex = Regex("""(\[url(?:=[^\]]*)?\])([\s\S]*?)(\[/url\])""", RegexOption.IGNORE_CASE)
         for (match in urlRegex.findAll(source)) {
             val entireRange = match.range
-            val openTagLen = match.groups[1]!!.range.first - entireRange.first // "[url="
-            val openTagEnd = match.groups[1]!!.range.last + 2 // 包含结尾 "]"
-            val textGroup = match.groups[2]!!
+            val openGroup = match.groups[1]!!
+            val contentGroup = match.groups[2]!!
+            val closeGroup = match.groups[3]!!
 
-            // 弱化 [url=网址] 前缀标签
-            addStyle(
-                SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp),
-                entireRange.first,
-                openTagEnd,
-            )
-            // 高亮链接文字：蓝色 + 下划线 + 加粗，呈现真实的链接属性
-            addStyle(
-                SpanStyle(
+            styleTagPair(
+                entireRange = entireRange,
+                openRange = openGroup.range,
+                closeRange = closeGroup.range,
+                contentRange = contentGroup.range,
+                contentStyle = SpanStyle(
                     color = Color(0xFF2563EB),
                     textDecoration = TextDecoration.Underline,
                     fontWeight = FontWeight.SemiBold,
                 ),
-                textGroup.range.first,
-                textGroup.range.last + 1,
-            )
-            // 弱化 [/url] 闭合标签
-            addStyle(
-                SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp),
-                textGroup.range.last + 1,
-                entireRange.last + 1,
             )
         }
 
-        // 3. 引用块富文本：[quote]...[/quote]
-        val quoteRegex = Regex("""\[quote\]([\s\S]*?)\[/quote\]""", RegexOption.IGNORE_CASE)
+        // 3. 粗体：[b]...[/b]
+        val boldRegex = Regex("""(\[b\])([\s\S]*?)(\[/b\])""", RegexOption.IGNORE_CASE)
+        for (match in boldRegex.findAll(source)) {
+            styleTagPair(
+                entireRange = match.range,
+                openRange = match.groups[1]!!.range,
+                closeRange = match.groups[3]!!.range,
+                contentRange = match.groups[2]!!.range,
+                contentStyle = SpanStyle(fontWeight = FontWeight.Bold),
+            )
+        }
+
+        // 4. 斜体：[i]...[/i]
+        val italicRegex = Regex("""(\[i\])([\s\S]*?)(\[/i\])""", RegexOption.IGNORE_CASE)
+        for (match in italicRegex.findAll(source)) {
+            styleTagPair(
+                entireRange = match.range,
+                openRange = match.groups[1]!!.range,
+                closeRange = match.groups[3]!!.range,
+                contentRange = match.groups[2]!!.range,
+                contentStyle = SpanStyle(fontStyle = FontStyle.Italic),
+            )
+        }
+
+        // 5. 下划线：[u]...[/u]
+        val underlineRegex = Regex("""(\[u\])([\s\S]*?)(\[/u\])""", RegexOption.IGNORE_CASE)
+        for (match in underlineRegex.findAll(source)) {
+            styleTagPair(
+                entireRange = match.range,
+                openRange = match.groups[1]!!.range,
+                closeRange = match.groups[3]!!.range,
+                contentRange = match.groups[2]!!.range,
+                contentStyle = SpanStyle(textDecoration = TextDecoration.Underline),
+            )
+        }
+
+        // 6. 删除线：[s]...[/s]
+        val strikeRegex = Regex("""(\[s\])([\s\S]*?)(\[/s\])""", RegexOption.IGNORE_CASE)
+        for (match in strikeRegex.findAll(source)) {
+            styleTagPair(
+                entireRange = match.range,
+                openRange = match.groups[1]!!.range,
+                closeRange = match.groups[3]!!.range,
+                contentRange = match.groups[2]!!.range,
+                contentStyle = SpanStyle(textDecoration = TextDecoration.LineThrough),
+            )
+        }
+
+        // 7. 引用块富文本：[quote]...[/quote]
+        val quoteRegex = Regex("""(\[quote\])([\s\S]*?)(\[/quote\])""", RegexOption.IGNORE_CASE)
         for (match in quoteRegex.findAll(source)) {
-            val entireRange = match.range
-            val textGroup = match.groups[1]!!
-            // 弱化标签
-            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), entireRange.first, textGroup.range.first)
-            // 引用内容：斜体 + 次级文本颜色
-            addStyle(SpanStyle(color = colors.textSecondary, fontStyle = FontStyle.Italic), textGroup.range.first, textGroup.range.last + 1)
-            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), textGroup.range.last + 1, entireRange.last + 1)
-        }
-
-        // 4. 代码块富文本：[code]...[/code]
-        val codeRegex = Regex("""\[code\]([\s\S]*?)\[/code\]""", RegexOption.IGNORE_CASE)
-        for (match in codeRegex.findAll(source)) {
-            val entireRange = match.range
-            val textGroup = match.groups[1]!!
-            // 弱化标签
-            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), entireRange.first, textGroup.range.first)
-            // 代码内容：等宽字体 + 浅底色
-            addStyle(
-                SpanStyle(fontFamily = FontFamily.Monospace, background = colors.textHint.copy(alpha = 0.12f)),
-                textGroup.range.first,
-                textGroup.range.last + 1,
+            styleTagPair(
+                entireRange = match.range,
+                openRange = match.groups[1]!!.range,
+                closeRange = match.groups[3]!!.range,
+                contentRange = match.groups[2]!!.range,
+                contentStyle = SpanStyle(color = colors.textSecondary, fontStyle = FontStyle.Italic),
             )
-            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), textGroup.range.last + 1, entireRange.last + 1)
         }
 
-        // 5. 多媒体标签弱化：[img]、[audio]、[media]、[flash]、[attachimg]
-        val mediaRegex = Regex("""\[(img|audio|media[^\]]*|flash|attachimg)\]([\s\S]*?)\[/\1\]""", RegexOption.IGNORE_CASE)
+        // 8. 代码块富文本：[code]...[/code]
+        val codeRegex = Regex("""(\[code\])([\s\S]*?)(\[/code\])""", RegexOption.IGNORE_CASE)
+        for (match in codeRegex.findAll(source)) {
+            styleTagPair(
+                entireRange = match.range,
+                openRange = match.groups[1]!!.range,
+                closeRange = match.groups[3]!!.range,
+                contentRange = match.groups[2]!!.range,
+                contentStyle = SpanStyle(
+                    fontFamily = FontFamily.Monospace,
+                    background = colors.textHint.copy(alpha = 0.14f),
+                ),
+            )
+        }
+
+        // 9. 多媒体标签弱化：[img]、[audio]、[media]、[flash]、[attachimg]
+        val mediaRegex = Regex("""(\[(img|audio|media[^\\]]*|flash|attachimg)\])([\s\S]*?)(\[/(?:img|audio|media|flash|attachimg)\])""", RegexOption.IGNORE_CASE)
         for (match in mediaRegex.findAll(source)) {
-            val entireRange = match.range
-            val textGroup = match.groups[2]!!
-            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), entireRange.first, textGroup.range.first)
-            addStyle(SpanStyle(color = colors.textSecondary, fontSize = 13.sp), textGroup.range.first, textGroup.range.last + 1)
-            addStyle(SpanStyle(color = colors.textHint.copy(alpha = 0.45f), fontSize = 11.sp), textGroup.range.last + 1, entireRange.last + 1)
+            styleTagPair(
+                entireRange = match.range,
+                openRange = match.groups[1]!!.range,
+                closeRange = match.groups[4]!!.range,
+                contentRange = match.groups[3]!!.range,
+                contentStyle = SpanStyle(color = colors.textSecondary, fontSize = 13.sp),
+            )
         }
     }
 }
@@ -625,8 +725,12 @@ private fun SmileyOverlay(
     }
 }
 
-/** 「插入」面板里的条目：与网页端 7 项完全一致。 */
-private enum class InsertKind(val label: String) {
+/** 「插入」面板里的条目：包含常用格式与网页端插入项。 */
+private enum class InsertKind(val label: String, val iconRes: Int? = null) {
+    Bold("粗体", R.drawable.ic_format_bold),
+    Italic("斜体", R.drawable.ic_format_italic),
+    Underline("下划线", R.drawable.ic_format_underline),
+    Strikethrough("删除线", R.drawable.ic_format_strikethrough),
     Url("文字链接"),
     NetImage("网络图片"),
     Audio("MP3 音乐"),
@@ -785,9 +889,13 @@ private fun SmileyPackTab(selected: Boolean, onClick: () -> Unit, content: @Comp
 
 /** 默认状态下工具栏下面那一行：最近用过的表情，不足 8 个按默认表情表补满。 */
 @Composable
-private fun RecentSmileyRow(smileys: List<Smiley>, onPick: (String) -> Unit) {
+private fun RecentSmileyRow(
+    smileys: List<Smiley>,
+    onPick: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             // 不占满剩余高度：这一行现在是内容列的直接子节点，fillMaxHeight 会把它一路撑到
             // 键盘正上方，中间空出几百 dp
@@ -817,20 +925,33 @@ private fun SmileyCell(smiley: Smiley, onPick: (String) -> Unit, modifier: Modif
     )
 }
 
-/** 「插入」面板：列出可插入的标记类型，与网页端 7 项完全一致。 */
+/** 「插入」面板：列出可插入的标记类型（粗斜体/下划线/删除线排在文字链接前）。 */
 @Composable
 private fun InsertPanel(onPick: (InsertKind) -> Unit, modifier: Modifier = Modifier) {
     LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(InsertKind.values()) { kind ->
-            Text(
-                kind.label,
-                style = MaterialTheme.typography.labelMedium,
-                color = LocalMtfColors.current.textSecondary,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier
                     .clickable { onPick(kind) }
                     .background(LocalMtfColors.current.background, AbsoluteRoundedCornerShape(50))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            )
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            ) {
+                if (kind.iconRes != null) {
+                    Icon(
+                        painter = painterResource(kind.iconRes),
+                        contentDescription = null,
+                        tint = LocalMtfColors.current.textSecondary,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+                Text(
+                    kind.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = LocalMtfColors.current.textSecondary,
+                )
+            }
         }
     }
 }
@@ -854,8 +975,8 @@ private fun InlineInsertBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(colors.background, AbsoluteRoundedCornerShape(12.dp))
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .background(colors.background)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -878,6 +999,10 @@ private fun InlineInsertBar(
                     if (urlInput.isEmpty()) {
                         Text(
                             text = when (kind) {
+                                InsertKind.Bold -> "请输入加粗文本"
+                                InsertKind.Italic -> "请输入斜体文本"
+                                InsertKind.Underline -> "请输入下划线文本"
+                                InsertKind.Strikethrough -> "请输入删除线文本"
                                 InsertKind.Url -> "请输入链接网址 (https://...)"
                                 InsertKind.NetImage -> "请输入图片网址"
                                 InsertKind.Audio -> "请输入音频网址"
@@ -960,16 +1085,14 @@ private fun InlineInsertBar(
  * Group 4: 闭合标签（如 `[/audio]` 或 `[/url]`）
  */
 private val COMPOSER_TAG_PAIR_REGEX = Regex(
-    """(\[(url(?:=[^\]]*)?|audio|img|media(?:=[^\]]*)?|flash|quote|code|attachimg)\])([\s\S]*?)(\[/(?:url|audio|img|media|flash|quote|code|attachimg)\])""",
+    """(\[(url(?:=[^\]]*)?|audio|img|media(?:=[^\]]*)?|flash|quote|code|attachimg|b|i|u|s)\])([\s\S]*?)(\[/(?:url|audio|img|media|flash|quote|code|attachimg|b|i|u|s)\])""",
     RegexOption.IGNORE_CASE,
 )
 
 /**
  * 智能成对标签退格：
  * 当用户按退格键（Backspace）删除了某个 BBCode 标签的一部分，或在标签边缘退格时，
- * 将两边的配对代码（如 `[audio]` 与 `[/audio]`）一体化删除：
- * - 若内容为空（如 `[audio][/audio]`），整对标签彻底消失；
- * - 若内容非空（如 `[audio]哈哈[/audio]`），两边的代码整体移除，保留正文内容 `哈哈`。
+ * 连同标签中的内容整体删除整对标签块（例如 [audio]哈哈[/audio] 一起全删，干净无残留）。
  */
 internal fun handleTagPairDeletion(oldValue: TextFieldValue, newValue: TextFieldValue): TextFieldValue? {
     val oldText = oldValue.text
@@ -996,21 +1119,9 @@ internal fun handleTagPairDeletion(oldValue: TextFieldValue, newValue: TextField
         val isDeletingEmptyPair = contentRange.isEmpty() && (deletedIndex == openRange.last || deletedIndex == closeRange.first)
 
         if (isDeletingCloseTag || isDeletingOpenTag || isDeletingEmptyPair) {
-            val content = if (contentRange.isEmpty()) "" else oldText.substring(contentRange.first, contentRange.last + 1)
-            return if (content.isEmpty()) {
-                // 内容为空：彻底把整个 [tag][/tag] 删除
-                val resultText = oldText.removeRange(entireRange.first, entireRange.last + 1)
-                TextFieldValue(resultText, selection = TextRange(entireRange.first))
-            } else {
-                // 内容非空：将两边的配对标签代码一体化删除，保留中间的内容文本
-                val resultText = oldText.substring(0, entireRange.first) + content + oldText.substring(entireRange.last + 1)
-                val newCursor = if (isDeletingCloseTag) {
-                    entireRange.first + content.length
-                } else {
-                    entireRange.first
-                }
-                TextFieldValue(resultText, selection = TextRange(newCursor))
-            }
+            // 连同标签中的内容整体删除：直接从原文本中移除整组 [tag]...[/tag]
+            val resultText = oldText.removeRange(entireRange.first, entireRange.last + 1)
+            return TextFieldValue(resultText, selection = TextRange(entireRange.first))
         }
     }
     return null
