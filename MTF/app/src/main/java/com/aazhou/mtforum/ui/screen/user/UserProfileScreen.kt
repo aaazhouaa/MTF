@@ -19,7 +19,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -29,9 +28,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.VerticalDivider
@@ -47,9 +47,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
@@ -68,12 +71,13 @@ import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.launch
 
-/** 用户主页：图二风格卡片 + 关注、加好友、聊聊天、拉黑ta 操作项。 */
+/** 用户主页：个人资料卡片 + 关注、加好友、聊聊天、拉黑ta 操作项。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UserProfileScreen(
     uid: String,
     onBack: () -> Unit,
+    onChat: (uid: String, name: String) -> Unit = { _, _ -> },
 ) {
     val colors = LocalMtfColors.current
     val viewModel: UserProfileViewModel = appViewModel {
@@ -85,7 +89,6 @@ fun UserProfileScreen(
     val isOperating by viewModel.isOperating.collectAsStateWithLifecycle()
 
     var showAddFriendDialog by remember { mutableStateOf(false) }
-    var showChatDialog by remember { mutableStateOf(false) }
     var showBlockDialog by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
@@ -108,7 +111,7 @@ fun UserProfileScreen(
                 },
                 title = {
                     Text(
-                        (state as? UiState.Success)?.data?.name?.takeIf { it.isNotBlank() } ?: "用户资料",
+                        "个人主页",
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
                         fontWeight = FontWeight.Bold,
                         color = bodyTextColor(),
@@ -145,7 +148,10 @@ fun UserProfileScreen(
                         isOperating = isOperating,
                         onToggleFollow = { viewModel.toggleFollow() },
                         onAddFriend = { showAddFriendDialog = true },
-                        onChat = { showChatDialog = true },
+                        onChat = {
+                            val targetName = profile.name.orEmpty().ifBlank { "用户$uid" }
+                            onChat(uid, targetName)
+                        },
                         onBlock = { showBlockDialog = true },
                     )
                 }
@@ -163,43 +169,14 @@ fun UserProfileScreen(
                     )
                 }
 
-                if (showChatDialog) {
-                    ChatDialog(
+                if (showBlockDialog) {
+                    BlockUserDialog(
                         targetName = profile.name.orEmpty().ifBlank { "该用户" },
                         isSubmitting = isOperating,
-                        onDismiss = { showChatDialog = false },
-                        onConfirm = { msg ->
-                            viewModel.sendPm(msg) {
-                                showChatDialog = false
-                            }
-                        },
-                    )
-                }
-
-                if (showBlockDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showBlockDialog = false },
-                        title = { Text("加入黑名单") },
-                        text = {
-                            Text(
-                                "确定将 ${profile.name.orEmpty().ifBlank { "该用户" }} 加入黑名单吗？\n加入后，对方将无法与您互动。",
-                                color = colors.textSecondary,
-                            )
-                        },
-                        confirmButton = {
-                            TextButton(
-                                onClick = {
-                                    viewModel.blockUser {
-                                        showBlockDialog = false
-                                    }
-                                },
-                            ) {
-                                Text("确定拉黑", color = MaterialTheme.colorScheme.error)
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showBlockDialog = false }) {
-                                Text("取消", color = colors.textSecondary)
+                        onDismiss = { showBlockDialog = false },
+                        onConfirm = {
+                            viewModel.blockUser {
+                                showBlockDialog = false
                             }
                         },
                     )
@@ -210,17 +187,17 @@ fun UserProfileScreen(
 }
 
 /**
- * 样式对齐图二：
- * - 圆角白色卡片，左上方悬浮突出一半的圆形头像；
- * - 顶部留空（不带登录/退出按钮）；
+ * 用户顶部资料卡片：
+ * - 圆角卡片，左上方悬浮突出一半的圆形头像；
+ * - 顶部留空 38.dp，确保突出的头像不会遮挡下方的用户名与 UID；
  * - 主体行：左侧用户名与 UID，右侧三个统计指标（帖子、关注、粉丝），黄/金黄色，细竖线分割。
  */
 @Composable
 private fun UserHeaderCard(profile: UserProfile) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
-    val avatarSize = 64.dp
-    val avatarProtrude = 22.dp
+    val avatarSize = 68.dp
+    val avatarProtrude = 34.dp
 
     Box(
         modifier = Modifier
@@ -241,8 +218,8 @@ private fun UserHeaderCard(profile: UserProfile) {
                 .background(colors.surface)
                 .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
-            // 顶部高度占位（保持图二中头像突出对应的间隙，无登录退出按钮）
-            Spacer(Modifier.height(18.dp))
+            // 顶部高度占位（确保上方突出深入卡片的头像与下方文字保持舒适间隔，不遮挡用户名）
+            Spacer(Modifier.height(38.dp))
 
             // 主体行：左侧用户名与 UID，右侧三个统计指标
             Row(
@@ -479,7 +456,7 @@ private fun ActionRowItem(
     }
 }
 
-/** 加好友弹窗（支持输入附言）。 */
+/** 加好友弹窗：圆角卡片设计、主题色按键、兼容深浅色模式。 */
 @Composable
 private fun AddFriendDialog(
     targetName: String,
@@ -489,102 +466,307 @@ private fun AddFriendDialog(
 ) {
     var note by remember { mutableStateOf("") }
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val primaryColor = MaterialTheme.colorScheme.primary
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("添加好友") },
-        text = {
-            Column {
+    Dialog(
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp)
+                .then(
+                    if (isDark) {
+                        Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(20.dp))
+                    } else {
+                        Modifier
+                    },
+                ),
+            shape = RoundedCornerShape(20.dp),
+            color = colors.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 22.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                // 顶部主题色好友图标徽章
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(CircleShape)
+                        .background(primaryColor.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_friends),
+                        contentDescription = null,
+                        tint = primaryColor,
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                // 标题
                 Text(
-                    "申请添加 $targetName 为好友：",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.textSecondary,
+                    text = "添加好友",
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
+                    fontWeight = FontWeight.Bold,
+                    color = bodyTextColor(),
                 )
-                Spacer(Modifier.height(10.dp))
+
+                Spacer(Modifier.height(6.dp))
+
+                // 提示文案
+                Text(
+                    text = "申请添加「$targetName」为好友",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                    color = colors.textSecondary,
+                    textAlign = TextAlign.Center,
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                // 附言输入框
                 OutlinedTextField(
                     value = note,
-                    onValueChange = { note = it },
-                    placeholder = { Text("附言（选填，如：我是...）") },
-                    maxLines = 3,
+                    onValueChange = { if (it.length <= 50) note = it },
+                    placeholder = {
+                        Text(
+                            "附言（选填，如：我是...）",
+                            color = colors.textHint,
+                            fontSize = 14.sp,
+                        )
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = colors.quoteBackground,
+                        unfocusedContainerColor = colors.quoteBackground,
+                        focusedBorderColor = primaryColor,
+                        unfocusedBorderColor = colors.divider,
+                        focusedTextColor = bodyTextColor(),
+                        unfocusedTextColor = bodyTextColor(),
+                    ),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 3,
                 )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onConfirm(note) },
-                enabled = !isSubmitting,
-            ) {
-                if (isSubmitting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = Color.White,
-                    )
-                    Spacer(Modifier.width(6.dp))
+
+                Spacer(Modifier.height(20.dp))
+
+                // 底部按钮组
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    // 取消按钮
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.quoteBackground)
+                            .clickable(enabled = !isSubmitting, onClick = onDismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "取消",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                            fontWeight = FontWeight.Medium,
+                            color = bodyTextColor(),
+                        )
+                    }
+
+                    // 发送申请按钮（主题色，兼容深浅色模式）
+                    val btnBg = if (isDark) primaryColor.copy(alpha = 0.22f) else primaryColor
+                    val btnTextColor = if (isDark) primaryColor else Color.White
+                    Button(
+                        onClick = { onConfirm(note) },
+                        enabled = !isSubmitting,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .then(
+                                if (isDark) {
+                                    Modifier.border(1.dp, primaryColor.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = btnBg,
+                            contentColor = btnTextColor,
+                            disabledContainerColor = primaryColor.copy(alpha = 0.5f),
+                            disabledContentColor = btnTextColor.copy(alpha = 0.8f),
+                        ),
+                    ) {
+                        if (isSubmitting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = btnTextColor,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(
+                            text = "发送申请",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
-                Text("发送申请")
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isSubmitting) {
-                Text("取消", color = colors.textSecondary)
-            }
-        },
-    )
+        }
+    }
 }
 
-/** 聊聊天快速私信弹窗。 */
+/** 拉黑用户弹窗：圆角卡片设计、主题色按键、兼容深浅色模式。 */
 @Composable
-private fun ChatDialog(
+private fun BlockUserDialog(
     targetName: String,
     isSubmitting: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (message: String) -> Unit,
+    onConfirm: () -> Unit,
 ) {
-    var message by remember { mutableStateOf("") }
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val primaryColor = MaterialTheme.colorScheme.primary
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("发私信") },
-        text = {
-            Column {
-                Text(
-                    "给 $targetName 发送私信：",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.textSecondary,
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = message,
-                    onValueChange = { message = it },
-                    placeholder = { Text("说点什么吧...") },
-                    maxLines = 4,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onConfirm(message) },
-                enabled = !isSubmitting && message.isNotBlank(),
+    Dialog(
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp)
+                .then(
+                    if (isDark) {
+                        Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(20.dp))
+                    } else {
+                        Modifier
+                    },
+                ),
+            shape = RoundedCornerShape(20.dp),
+            color = colors.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 22.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                if (isSubmitting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = Color.White,
+                // 顶部警示图标徽章（使用半透明主题色背景）
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(CircleShape)
+                        .background(primaryColor.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_forbid),
+                        contentDescription = null,
+                        tint = primaryColor,
+                        modifier = Modifier.size(26.dp),
                     )
-                    Spacer(Modifier.width(6.dp))
                 }
-                Text("发送")
+
+                Spacer(Modifier.height(14.dp))
+
+                // 标题
+                Text(
+                    text = "加入黑名单",
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
+                    fontWeight = FontWeight.Bold,
+                    color = bodyTextColor(),
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                // 提示文案
+                Text(
+                    text = "确定将「$targetName」加入黑名单吗？\n加入后对方将无法与您互动。",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                    color = colors.textSecondary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 20.sp,
+                )
+
+                Spacer(Modifier.height(22.dp))
+
+                // 底部按键组（按键颜色使用主题色，兼容深浅色模式）
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    // 取消按钮
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.quoteBackground)
+                            .clickable(enabled = !isSubmitting, onClick = onDismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "取消",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                            fontWeight = FontWeight.Medium,
+                            color = bodyTextColor(),
+                        )
+                    }
+
+                    // 确定拉黑按钮（主题色，兼容深浅色模式）
+                    val btnBg = if (isDark) primaryColor.copy(alpha = 0.22f) else primaryColor
+                    val btnTextColor = if (isDark) primaryColor else Color.White
+                    Button(
+                        onClick = onConfirm,
+                        enabled = !isSubmitting,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .then(
+                                if (isDark) {
+                                    Modifier.border(1.dp, primaryColor.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = btnBg,
+                            contentColor = btnTextColor,
+                            disabledContainerColor = primaryColor.copy(alpha = 0.5f),
+                            disabledContentColor = btnTextColor.copy(alpha = 0.8f),
+                        ),
+                    ) {
+                        if (isSubmitting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = btnTextColor,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(
+                            text = "确定拉黑",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isSubmitting) {
-                Text("取消", color = colors.textSecondary)
-            }
-        },
-    )
+        }
+    }
 }

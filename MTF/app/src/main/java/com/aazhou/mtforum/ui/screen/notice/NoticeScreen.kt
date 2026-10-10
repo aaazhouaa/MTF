@@ -91,6 +91,7 @@ fun NoticeScreen(
     onBack: () -> Unit,
     onThreadClick: (tid: String, pid: String?) -> Unit,
     onUserClick: (String) -> Unit,
+    onChatClick: ((uid: String, name: String) -> Unit)? = null,
 ) {
     val colors = LocalMtfColors.current
     val viewModel: NoticeViewModel = appViewModel {
@@ -259,6 +260,7 @@ fun NoticeScreen(
                                                 listState = listState,
                                                 items = target.items,
                                                 onUserClick = onUserClick,
+                                                onChatClick = onChatClick,
                                             )
                                         }
                                         is NoticeContentState.Followers -> {
@@ -478,6 +480,7 @@ private fun PrivateMessageListView(
     listState: androidx.compose.foundation.lazy.LazyListState,
     items: List<PrivateMessage>,
     onUserClick: (String) -> Unit,
+    onChatClick: ((String, String) -> Unit)? = null,
 ) {
     val colors = LocalMtfColors.current
     LazyColumn(
@@ -489,7 +492,14 @@ private fun PrivateMessageListView(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { pm.touid?.let(onUserClick) }
+                    .clickable {
+                        val touid = pm.touid
+                        if (!touid.isNullOrBlank() && onChatClick != null) {
+                            onChatClick(touid, pm.username)
+                        } else {
+                            touid?.let(onUserClick)
+                        }
+                    }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

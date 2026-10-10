@@ -339,6 +339,25 @@ data class PrivateMessage(
     val unread: Boolean = false,
 )
 
+/** 聊天对话中的单条消息记录。 */
+@Serializable
+data class ChatMessage(
+    val id: String = "",
+    val text: String,
+    val time: String? = null,
+    val isSelf: Boolean = false,
+    val avatarUrl: String? = null,
+)
+
+/** 与特定用户的聊天会话。 */
+@Serializable
+data class ChatConversation(
+    val touid: String,
+    val targetName: String? = null,
+    val messages: List<ChatMessage> = emptyList(),
+    val formhash: String? = null,
+)
+
 /** 粉丝项（网页端「我的粉丝」）。 */
 @Serializable
 data class FollowerUser(

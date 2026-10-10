@@ -12,6 +12,7 @@ import com.aazhou.mtforum.data.model.LoginResult
 import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticePage
 import com.aazhou.mtforum.data.model.PrivateMessage
+import com.aazhou.mtforum.data.model.ChatConversation
 import com.aazhou.mtforum.data.model.FollowerUser
 import com.aazhou.mtforum.data.model.ReplyResult
 import com.aazhou.mtforum.data.model.SearchResult
@@ -412,6 +413,12 @@ class ForumRepository(
     suspend fun privateMessages(): List<PrivateMessage> = withContext(Dispatchers.IO) {
         val html = http.get(http.url("home.php?mod=space&do=pm&mobile=2"))
         ForumParser.parsePrivateMessages(html)
+    }
+
+    /** 与特定用户的私信会话详情（聊天记录）。 */
+    suspend fun chatConversation(touid: String): ChatConversation = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("home.php?mod=space&do=pm&subop=view&touid=$touid&mobile=2"))
+        ForumParser.parseChatConversation(html, touid)
     }
 
     /** 我的粉丝列表。 */

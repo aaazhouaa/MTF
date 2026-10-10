@@ -44,6 +44,7 @@ import com.aazhou.mtforum.ui.screen.threaddetail.ThreadDetailScreen
 import com.aazhou.mtforum.ui.screen.threaddetail.DownloadedThreadScreen
 import com.aazhou.mtforum.ui.screen.threadlist.ThreadListScreen
 import com.aazhou.mtforum.ui.screen.user.UserProfileScreen
+import com.aazhou.mtforum.ui.screen.chat.ChatScreen
 import com.aazhou.mtforum.ui.screen.verify.WafVerificationScreen
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -59,6 +60,7 @@ object Routes {
     // pid 是可查询参数：消息提醒跳进来时带上要定位的楼层，普通进帖不带
     const val THREAD = "thread/{tid}?pid={pid}"
     const val USER = "user/{uid}"
+    const val CHAT = "chat/{uid}?name={name}"
     const val POST = "post/{fid}/{name}"
     const val NOTICE = "notice"
     const val DOWNLOADS = "downloads"
@@ -79,6 +81,8 @@ object Routes {
     fun threadAnchor(tid: String, pid: String?) =
         if (pid.isNullOrBlank()) "thread/$tid" else "thread/$tid?pid=$pid"
     fun user(uid: String) = "user/$uid"
+    fun chat(uid: String, name: String? = null) =
+        if (name.isNullOrBlank()) "chat/$uid" else "chat/$uid?name=${Uri.encode(name)}"
     fun post(fid: String, name: String) = "post/$fid/${Uri.encode(name)}"
     fun downloadedThread(tid: String) = "downloaded/$tid"
     fun logDetail(id: Long) = "log/$id"
@@ -252,6 +256,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     },
                     // 消息里的头像进对应用户的个人主页
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onChatClick = { uid, name -> navController.navigate(Routes.chat(uid, name)) },
                 )
             }
             composable(Routes.DOWNLOADS) {
@@ -317,6 +322,30 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 UserProfileScreen(
                     uid = entry.arguments?.getString("uid").orEmpty(),
                     onBack = { navController.popBackStack() },
+                    onChat = { targetUid, targetName ->
+                        navController.navigate(Routes.chat(targetUid, targetName))
+                    },
+                )
+            }
+
+            composable(
+                Routes.CHAT,
+                arguments = listOf(
+                    navArgument("uid") { type = NavType.StringType },
+                    navArgument("name") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) { entry ->
+                val chatUid = entry.arguments?.getString("uid").orEmpty()
+                val chatName = entry.arguments?.getString("name")
+                ChatScreen(
+                    uid = chatUid,
+                    targetName = chatName,
+                    onBack = { navController.popBackStack() },
+                    onUserClick = { u -> navController.navigate(Routes.user(u)) },
                 )
             }
 

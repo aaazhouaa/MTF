@@ -1143,4 +1143,47 @@ class ForumParserTest {
         assertEquals(true, pm.unread)
         assertEquals("https://avatar.mt2.cn/uc_server/avatar.php?uid=99999&size=middle", pm.avatarUrl)
     }
+
+    @Test
+    fun `parseChatConversation extracts messages correctly`() {
+        val html = """
+            <header class="header">
+                <span class="name">小野猫</span>
+            </header>
+            <input type="hidden" name="formhash" value="abc12345" />
+            <div class="msgbox">
+                <div class="friend_msg cl">
+                    <div class="avat z"><img src="https://avatar.mt2.cn/avatar1.jpg" /></div>
+                    <div class="dialog_green z">
+                        <div class="dialog_c"><div class="dialog_t">你好呀！最近在忙什么？</div></div>
+                        <div class="date">昨天 10:00</div>
+                    </div>
+                </div>
+                <div class="self_msg cl">
+                    <div class="avat y"><img src="https://avatar.mt2.cn/avatar2.jpg" /></div>
+                    <div class="dialog_white y">
+                        <div class="dialog_c"><div class="dialog_t">在写代码呢，哈哈</div></div>
+                        <div class="date">昨天 10:05</div>
+                    </div>
+                </div>
+            </div>
+        """.trimIndent()
+        val conv = ForumParser.parseChatConversation(html, "144405")
+        assertEquals("144405", conv.touid)
+        assertEquals("小野猫", conv.targetName)
+        assertEquals("abc12345", conv.formhash)
+        assertEquals(2, conv.messages.size)
+
+        val m1 = conv.messages[0]
+        assertEquals("你好呀！最近在忙什么？", m1.text)
+        assertEquals("昨天 10:00", m1.time)
+        assertEquals(false, m1.isSelf)
+        assertEquals("https://avatar.mt2.cn/avatar1.jpg", m1.avatarUrl)
+
+        val m2 = conv.messages[1]
+        assertEquals("在写代码呢，哈哈", m2.text)
+        assertEquals("昨天 10:05", m2.time)
+        assertEquals(true, m2.isSelf)
+        assertEquals("https://avatar.mt2.cn/avatar2.jpg", m2.avatarUrl)
+    }
 }

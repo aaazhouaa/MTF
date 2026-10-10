@@ -11,6 +11,8 @@ import com.aazhou.mtforum.data.model.LoginResult
 import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticePage
 import com.aazhou.mtforum.data.model.PrivateMessage
+import com.aazhou.mtforum.data.model.ChatMessage
+import com.aazhou.mtforum.data.model.ChatConversation
 import com.aazhou.mtforum.data.model.FollowerUser
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.model.PostQuote
@@ -1097,6 +1099,54 @@ object ForumParser {
                 unread = unread,
             )
         }
+    }
+
+    /**
+     * 解析与特定用户的聊天对话记录（home.php?mod=space&do=pm&subop=view&touid=X&mobile=2）。
+     */
+    fun parseChatConversation(html: String, defaultTouid: String): ChatConversation {
+        val document = doc(html)
+        val formhash = document.selectFirst("input[name=formhash]")?.attr("value")
+            ?.takeIf { it.isNotBlank() }
+            ?: parseFormhash(html)
+
+        val targetName = document.selectFirst(".header .name, .category .name, header span:not(.none)")
+            ?.text()?.trim()
+
+        val nodes = document.select(".friend_msg, .self_msg, .msgbox > div[class*='msg'], .msgbox li, .comiis_pmlist li, div.dialog_green, div.dialog_white")
+            .ifEmpty {
+                document.select("div:has(> .dialog_c), div:has(> div > .dialog_t)")
+            }
+
+        val messages = nodes.mapIndexedNotNull { index, node ->
+            val isSelf = node.hasClass("self_msg") ||
+                node.classNames().any { it.contains("self") || it.contains("my") } ||
+                node.selectFirst(".dialog_white, .self_msg") != null ||
+                node.selectFirst(".avat.y, .avat.right") != null
+
+            val text = node.selectFirst(".dialog_t, .dialog_c, p.msg, .msg")?.text()?.trim()
+                ?: node.selectFirst("p")?.text()?.trim()
+                ?: node.text().trim()
+            if (text.isBlank()) return@mapIndexedNotNull null
+
+            val time = node.selectFirst(".date, .time, span.date")?.text()?.trim()
+            val avatarUrl = node.selectFirst("img")?.absUrl("src")?.takeIf { it.isNotBlank() }
+
+            ChatMessage(
+                id = node.id().ifBlank { "${index}_${time.orEmpty()}" },
+                text = text,
+                time = time,
+                isSelf = isSelf,
+                avatarUrl = avatarUrl,
+            )
+        }
+
+        return ChatConversation(
+            touid = defaultTouid,
+            targetName = targetName,
+            messages = messages,
+            formhash = formhash,
+        )
     }
 
     /**
