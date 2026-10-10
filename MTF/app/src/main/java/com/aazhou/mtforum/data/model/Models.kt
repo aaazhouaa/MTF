@@ -312,3 +312,36 @@ data class AtUser(
     val avatarUrl: String? = null,
     val subtitle: String = "",
 )
+
+/** 消息提醒顶部的六个分类（对应网页端「消息提醒」入口）。 */
+enum class NoticeCategory(val title: String, val viewKey: String? = null) {
+    PM("我的消息", null),
+    FOLLOWER("我的粉丝", null),
+    MY_POST("我的帖子", "mypost"),
+    INTERACTIVE("坛友互动", "interactive"),
+    SYSTEM("系统提醒", "system"),
+    APP("应用提醒", "app");
+}
+
+/** 单条私信会话（网页端「我的消息」）。 */
+@Serializable
+data class PrivateMessage(
+    val plid: String? = null,
+    val touid: String? = null,
+    val username: String,
+    val avatarUrl: String? = null,
+    val summary: String,
+    val timeText: String? = null,
+    val unread: Boolean = false,
+)
+
+/** 粉丝项（网页端「我的粉丝」）。 */
+@Serializable
+data class FollowerUser(
+    val uid: String,
+    val username: String,
+    val avatarUrl: String? = null,
+    val fansCount: String? = null,
+    val followCount: String? = null,
+)
+

@@ -11,6 +11,8 @@ import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
 import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticePage
+import com.aazhou.mtforum.data.model.PrivateMessage
+import com.aazhou.mtforum.data.model.FollowerUser
 import com.aazhou.mtforum.data.model.ReplyResult
 import com.aazhou.mtforum.data.model.SearchResult
 import com.aazhou.mtforum.data.model.ThreadPage
@@ -388,6 +390,27 @@ class ForumRepository(
         // id 用站点给的提醒 id：新消息插到前面时下标会平移，位置 id 会让后面的行
         // 整批重建；同一 id 只留一条，避免列表 key 重复
         NoticePage(notices = merged.distinctBy { it.id })
+    }
+
+    /** 单个分类下的消息提醒（mypost / interactive / system / app）。 */
+    suspend fun noticesByView(view: String): NoticePage = withContext(Dispatchers.IO) {
+        val page = ForumParser.parseNotices(
+            http.get(http.url("home.php?mod=space&do=notice&view=$view&mobile=2")),
+        )
+        if (page.loggedOut) return@withContext NoticePage(loggedOut = true)
+        NoticePage(notices = page.notices.distinctBy { it.id })
+    }
+
+    /** 我的消息（私信列表）。 */
+    suspend fun privateMessages(): List<PrivateMessage> = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("home.php?mod=space&do=pm&mobile=2"))
+        ForumParser.parsePrivateMessages(html)
+    }
+
+    /** 我的粉丝列表。 */
+    suspend fun followers(): List<FollowerUser> = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("home.php?mod=follow&do=follower&mobile=2"))
+        ForumParser.parseFollowers(html)
     }
 
     /**

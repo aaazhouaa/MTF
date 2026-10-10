@@ -1085,4 +1085,62 @@ class ForumParserTest {
         assertEquals(false, result.success)
         assertEquals("您当前的访问请求当中含有非法字符", result.message)
     }
+
+    @Test
+    fun `parseFollowers extracts fans correctly`() {
+        val html = """
+            <div class="comiis_userlist01 cl">
+                <li class="b_t" id="comiis_friendbox_133035">
+                    <p class="ytit f_d">
+                        <a href="https://bbs.binmt.cc/home.php?mod=spacecp&amp;ac=follow&amp;op=add&amp;hash=1011f6f2&amp;fuid=133035" id="a_followmod_133035" uid="133035" class="user_gz"><font>关注</font></a>
+                    </p>
+                    <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=133035&amp;do=profile" class="list01_limg bg_e">
+                        <img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=133035&amp;size=middle">
+                    </a>
+                    <p class="tit">
+                        <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=133035&amp;do=profile">2046531578</a>
+                    </p>
+                    <p class="txt">
+                        <a href="https://bbs.binmt.cc/home.php?mod=follow&amp;do=follower&amp;uid=133035"><font class="f_d"><code class="f_a" id="followernum_133035">1</code> 粉丝</font></a>
+                        <a href="https://bbs.binmt.cc/home.php?mod=follow&amp;do=following&amp;uid=133035"><font class="f_d"><code class="f_a">19</code> 关注</font></a>
+                    </p>
+                </li>
+            </div>
+        """.trimIndent()
+        val followers = ForumParser.parseFollowers(html)
+        assertEquals(1, followers.size)
+        val f = followers[0]
+        assertEquals("133035", f.uid)
+        assertEquals("2046531578", f.username)
+        assertEquals("1", f.fansCount)
+        assertEquals("19", f.followCount)
+        assertEquals("https://avatar.mt2.cn/uc_server/avatar.php?uid=133035&size=middle", f.avatarUrl)
+    }
+
+    @Test
+    fun `parsePrivateMessages extracts conversation items`() {
+        val html = """
+            <div class="comiis_pmlist mt10 bg_f b_t cl">
+                <ul>
+                    <li>
+                        <a href="home.php?mod=space&amp;do=pm&amp;subop=view&amp;touid=99999&amp;mobile=2">
+                            <span class="kmnum">2</span>
+                            <img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=99999&amp;size=middle">
+                            <h2><span>昨天 12:30</span>小明同学</h2>
+                            <p>你好，请问有逆向插件的最新版吗？</p>
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        """.trimIndent()
+        val pms = ForumParser.parsePrivateMessages(html)
+        assertEquals(1, pms.size)
+        val pm = pms[0]
+        assertEquals("99999", pm.touid)
+        assertEquals("小明同学", pm.username)
+        assertEquals("昨天 12:30", pm.timeText)
+        assertEquals("你好，请问有逆向插件的最新版吗？", pm.summary)
+        assertEquals(true, pm.unread)
+        assertEquals("https://avatar.mt2.cn/uc_server/avatar.php?uid=99999&size=middle", pm.avatarUrl)
+    }
 }

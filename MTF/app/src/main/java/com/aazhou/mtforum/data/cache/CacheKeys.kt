@@ -22,6 +22,8 @@ object CacheKeys {
 
     fun notice(): String = "notice"
 
+    fun notice(category: String): String = "notice|$category"
+
     fun forum(fid: String): String = "forum|$fid"
 
     fun home(): String = "home"

@@ -4,9 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aazhou.mtforum.data.cache.CacheKeys
 import com.aazhou.mtforum.data.cache.ContentCache
+import com.aazhou.mtforum.data.model.FollowerUser
 import com.aazhou.mtforum.data.model.Notice
+import com.aazhou.mtforum.data.model.NoticeCategory
+import com.aazhou.mtforum.data.model.PrivateMessage
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.ui.common.UiState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,24 +19,46 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.Calendar
 
-/** 只保留最新 10 条：页面按可见范围逐条拉楼层摘要，条数越少请求越少。 */
-private const val NOTICE_LIMIT = 10
+/** 提醒类列表只保留最新 20 条。 */
+private const val NOTICE_LIMIT = 20
+
+/** 页面支持的三种内容承载形式。 */
+sealed interface NoticeContentState {
+    data class Notices(val items: List<Notice>) : NoticeContentState
+    data class PrivateMessages(val items: List<PrivateMessage>) : NoticeContentState
+    data class Followers(val items: List<FollowerUser>) : NoticeContentState
+
+    fun isEmpty(): Boolean = when (this) {
+        is Notices -> items.isEmpty()
+        is PrivateMessages -> items.isEmpty()
+        is Followers -> items.isEmpty()
+    }
+}
 
 class NoticeViewModel(
     private val repository: ForumRepository,
     private val contentCache: ContentCache,
-    /** 列表刷 Success 后回调：把这一批提醒记为已读，首页红点随之灭掉。 */
+    /** 把已加载的提醒记为已读，首页红点随之灭掉。 */
     private val onRead: (List<String>) -> Unit,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow<UiState<List<Notice>>>(UiState.Loading)
-    val state: StateFlow<UiState<List<Notice>>> = _state.asStateFlow()
+    private val _category = MutableStateFlow(NoticeCategory.MY_POST)
+    val category: StateFlow<NoticeCategory> = _category.asStateFlow()
+
+    private val _state = MutableStateFlow<UiState<NoticeContentState>>(UiState.Loading)
+    val state: StateFlow<UiState<NoticeContentState>> = _state.asStateFlow()
 
     /** 下拉刷新中：与 [state] 独立，刷新期间保留旧列表不清屏。 */
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
     private val cacheJson = Json { ignoreUnknownKeys = true }
+
+    /** 内存快照缓存：切回已浏览的 Tab 时秒开。 */
+    private val memoryStateCache = mutableMapOf<NoticeCategory, NoticeContentState>()
+
+    /** 当前加载 Job，切换分类时取消前一个。 */
+    private var loadJob: Job? = null
 
     /** 已问过内容的楼层 pid：滚动时重复可见不重复请求。 */
     private val contentAsked = mutableSetOf<String>()
@@ -44,98 +70,155 @@ class NoticeViewModel(
     private val contentText = mutableMapOf<String, String>()
 
     init {
-        load()
+        // 初次进入清除未读红点基线
+        viewModelScope.launch {
+            runCatching { repository.notices() }.getOrNull()?.let { page ->
+                onRead(page.notices.map { it.id })
+            }
+        }
+        loadCategory(_category.value)
     }
 
-    /**
-     * 进页面与失败重取的公共入口：有缓存先整份上屏，网络回来原地替换。
-     *
-     * 与首页/详情同一套做法——断网或风控时也看得见上次的提醒，不必对着一张失败页。
-     */
-    fun load() {
-        viewModelScope.launch {
-            val cached = contentCache.read(
-                CacheKeys.notice(),
-                CacheKeys.LIST_TTL,
-                allowExpired = true,
-            ) {
-                cacheJson.decodeFromString<CachedNotices>(it).notices
+    /** 切换分类。 */
+    fun selectCategory(newCategory: NoticeCategory) {
+        if (_category.value == newCategory && _state.value is UiState.Success) return
+        _category.value = newCategory
+        loadCategory(newCategory)
+    }
+
+    /** 加载指定分类数据。 */
+    fun loadCategory(cat: NoticeCategory) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            // 内存缓存优先
+            val mem = memoryStateCache[cat]
+            if (mem != null) {
+                _state.value = UiState.Success(mem)
+            } else {
+                // 尝试读磁盘缓存
+                val diskCached = readDiskCache(cat)
+                if (diskCached != null) {
+                    _state.value = UiState.Success(diskCached)
+                } else if (_state.value !is UiState.Success) {
+                    _state.value = UiState.Loading
+                }
             }
-            if (cached != null) {
-                _state.value = UiState.Success(cached)
-            } else if (_state.value !is UiState.Success) {
-                _state.value = UiState.Loading
-            }
-            reload()
+            reloadNetwork(cat)
         }
     }
 
-    /**
-     * 下拉刷新：不动 [state]，成功就原地替换列表，失败保留旧内容。
-     *
-     * 不复用 [load]：那会在没有缓存时把 state 置回 Loading，整页变成全屏转圈，
-     * 下拉指示器也会随列表一起被撤掉。
-     */
+    /** 下拉刷新当前分类。 */
     fun refresh() {
         if (_refreshing.value) return
         _refreshing.value = true
         viewModelScope.launch {
-            reload()
+            reloadNetwork(_category.value)
             _refreshing.value = false
         }
     }
 
-    private suspend fun reload() {
-        val page = try {
-            repository.notices()
+    private suspend fun reloadNetwork(cat: NoticeCategory) {
+        try {
+            when (cat) {
+                NoticeCategory.PM -> {
+                    val pms = repository.privateMessages()
+                    val content = NoticeContentState.PrivateMessages(pms)
+                    updateContent(cat, content)
+                }
+                NoticeCategory.FOLLOWER -> {
+                    val followers = repository.followers()
+                    val content = NoticeContentState.Followers(followers)
+                    updateContent(cat, content)
+                }
+                NoticeCategory.MY_POST,
+                NoticeCategory.INTERACTIVE,
+                NoticeCategory.SYSTEM,
+                NoticeCategory.APP -> {
+                    val view = cat.viewKey ?: "mypost"
+                    val page = repository.noticesByView(view)
+                    if (page.loggedOut) {
+                        _state.value = UiState.Error("请先登录后查看消息提醒")
+                        return
+                    }
+                    val sorted = page.notices.sortedByDescending { noticeRecency(it) }.take(NOTICE_LIMIT)
+                    val content = NoticeContentState.Notices(sorted)
+                    updateContent(cat, content)
+                    republishWithContents()
+                    ensureContents(sorted.take(eagerContentCount))
+                }
+            }
         } catch (e: Exception) {
-            // 有缓存就留着旧内容（只当这次没刷新成功），没有缓存才整页转失败
             if (_state.value !is UiState.Success) {
                 _state.value = UiState.Error(e.message ?: "加载失败")
             }
-            return
         }
-        // 四类提醒合并的结果不按时间排序，取最新几条上屏；未读基线仍用全量 id，
-        // 否则没上屏的那部分下次轮询会被当成新消息、红点反复亮
-        val latest = page.notices.sortedByDescending { noticeRecency(it) }.take(NOTICE_LIMIT)
-        _state.value = when {
-            page.loggedOut -> UiState.Error("请先登录后查看消息提醒")
-            // 空列表不落盘：解析失配返回空时不能把上一份好数据覆盖掉
-            page.notices.isEmpty() -> UiState.Success(emptyList())
-            else -> UiState.Success(latest)
-        }
-        val loaded = (_state.value as? UiState.Success)?.data.orEmpty()
-        // 新列表没有摘要：先把本次会话已知的摘要并回去，再连缓存一起存——
-        // 否则刷新一次（或重进页面）内容就整块消失，问过的 pid 也不会再问
-        republishWithContents()
-        saveToCache((_state.value as? UiState.Success)?.data ?: loaded)
-        // 打开/刷新消息页就算看过：以这一批提醒为已读基线
-        onRead(page.notices.map { it.id })
-        // 首屏几条的摘要立刻问：不依赖列表布局回调，进页面就能看见
-        ensureContents(loaded.take(eagerContentCount))
     }
 
-    private suspend fun saveToCache(notices: List<Notice>) {
-        contentCache.write(
-            key = CacheKeys.notice(),
-            ttlMillis = CacheKeys.LIST_TTL,
-            value = CachedNotices(notices),
-            encode = { cacheJson.encodeToString(CachedNotices.serializer(), it) },
-        )
+    private suspend fun updateContent(cat: NoticeCategory, content: NoticeContentState) {
+        memoryStateCache[cat] = content
+        if (_category.value == cat) {
+            _state.value = UiState.Success(content)
+        }
+        writeDiskCache(cat, content)
     }
 
-    /**
-     * 给可见的提醒补上楼层正文摘要。
-     *
-     * 站点提醒页只给「谁 回复了您的帖子 标题」，没有回复内容；要显示内容得按
-     * 楼层链接找到所在页再摘出该楼层。故按需加载：只问当前可见的几条，同一页
-     * 只取一次（同页的多条提醒共用），问过的 pid 不再重复问。
-     */
+    private suspend fun readDiskCache(cat: NoticeCategory): NoticeContentState? {
+        return when (cat) {
+            NoticeCategory.PM -> {
+                contentCache.read(CacheKeys.notice(cat.name), CacheKeys.LIST_TTL, allowExpired = true) {
+                    NoticeContentState.PrivateMessages(cacheJson.decodeFromString(it))
+                }
+            }
+            NoticeCategory.FOLLOWER -> {
+                contentCache.read(CacheKeys.notice(cat.name), CacheKeys.LIST_TTL, allowExpired = true) {
+                    NoticeContentState.Followers(cacheJson.decodeFromString(it))
+                }
+            }
+            NoticeCategory.MY_POST,
+            NoticeCategory.INTERACTIVE,
+            NoticeCategory.SYSTEM,
+            NoticeCategory.APP -> {
+                contentCache.read(CacheKeys.notice(cat.name), CacheKeys.LIST_TTL, allowExpired = true) {
+                    NoticeContentState.Notices(cacheJson.decodeFromString<CachedNotices>(it).notices)
+                }
+            }
+        }
+    }
+
+    private suspend fun writeDiskCache(cat: NoticeCategory, content: NoticeContentState) {
+        when (content) {
+            is NoticeContentState.Notices -> {
+                contentCache.write(
+                    key = CacheKeys.notice(cat.name),
+                    ttlMillis = CacheKeys.LIST_TTL,
+                    value = CachedNotices(content.items),
+                    encode = { cacheJson.encodeToString(CachedNotices.serializer(), it) },
+                )
+            }
+            is NoticeContentState.PrivateMessages -> {
+                contentCache.write(
+                    key = CacheKeys.notice(cat.name),
+                    ttlMillis = CacheKeys.LIST_TTL,
+                    value = content.items,
+                    encode = { cacheJson.encodeToString(it) },
+                )
+            }
+            is NoticeContentState.Followers -> {
+                contentCache.write(
+                    key = CacheKeys.notice(cat.name),
+                    ttlMillis = CacheKeys.LIST_TTL,
+                    value = content.items,
+                    encode = { cacheJson.encodeToString(it) },
+                )
+            }
+        }
+    }
+
+    /** 给可见的帖子提醒补上楼层正文摘要。 */
     fun ensureContents(visible: List<Notice>) {
         val pending = visible.filter { !it.pid.isNullOrBlank() && contentAsked.add(it.pid!!) }
         if (pending.isEmpty()) return
         viewModelScope.launch {
-            // 一次问一批：仓库里按 (tid, page) 归并，同页的多条提醒只取一次页面
             val texts = runCatching {
                 repository.noticeReplyTexts(
                     pending.mapNotNull { notice ->
@@ -151,17 +234,19 @@ class NoticeViewModel(
         }
     }
 
-    /** 把已取到的摘要并回列表，逐条到达逐条上屏；并顺带落盘，下次进页面直接带摘要。 */
     private suspend fun republishWithContents() {
         val current = _state.value as? UiState.Success ?: return
+        val noticesContent = current.data as? NoticeContentState.Notices ?: return
         if (contentText.isEmpty()) return
-        val merged = current.data.map { notice ->
+        val merged = noticesContent.items.map { notice ->
             val text = notice.pid?.let { contentText[it] } ?: return@map notice
             if (notice.content == text) notice else notice.copy(content = text)
         }
-        if (merged == current.data) return
-        _state.value = UiState.Success(merged)
-        saveToCache(merged)
+        if (merged == noticesContent.items) return
+        val updated = NoticeContentState.Notices(merged)
+        memoryStateCache[_category.value] = updated
+        _state.value = UiState.Success(updated)
+        writeDiskCache(_category.value, updated)
     }
 }
 
@@ -177,12 +262,7 @@ private val NOTICE_DAY_WORD_TIME = Regex("""(今天|昨天|前天)(?:\s+(\d{1,2}
 private val NOTICE_ABSOLUTE_TIME = Regex("""(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?""")
 private val NOTICE_MONTH_DAY_TIME = Regex("""(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?""")
 
-/**
- * 提醒的时间文本 -> 可比较的时间戳，用于按新到旧排序。
- *
- * 解析不出时返回 [Long.MIN_VALUE] 排到最后；[sortedByDescending] 是稳定排序，
- * 同戳条目保持站点原序。
- */
+/** 提醒的时间文本 -> 可比较的时间戳。 */
 private fun noticeRecency(notice: Notice): Long {
     val raw = notice.timeText?.replace('\u00A0', ' ')?.trim().orEmpty()
     if (raw.isEmpty()) return Long.MIN_VALUE
@@ -220,7 +300,6 @@ private fun noticeRecency(notice: Notice): Long {
         ).timeInMillis
     }
     NOTICE_MONTH_DAY_TIME.find(raw)?.let { match ->
-        // 站点只写月日：年份按当年算
         val calendar = Calendar.getInstance().apply {
             clear()
             set(Calendar.MONTH, (match.groupValues[1].toIntOrNull() ?: return@let) - 1)
@@ -235,7 +314,6 @@ private fun noticeRecency(notice: Notice): Long {
     return Long.MIN_VALUE
 }
 
-/** 把时、分、秒写进日历，缺项与解析不出的一律按 0 计。 */
 private fun Calendar.atTimeOfDay(hour: String, minute: String, second: String): Calendar {
     set(Calendar.HOUR_OF_DAY, hour.toIntOrNull() ?: 0)
     set(Calendar.MINUTE, minute.toIntOrNull() ?: 0)
