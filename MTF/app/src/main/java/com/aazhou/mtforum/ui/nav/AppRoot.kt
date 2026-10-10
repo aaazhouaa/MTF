@@ -148,7 +148,9 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
             popExitTransition = { ExitTransition.None },
             modifier = Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop),
+            // 采样层只在 4 个 tab 页挂：非 tab 路由（搜索/登录/帖子详情/通知/发帖）没有玻璃底栏
+            // 消费这个 backdrop，挂了也只是逐帧把全屏内容录进一个没人读取的图层
+            .then(if (showBottomBar) Modifier.layerBackdrop(backdrop) else Modifier),
         ) {
             composable(Routes.HOME) {
                 HomeScreen(

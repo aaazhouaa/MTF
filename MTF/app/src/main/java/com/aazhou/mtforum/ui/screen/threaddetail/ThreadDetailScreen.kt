@@ -485,7 +485,12 @@ fun ThreadDetailScreen(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .layerBackdrop(replyBarBackdrop),
+                    // 与 ReplyBar 同一可见条件：回复面板弹出时底栏整条让位，采样层没有消费者，
+                    // 不必再录全屏
+                    .then(
+                        if (page != null && !composerVisible) Modifier.layerBackdrop(replyBarBackdrop)
+                        else Modifier
+                    ),
             ) {
             when (val current = state) {
                 is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
