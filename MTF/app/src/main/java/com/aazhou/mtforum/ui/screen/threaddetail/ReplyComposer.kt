@@ -71,7 +71,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
@@ -135,7 +134,6 @@ internal fun ReplyComposer(
     smileyPacks: List<SmileyPack>,
     recentCodes: List<String>,
     onSmileyUsed: (String) -> Unit,
-    onFocusedChange: (Boolean) -> Unit,
     uploadCredentials: Pair<String, String>?,
     onUploadImage: suspend (File) -> String?,
     /** 「@朋友」候选名单：与站点网页端编辑器同源，输入 @ 时按关键字过滤，点候选插 `@用户名 `。 */
@@ -409,9 +407,7 @@ internal fun ReplyComposer(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 8.dp)
-                            .focusRequester(focusRequester)
-                            // 聚焦状态回传上层：遮罩和返回键靠它区分「该收键盘」还是「该收回复框」
-                            .onFocusChanged { onFocusedChange(it.isFocused) },
+                            .focusRequester(focusRequester),
                         // 表情贴图层：BasicTextField 没有 inlineContent 参数，只能自己按布局坐标贴图。
                         // 文字已被 visualTransformation 染成透明色，这一层垫在输入框下面，光标与
                         // 选区仍由输入框自己画，不会被图片盖住

@@ -213,18 +213,52 @@ fun ThreadDetailScreen(
     // 发送成功后要按发送时那一份清草稿：reply() 会把回复目标复位，Success 回来时
     // 当前的回复对象已经变成本帖，照当时取 key 会清错
     var sendingDraftKey by remember { mutableStateOf<String?>(null) }
-    // 键盘是否真的在屏幕上 = 输入框聚焦 且 ime 有高度。只看聚焦不够：用户拿系统返回键
-    // 收键盘时输入法自己吞掉返回事件，输入框仍然持焦，只剩 ime 这一个信号可用
-    var composerFocused by remember { mutableStateOf(false) }
-    // ime 高度由 AndroidWindowInsets 内的 MutableState 支撑，组合期读它就会在键盘起落时
-    // 重组；取到的是平台原始值，不受面板自己 windowInsetsPadding 消费的影响
-    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    val composerKeyboardVisible = composerFocused && imeVisible
+    // 键盘是否立在上面：只认「键盘确实立着」，不拿 ime 的 bottom 当开关——它是逐帧插值的
+    // 动画中间值，收起动画里一路非零。系统返回键或输入法自带的收起键收键盘时，返回事件
+    // 先过输入法那一关（输入分发链里 IME 阶段排在 App 之前），常被输入法自己吞掉：输入框
+    // 不失焦、ime 也要等动画走完才归零，两条旧信号都会让第二下返回键误判成「键盘还在」
+    // 而空转，非得等动画结束才恢复
+    var keyboardShown by remember { mutableStateOf(false) }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    // 组合期取一次 density 与 ime Insets：两者都是 @Composable 读取，帧循环里只能用值
+    val imeDensity = LocalDensity.current
+    val imeInsets = WindowInsets.ime
+    // 逐帧盯 ime 起落：立稳了才置位；一开始往下掉就立刻清状态并断开输入连接——断开后返回
+    // 事件不再过输入法那一关，第二下返回键当场就能走到返回键处理里，不必等收起动画播完
+    LaunchedEffect(composerVisible) {
+        if (!composerVisible) {
+            keyboardShown = false
+            return@LaunchedEffect
+        }
+        var lastPx = -1
+        var hiding = false
+        while (true) {
+            withFrameNanos { }
+            val px = imeInsets.getBottom(imeDensity)
+            when {
+                px <= 0 -> {
+                    hiding = false
+                    keyboardShown = false
+                }
+                hiding -> {
+                    // 收起动画进行中：除非键盘又被重新唤起来（高度反涨），否则一直算已收起
+                    if (px > lastPx) hiding = false else keyboardShown = false
+                }
+                lastPx > 0 && px < lastPx -> {
+                    hiding = true
+                    keyboardShown = false
+                    focusManager.clearFocus()
+                }
+                else -> keyboardShown = true
+            }
+            lastPx = px
+        }
+    }
     // 收起输入面板：焦点、键盘、面板三件套一起收。光把 visible 置 false 不够——面板要播完
     // 退场动画才离开组合，键盘会悬在屏幕上陪着它滑下去
     val dismissComposer: () -> Unit = {
+        keyboardShown = false
         focusManager.clearFocus()
         keyboardController?.hide()
         composerVisible = false
@@ -317,9 +351,11 @@ fun ThreadDetailScreen(
     }
 
     // 返回键与点遮罩同一个路子：键盘在就先收键盘、面板留着，再按一次才收面板，
-    // 不把用户直接扔出帖子
+    // 不把用户直接扔出帖子。keyboardShown 由上面的帧循环维护，键盘一开始收起就算已收起，
+    // 所以收起动画途中按返回键不会再走空
     BackHandler(enabled = composerVisible) {
-        if (composerKeyboardVisible) {
+        if (keyboardShown) {
+            keyboardShown = false
             focusManager.clearFocus()
             keyboardController?.hide()
         } else {
@@ -756,7 +792,6 @@ fun ThreadDetailScreen(
                 smileyPacks = smileyPacks,
                 recentCodes = recentCodes,
                 onSmileyUsed = { code -> scope.launch { container.smileyStore.addRecent(code) } },
-                onFocusedChange = { composerFocused = it },
                 uploadCredentials = uploadCredentials,
                 onUploadImage = { file ->
                     val (uid, hash) = uploadCredentials ?: return@ReplyComposer null
@@ -1213,6 +1248,8 @@ internal fun ThreadDetailTopBar(
         // 举报/赞赏只针对楼主帖，与下载一同收进「更多」菜单；下载期间菜单保持展开，
         // 下载项显示「下载中…」并禁用，保存结束（downloadBusy 回落）自动收起
         if (showMore) {
+            // 与左侧「关注」胶囊留出让位间距，免得太贴
+            Spacer(Modifier.width(8.dp))
             MoreMenu(
                 downloadBusy = downloadBusy,
                 onReport = onReport,
@@ -1241,12 +1278,12 @@ private fun MoreMenu(
         Icon(
             painterResource(com.aazhou.mtforum.R.drawable.ic_more),
             contentDescription = "更多",
-            tint = LocalMtfColors.current.iconSecondary,
+            tint = bodyTextColor(),
             modifier = Modifier
-                .size(26.dp)
+                .size(28.dp)
                 .clip(CircleShape)
                 .clickable(onClick = { open = true })
-                .padding(4.dp),
+                .padding(3.dp),
         )
         DropdownMenu(
             expanded = open,
