@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -103,36 +104,83 @@ fun LogsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("日志") },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("日志")
+                        Spacer(Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .clickable { levelOpen = true },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_settings),
+                                contentDescription = "日志等级",
+                                tint = colors.iconSecondary,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(painterResource(R.drawable.ic_back), contentDescription = "返回")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { levelOpen = true }) {
-                        Icon(painterResource(R.drawable.ic_log_level), contentDescription = "日志等级")
-                    }
-                    IconButton(
-                        onClick = {
-                            val text = shown.toExportText(BuildConfig.VERSION_NAME, logLevel)
-                            scope.launch {
-                                val name = logFileName()
-                                val ok = withContext(Dispatchers.IO) {
-                                    saveTextDocument(context, name, text) != null
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable {
+                                val text = shown.toExportText(BuildConfig.VERSION_NAME, logLevel)
+                                scope.launch {
+                                    val name = logFileName()
+                                    val ok = withContext(Dispatchers.IO) {
+                                        saveTextDocument(context, name, text) != null
+                                    }
+                                    AppToast.show(if (ok) "已导出到 下载/MTF" else "导出失败")
                                 }
-                                AppToast.show(if (ok) "已导出到 下载/MTF" else "导出失败")
-                            }
-                        },
+                            },
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Icon(painterResource(R.drawable.ic_download), contentDescription = "导出")
+                        Icon(
+                            painter = painterResource(R.drawable.ic_download),
+                            contentDescription = "导出",
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
-                    IconButton(
-                        onClick = { shareLogs(context, shown, logLevel) },
+                    Spacer(Modifier.width(2.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable { shareLogs(context, shown, logLevel) },
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Icon(painterResource(R.drawable.ic_share), contentDescription = "分享")
+                        Icon(
+                            painter = painterResource(R.drawable.ic_share),
+                            contentDescription = "分享",
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
-                    TextButton(onClick = { clearOpen = true }) { Text("清空") }
+                    Spacer(Modifier.width(2.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable { clearOpen = true },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_delete),
+                            contentDescription = "清空",
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
                 },
                 modifier = Modifier.onDoubleTapToTop {
                     scope.launch { listState.scrollToTop() }

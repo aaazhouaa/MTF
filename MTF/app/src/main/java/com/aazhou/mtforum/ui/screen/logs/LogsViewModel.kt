@@ -56,4 +56,11 @@ class LogDetailViewModel(
     init {
         viewModelScope.launch { _entry.value = store.entries().firstOrNull { it.id == id } }
     }
+
+    fun delete(onDone: () -> Unit) {
+        viewModelScope.launch {
+            store.remove(id)
+            onDone()
+        }
+    }
 }

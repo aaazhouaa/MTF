@@ -3,6 +3,7 @@ package com.aazhou.mtforum.ui.screen.logs
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,18 +14,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +77,7 @@ fun LogDetailScreen(
     val entry by viewModel.entry.collectAsStateWithLifecycle()
     val colors = LocalMtfColors.current
     val scope = rememberCoroutineScope()
+    var deleteConfirmOpen by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -83,14 +91,50 @@ fun LogDetailScreen(
                 actions = {
                     val current = entry
                     if (current != null) {
-                        IconButton(onClick = { shareEntry(context, current) }) {
-                            Icon(painterResource(R.drawable.ic_share), contentDescription = "分享此条")
-                        }
-                        IconButton(
-                            onClick = { exportEntry(context, current, logFileName(), scope) { AppToast.show(it) } },
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .clickable {
+                                    exportEntry(context, current, logFileName(), scope) { AppToast.show(it) }
+                                },
+                            contentAlignment = Alignment.Center,
                         ) {
-                            Icon(painterResource(R.drawable.ic_download), contentDescription = "导出此条")
+                            Icon(
+                                painter = painterResource(R.drawable.ic_download),
+                                contentDescription = "导出此条",
+                                modifier = Modifier.size(22.dp),
+                            )
                         }
+                        Spacer(Modifier.width(2.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .clickable { shareEntry(context, current) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_share),
+                                contentDescription = "分享此条",
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(2.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .clickable { deleteConfirmOpen = true },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_delete),
+                                contentDescription = "删除此条",
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
                     }
                 },
                 expandedHeight = MtfTopBarHeight,
@@ -174,6 +218,26 @@ fun LogDetailScreen(
                 )
             }
         }
+    }
+
+    if (deleteConfirmOpen) {
+        AlertDialog(
+            onDismissRequest = { deleteConfirmOpen = false },
+            title = { Text("删除这条日志") },
+            text = { Text("删除后不可恢复，导出的文件不受影响。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteConfirmOpen = false
+                    viewModel.delete {
+                        AppToast.show("已删除该条日志")
+                        onBack()
+                    }
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteConfirmOpen = false }) { Text("取消") }
+            },
+        )
     }
 }
 
