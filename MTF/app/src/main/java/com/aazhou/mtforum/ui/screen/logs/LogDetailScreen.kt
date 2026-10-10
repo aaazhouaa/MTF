@@ -17,7 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.aazhou.mtforum.ui.common.MtfConfirmDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -221,21 +221,18 @@ fun LogDetailScreen(
     }
 
     if (deleteConfirmOpen) {
-        AlertDialog(
+        MtfConfirmDialog(
+            title = "删除日志记录",
+            message = "删除后不可恢复，已导出的文件不受影响。",
+            confirmText = "确认删除",
+            cancelText = "取消",
             onDismissRequest = { deleteConfirmOpen = false },
-            title = { Text("删除这条日志") },
-            text = { Text("删除后不可恢复，导出的文件不受影响。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    deleteConfirmOpen = false
-                    viewModel.delete {
-                        AppToast.show("已删除该条日志")
-                        onBack()
-                    }
-                }) { Text("删除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteConfirmOpen = false }) { Text("取消") }
+            onConfirm = {
+                deleteConfirmOpen = false
+                viewModel.delete {
+                    AppToast.show("已删除该条日志")
+                    onBack()
+                }
             },
         )
     }

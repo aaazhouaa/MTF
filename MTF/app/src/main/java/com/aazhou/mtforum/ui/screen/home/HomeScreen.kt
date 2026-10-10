@@ -391,11 +391,11 @@ private fun HomeTopBar(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .weight(1f)
-                .height(32.dp)
+                .height(34.dp)
                 .clip(RoundedCornerShape(50))
                 .background(colors.quoteBackground)
                 .clickable(onClick = onSearch)
-                .padding(horizontal = 10.dp),
+                .padding(horizontal = 12.dp),
         ) {
             Icon(
                 painterResource(com.aazhou.mtforum.R.drawable.ic_search_new),
@@ -406,14 +406,12 @@ private fun HomeTopBar(
             Spacer(Modifier.width(6.dp))
             Text(
                 "搜索帖子、用户...",
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
                 color = colors.textHint,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        // 与搜索胶囊等分的空白：胶囊减半后，主题/消息图标仍留在右边缘
-        Spacer(Modifier.weight(1f))
         Spacer(Modifier.width(8.dp))
         val checkInTint = if (hasSigned) colors.textHint else MaterialTheme.colorScheme.primary
         Box(

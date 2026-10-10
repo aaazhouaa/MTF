@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.aazhou.mtforum.ui.common.MtfConfirmDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -183,34 +183,26 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
     }
 
     if (clearCacheOpen) {
-        AlertDialog(
+        MtfConfirmDialog(
+            title = "清理缓存",
+            message = "将清除本地缓存的帖子内容与已下载的图片，以及表情数据与最近使用记录，下次浏览需要重新加载。",
+            confirmText = "确认清理",
+            cancelText = "取消",
             onDismissRequest = { clearCacheOpen = false },
-            title = { Text("清理缓存") },
-            text = {
-                Text(
-                    "将清除本地缓存的帖子内容与已下载的图片，以及表情数据与最近使用记录，" +
-                        "下次浏览需要重新下载。",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    clearCacheOpen = false
-                    scope.launch {
-                        container.contentCache.clear()
-                        container.smileyStore.clear()
-                        val loader = context.imageLoader
-                        withContext(Dispatchers.IO) {
-                            loader.diskCache?.clear()
-                        }
-                        loader.memoryCache?.clear()
-                        cacheTick++
-                        container.logger.info("Settings", "已清理缓存，清理前占用 ${formatCacheSize(cacheBytes)}")
-                        AppToast.show("缓存已清理")
+            onConfirm = {
+                clearCacheOpen = false
+                scope.launch {
+                    container.contentCache.clear()
+                    container.smileyStore.clear()
+                    val loader = context.imageLoader
+                    withContext(Dispatchers.IO) {
+                        loader.diskCache?.clear()
                     }
-                }) { Text("清理") }
-            },
-            dismissButton = {
-                TextButton(onClick = { clearCacheOpen = false }) { Text("取消") }
+                    loader.memoryCache?.clear()
+                    cacheTick++
+                    container.logger.info("Settings", "已清理缓存，清理前占用 ${formatCacheSize(cacheBytes)}")
+                    AppToast.show("缓存已清理")
+                }
             },
         )
     }

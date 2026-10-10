@@ -22,7 +22,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
+import com.aazhou.mtforum.ui.common.MtfConfirmDialog
+import com.aazhou.mtforum.ui.common.MtfContentDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -253,78 +254,65 @@ fun LogsScreen(
     }
 
     if (levelOpen) {
-        AlertDialog(
+        MtfContentDialog(
+            title = "日志等级",
+            subtitle = "设为 Warn 或 Error 后，更低等级的日志不再写入本地",
             onDismissRequest = { levelOpen = false },
-            title = { Text("日志等级") },
-            text = {
-                Column {
-                    Text(
-                        "设为 Warn 或 Error 后，更低等级的日志不再写入本地；" +
-                            "网络风控、请求失败、图片加载失败与崩溃都会记录。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary,
-                    )
-                    Spacer(Modifier.size(10.dp))
-                    LogLevel.entries.forEach { level ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    levelOpen = false
-                                    scope.launch {
-                                        container.logSettings.setLevel(level)
-                                        container.logger.info("Settings", "日志等级已设为 ${level.label}")
-                                    }
-                                }
-                                .padding(vertical = 6.dp),
-                        ) {
-                            RadioButton(selected = level == logLevel, onClick = null)
-                            Spacer(Modifier.size(6.dp))
-                            Text(level.label, style = MaterialTheme.typography.bodyLarge)
+        ) {
+            LogLevel.entries.forEach { level ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            levelOpen = false
+                            scope.launch {
+                                container.logSettings.setLevel(level)
+                                container.logger.info("Settings", "日志等级已设为 ${level.label}")
+                            }
                         }
-                    }
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                ) {
+                    RadioButton(selected = level == logLevel, onClick = null)
+                    Spacer(Modifier.size(10.dp))
+                    Text(
+                        level.label,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                        color = colors.textPrimary,
+                    )
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { levelOpen = false }) { Text("完成") }
-            },
-        )
+            }
+        }
     }
 
     if (clearOpen) {
-        AlertDialog(
+        MtfConfirmDialog(
+            title = "清空日志",
+            message = "将删除全部本地日志，已导出的文件不受影响。",
+            confirmText = "确认清空",
+            cancelText = "取消",
             onDismissRequest = { clearOpen = false },
-            title = { Text("清空日志") },
-            text = { Text("将删除全部本地日志，导出的文件不受影响。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    clearOpen = false
-                    viewModel.clear()
-                    AppToast.show("日志已清空")
-                }) { Text("清空") }
-            },
-            dismissButton = {
-                TextButton(onClick = { clearOpen = false }) { Text("取消") }
+            onConfirm = {
+                clearOpen = false
+                viewModel.clear()
+                AppToast.show("日志已清空")
             },
         )
     }
 
     if (deleteId != null) {
-        AlertDialog(
+        MtfConfirmDialog(
+            title = "删除日志记录",
+            message = "删除后不可恢复，已导出的文件不受影响。",
+            confirmText = "确认删除",
+            cancelText = "取消",
             onDismissRequest = { deleteId = null },
-            title = { Text("删除这条日志") },
-            text = { Text("删除后不可恢复，导出的文件不受影响。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    val id = deleteId ?: return@TextButton
-                    deleteId = null
-                    viewModel.remove(id)
-                    AppToast.show("已删除该条日志")
-                }) { Text("删除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteId = null }) { Text("取消") }
+            onConfirm = {
+                val id = deleteId ?: return@MtfConfirmDialog
+                deleteId = null
+                viewModel.remove(id)
+                AppToast.show("已删除该条日志")
             },
         )
     }

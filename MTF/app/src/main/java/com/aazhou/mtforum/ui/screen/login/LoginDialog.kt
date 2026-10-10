@@ -47,6 +47,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aazhou.mtforum.R
+import com.aazhou.mtforum.ui.common.MtfContentDialog
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -83,66 +84,13 @@ fun LoginDialog(
         }
     }
 
-    Dialog(
+    MtfContentDialog(
+        title = "账号登录",
+        subtitle = "登录 MT论坛 畅享更多功能",
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(colors.surface)
-                    .padding(horizontal = 22.dp, vertical = 20.dp),
-            ) {
-                // 顶部标题栏 + 关闭按钮
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column {
-                        Text(
-                            text = "账号登录",
-                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp),
-                            fontWeight = FontWeight.Bold,
-                            color = bodyTextColor(),
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = "登录 MT论坛 畅享更多功能",
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                            color = colors.textSecondary,
-                        )
-                    }
-
-                    // 关闭按钮
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(colors.quoteBackground)
-                            .clickable(onClick = onDismiss),
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_close),
-                            contentDescription = "关闭",
-                            tint = colors.textSecondary,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                // 用户名输入框
-                OutlinedTextField(
+        // 用户名输入框
+        OutlinedTextField(
                     value = username,
                     onValueChange = {
                         username = it
@@ -300,7 +248,5 @@ fun LoginDialog(
                         )
                     }
                 }
-            }
-        }
     }
 }

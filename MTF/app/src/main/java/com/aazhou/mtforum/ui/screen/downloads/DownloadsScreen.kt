@@ -16,7 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
+import com.aazhou.mtforum.ui.common.MtfConfirmDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -141,20 +141,15 @@ fun DownloadsScreen(
     }
 
     deleteTarget?.let { target ->
-        AlertDialog(
+        MtfConfirmDialog(
+            title = "删除离线副本",
+            message = "《${target.subject}》的离线副本将被删除，且不可恢复，如需浏览需要重新下载。",
+            confirmText = "确认删除",
+            cancelText = "取消",
             onDismissRequest = { deleteTarget = null },
-            title = { Text("删除已下载的帖子") },
-            text = {
-                Text("《${target.subject}》的离线副本将被删除，且不可恢复，需要重新下载。")
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.delete(target.tid)
-                    deleteTarget = null
-                }) { Text("删除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("取消") }
+            onConfirm = {
+                viewModel.delete(target.tid)
+                deleteTarget = null
             },
         )
     }

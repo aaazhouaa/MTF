@@ -38,7 +38,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material3.AlertDialog
+import com.aazhou.mtforum.ui.common.MtfConfirmDialog
+import com.aazhou.mtforum.ui.common.MtfContentDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -860,113 +861,106 @@ fun ThreadDetailScreen(
     }
 
     deleteTarget?.let { target ->
-        AlertDialog(
+        MtfConfirmDialog(
+            title = "删除回复",
+            message = "确定要删除这条回复吗？删除后无法恢复。",
+            confirmText = "确认删除",
+            cancelText = "取消",
             onDismissRequest = { deleteTarget = null },
-            title = { Text("删除回复") },
-            text = { Text("确定要删除这条回复吗？删除后无法恢复。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    deleteTarget = null
-                    viewModel.deleteReply(target.pid)
-                }) { Text("删除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("取消") }
+            onConfirm = {
+                deleteTarget = null
+                viewModel.deleteReply(target.pid)
             },
         )
     }
 
     likeUsers?.let { users ->
-        AlertDialog(
+        MtfContentDialog(
+            title = "点赞用户 (${users.size})",
             onDismissRequest = { viewModel.clearLikeUsers() },
-            title = { Text("点赞用户 (${users.size})") },
-            text = {
-                if (users.isEmpty()) {
-                    Text("暂无点赞用户", color = colors.textHint, style = MaterialTheme.typography.bodyMedium)
-                } else {
-                    LazyColumn(Modifier.heightIn(max = 320.dp)) {
-                        items(users, key = { it.uid }) { user ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (users.isEmpty()) {
+                Text(
+                    "暂无点赞用户",
+                    color = colors.textHint,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(vertical = 12.dp),
+                )
+            } else {
+                LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                    items(users, key = { it.uid }) { user ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    viewModel.clearLikeUsers()
+                                    onUserClick(user.uid)
+                                }
+                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                        ) {
+                            AsyncImage(
+                                model = smallImageRequest(user.avatarUrl),
+                                contentDescription = null,
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        viewModel.clearLikeUsers()
-                                        onUserClick(user.uid)
-                                    }
-                                    .padding(vertical = 6.dp),
-                            ) {
-                                AsyncImage(
-                                    model = smallImageRequest(user.avatarUrl),
-                                    contentDescription = null,
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(CircleShape)
-                                        .background(colors.quoteBackground)
-                                        .dimImageInDark(),
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    user.name,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                                    color = bodyTextColor(),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.quoteBackground)
+                                    .dimImageInDark(),
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                user.name,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.5.sp),
+                                color = bodyTextColor(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { viewModel.clearLikeUsers() }) { Text("关闭") }
-            },
-        )
+            }
+        }
     }
 
     actionTarget?.let { target ->
         val isOwn = myUid.isNotBlank() && myUid == target.authorUid
-        AlertDialog(
+        MtfContentDialog(
+            title = "${target.authorName.ifBlank { "匿名" }} · 评论操作",
             onDismissRequest = { actionTarget = null },
-            title = { Text("${target.authorName.ifBlank { "匿名" }} · 评论操作") },
-            text = {
-                Column {
-                    MenuAction("回复") {
-                        actionTarget = null
-                        if (requireLogin(LOGIN_HINT_REPLY)) {
-                            viewModel.setReplyTarget(target)
-                            composerVisible = true
-                        }
-                    }
-                    MenuAction("复制") {
-                        actionTarget = null
-                        val text = plainTextOf(target.contentHtml)
-                        if (text.isBlank()) {
-                            todo("无可复制内容")
-                        } else {
-                            val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                                as? android.content.ClipboardManager
-                            cm?.setPrimaryClip(android.content.ClipData.newPlainText("回复内容", text))
-                            todo("已复制回复内容")
-                        }
-                    }
-                    if (isOwn) {
-                        MenuAction("删除") {
-                            actionTarget = null
-                            deleteTarget = target
-                        }
-                    } else {
-                        MenuAction("举报") {
-                            actionTarget = null
-                            if (requireLogin(LOGIN_HINT_REPORT)) reportTarget = ReportTarget(target.pid)
-                        }
-                    }
+        ) {
+            MenuAction("回复") {
+                actionTarget = null
+                if (requireLogin(LOGIN_HINT_REPLY)) {
+                    viewModel.setReplyTarget(target)
+                    composerVisible = true
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { actionTarget = null }) { Text("取消") }
-            },
-        )
+            }
+            MenuAction("复制") {
+                actionTarget = null
+                val text = plainTextOf(target.contentHtml)
+                if (text.isBlank()) {
+                    todo("无可复制内容")
+                } else {
+                    val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                        as? android.content.ClipboardManager
+                    cm?.setPrimaryClip(android.content.ClipData.newPlainText("回复内容", text))
+                    todo("已复制回复内容")
+                }
+            }
+            if (isOwn) {
+                MenuAction("删除") {
+                    actionTarget = null
+                    deleteTarget = target
+                }
+            } else {
+                MenuAction("举报") {
+                    actionTarget = null
+                    if (requireLogin(LOGIN_HINT_REPORT)) reportTarget = ReportTarget(target.pid)
+                }
+            }
+        }
     }
 }
 
@@ -998,56 +992,90 @@ private fun ReportDialog(
     val colors = LocalMtfColors.current
     var reason by remember { mutableStateOf("其他") }
     var message by remember { mutableStateOf("") }
-    AlertDialog(
+
+    MtfContentDialog(
+        title = if (isThread) "举报本帖" else "举报该评论",
+        subtitle = "请选择举报原因并简要说明，共同维护良好社区氛围",
         onDismissRequest = onDismiss,
-        title = { Text(if (isThread) "举报本帖" else "举报该评论") },
-        text = {
-            Column {
-                REPORT_REASONS.forEach { option ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { reason = option }
-                            .padding(vertical = 8.dp),
-                    ) {
-                        RadioButton(selected = option == reason, onClick = { reason = option })
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            option,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                            color = bodyTextColor(),
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                BasicTextField(
-                    value = message,
-                    onValueChange = { message = it },
-                    textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    maxLines = 3,
+    ) {
+        Column {
+            REPORT_REASONS.forEach { option ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { reason = option }
+                        .padding(vertical = 6.dp, horizontal = 4.dp),
+                ) {
+                    RadioButton(selected = option == reason, onClick = { reason = option })
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        option,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.5.sp),
+                        color = bodyTextColor(),
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            BasicTextField(
+                value = message,
+                onValueChange = { message = it },
+                textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                maxLines = 3,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colors.quoteBackground)
+                    .padding(12.dp),
+                decorationBox = { inner ->
+                    if (message.isEmpty()) {
+                        Text("补充说明（可不填）", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp), color = colors.textHint)
+                    }
+                    inner()
+                },
+            )
+            Spacer(Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(colors.quoteBackground)
-                        .padding(10.dp),
-                    decorationBox = { inner ->
-                        if (message.isEmpty()) {
-                            Text("补充说明（可不填）", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp), color = colors.textHint)
-                        }
-                        inner()
-                    },
-                )
+                        .clickable(onClick = onDismiss),
+                ) {
+                    Text(
+                        "取消",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        fontWeight = FontWeight.Medium,
+                        color = colors.textPrimary,
+                    )
+                }
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .clickable { onSubmit(reason, message) },
+                ) {
+                    Text(
+                        "提交举报",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSubmit(reason, message) }) { Text("提交举报") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
-    )
+        }
+    }
 }
 
 /** 打赏弹窗：金额档位 + 可选留言。 */
@@ -1060,54 +1088,87 @@ private fun RewardDialog(
     val amounts = listOf(1, 5, 10, 50, 100)
     var amount by remember { mutableStateOf(amounts.first()) }
     var message by remember { mutableStateOf("") }
-    AlertDialog(
+
+    MtfContentDialog(
+        title = "打赏作者",
+        subtitle = "感谢作者的优质分享，支持创作",
         onDismissRequest = onDismiss,
-        title = { Text("打赏作者") },
-        text = {
-            Column {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    amounts.forEach { value ->
-                        val active = value == amount
-                        Text(
-                            value.toString(),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                            color = if (active) Color.White else bodyTextColor(),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(if (active) MaterialTheme.colorScheme.primary else colors.quoteBackground)
-                                .clickable { amount = value }
-                                .padding(horizontal = 14.dp, vertical = 7.dp),
-                        )
-                    }
+    ) {
+        Column {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                amounts.forEach { value ->
+                    val active = value == amount
+                    Text(
+                        value.toString(),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = if (active) MaterialTheme.colorScheme.onPrimary else bodyTextColor(),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(if (active) MaterialTheme.colorScheme.primary else colors.quoteBackground)
+                            .clickable { amount = value }
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                    )
                 }
-                Spacer(Modifier.height(12.dp))
-                BasicTextField(
-                    value = message,
-                    onValueChange = { message = it },
-                    textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    maxLines = 3,
+            }
+            Spacer(Modifier.height(14.dp))
+            BasicTextField(
+                value = message,
+                onValueChange = { message = it },
+                textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                maxLines = 3,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colors.quoteBackground)
+                    .padding(12.dp),
+                decorationBox = { inner ->
+                    if (message.isEmpty()) {
+                        Text("留言（可不填）", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp), color = colors.textHint)
+                    }
+                    inner()
+                },
+            )
+            Spacer(Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .weight(1f)
+                        .height(42.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(colors.quoteBackground)
-                        .padding(10.dp),
-                    decorationBox = { inner ->
-                        if (message.isEmpty()) {
-                            Text("留言（可不填）", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp), color = colors.textHint)
-                        }
-                        inner()
-                    },
-                )
+                        .clickable(onClick = onDismiss),
+                ) {
+                    Text(
+                        "取消",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        fontWeight = FontWeight.Medium,
+                        color = colors.textPrimary,
+                    )
+                }
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .clickable { onSubmit(amount, message.ifBlank { null }) },
+                ) {
+                    Text(
+                        "确认打赏",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSubmit(amount, message.ifBlank { null }) }) { Text("打赏") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
-    )
+        }
+    }
 }
 
 /** 长按菜单里的一行操作。 */
