@@ -174,9 +174,14 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 )
             }
             composable(Routes.FORUMS) {
-                ForumListScreen(onForumClick = { fid, name ->
-                    navController.navigate(Routes.forum(fid, name))
-                })
+                ForumListScreen(
+                    onForumClick = { fid, name ->
+                        navController.navigate(Routes.forum(fid, name))
+                    },
+                    onSearch = {
+                        navController.navigate(Routes.SEARCH)
+                    },
+                )
             }
             composable(Routes.PROFILE) {
                 ProfileScreen(

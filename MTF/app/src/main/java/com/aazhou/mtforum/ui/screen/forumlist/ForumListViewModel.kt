@@ -17,6 +17,9 @@ class ForumListViewModel(
     private val _state = MutableStateFlow<UiState<List<ForumGroup>>>(UiState.Loading)
     val state: StateFlow<UiState<List<ForumGroup>>> = _state.asStateFlow()
 
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
     init {
         load()
     }
@@ -28,6 +31,23 @@ class ForumListViewModel(
                 UiState.Success(repository.forumGroups())
             } catch (e: Exception) {
                 UiState.Error(e.message ?: "加载失败")
+            }
+        }
+    }
+
+    fun refresh() {
+        if (_isRefreshing.value) return
+        _isRefreshing.value = true
+        viewModelScope.launch {
+            try {
+                val groups = repository.forumGroups()
+                _state.value = UiState.Success(groups)
+            } catch (e: Exception) {
+                if (_state.value !is UiState.Success) {
+                    _state.value = UiState.Error(e.message ?: "刷新失败")
+                }
+            } finally {
+                _isRefreshing.value = false
             }
         }
     }
