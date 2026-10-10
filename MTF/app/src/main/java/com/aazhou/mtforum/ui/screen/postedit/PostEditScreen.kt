@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
@@ -84,6 +85,7 @@ import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.screen.threaddetail.AtSuggestionStrip
 import com.aazhou.mtforum.ui.screen.threaddetail.AtUserPickerPage
+import com.aazhou.mtforum.ui.screen.threaddetail.ComposerSubBarHeight
 import com.aazhou.mtforum.ui.screen.threaddetail.ComposerToolButton
 import com.aazhou.mtforum.ui.screen.threaddetail.DefaultSmileyCodes
 import com.aazhou.mtforum.ui.screen.threaddetail.InlineInsertBar
@@ -94,6 +96,7 @@ import com.aazhou.mtforum.ui.screen.threaddetail.MinKeyboardHeight
 import com.aazhou.mtforum.ui.screen.threaddetail.STABLE_KEYBOARD_FRAMES
 import com.aazhou.mtforum.ui.screen.threaddetail.SmileyOverlay
 import com.aazhou.mtforum.ui.screen.threaddetail.SmileyPanel
+import com.aazhou.mtforum.ui.screen.threaddetail.HANDOFF_GIVEUP_FRAMES
 import com.aazhou.mtforum.ui.screen.threaddetail.atTokenAt
 import com.aazhou.mtforum.ui.screen.threaddetail.filterAtUsers
 import com.aazhou.mtforum.ui.screen.threaddetail.formatRichComposerText
@@ -198,25 +201,37 @@ fun PostEditScreen(
         }
     }
 
-    fun switchToKeyboard() {
-        keyboardHandoff = true
-        panel = PostComposerPanel.None
-        messageFocusRequester.requestFocus()
-        keyboard?.show()
-        scope.launch {
-            var stableFrames = 0
-            while (true) {
-                withFrameNanos { }
-                val px = imeInsets.getBottom(density)
-                if (px > 0) stableFrames++ else stableFrames = 0
-                if (stableFrames >= STABLE_KEYBOARD_FRAMES) break
-            }
-            keyboardHandoff = false
+    fun switchToKeyboard(focusMessage: Boolean = true) {
+        if (panel == PostComposerPanel.Smiley) {
+            keyboardHandoff = true
         }
+        if (focusMessage) messageFocusRequester.requestFocus()
+        keyboard?.show()
     }
 
-    // 软键盘升起时自动收起表情面板
-    LaunchedEffect(imeHeight) {
+    // 交接期只有两个出口：键盘确实升起来并停稳（改由 ime 接管、表情面板退场），或者
+    // 半天没动静（放弃交接，表情面板原地留在原位，高度依旧不变）。不用固定时长的兜底：
+    // 到点硬切会把面板从锁定高度直接掉到当时的 ime 高度，键盘起得慢一下就塌一截
+    LaunchedEffect(keyboardHandoff) {
+        if (!keyboardHandoff) return@LaunchedEffect
+        var lastPx = -1
+        var stableFrames = 0
+        var idleFrames = 0
+        while (keyboardHandoff) {
+            withFrameNanos { }
+            val px = imeInsets.getBottom(density)
+            if (px > 0) {
+                idleFrames = 0
+                if (px == lastPx) stableFrames++ else { lastPx = px; stableFrames = 0 }
+                if (stableFrames >= STABLE_KEYBOARD_FRAMES) break
+            } else {
+                lastPx = -1
+                stableFrames = 0
+                idleFrames++
+                if (idleFrames >= HANDOFF_GIVEUP_FRAMES) break
+            }
+        }
+        keyboardHandoff = false
         if (imeInsets.getBottom(density) > 0 && panel == PostComposerPanel.Smiley) {
             panel = PostComposerPanel.None
         }
@@ -362,6 +377,9 @@ fun PostEditScreen(
                         }
 
                         ComposerToolButton(R.drawable.ic_at, "提到朋友") {
+                            panel = PostComposerPanel.None
+                            focusManager.clearFocus()
+                            keyboard?.hide()
                             showAtPicker = true
                         }
 
@@ -395,7 +413,7 @@ fun PostEditScreen(
                         }
                     }
 
-                    // 扩展面板槽位
+                    // 工具栏下方的内容区：就地内联插入条 / 插入面板
                     val currentInsert = activeInsertKind
                     if (currentInsert != null) {
                         InlineInsertBar(
@@ -444,21 +462,41 @@ fun PostEditScreen(
                                 activeInsertKind = kind
                                 panel = PostComposerPanel.None
                             },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(ComposerSubBarHeight)
+                                .padding(horizontal = 14.dp, vertical = 4.dp),
                         )
-                    } else if (panel == PostComposerPanel.None || keyboardHandoff) {
-                        Spacer(Modifier.height(imeHeight.coerceAtLeast(0.dp)))
-                    } else if (panel == PostComposerPanel.Smiley) {
-                        SmileyPanel(
-                            packs = smileyPacks,
-                            recentCodes = recentCodes,
-                            onPick = { code ->
-                                viewModel.insertTextAtSelection(code)
-                                if (code !in DefaultSmileyCodes) {
-                                    viewModel.recordSmileyUsed(code)
-                                }
-                            },
-                            modifier = Modifier.height(smileySlot),
-                        )
+                    }
+
+                    // 键盘与表情面板的下部容器：高度单一真源，键盘收起/弹出时工具栏纹丝不动。
+                    // 槽必须独立于上面的内容区：插入面板态同样要按键盘高度占位，否则键盘一升起
+                    // 就把插入条连工具栏一起盖住
+                    val bottomSlotHeight = when {
+                        panel == PostComposerPanel.Smiley || keyboardHandoff -> smileySlot
+                        imeHeight > 0.dp -> imeHeight
+                        else -> 0.dp
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(bottomSlotHeight),
+                    ) {
+                        // 一旦开始切回键盘，表情页立刻让位变空白：底部槽只剩一块实色区域等键盘
+                        // 升起来填充，不再让表情网格被键盘一点点盖上去
+                        if (panel == PostComposerPanel.Smiley && !keyboardHandoff) {
+                            SmileyPanel(
+                                packs = smileyPacks,
+                                recentCodes = recentCodes,
+                                onPick = { code ->
+                                    viewModel.insertTextAtSelection(code)
+                                    if (code !in DefaultSmileyCodes) {
+                                        viewModel.recordSmileyUsed(code)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
                 }
             },
@@ -563,7 +601,8 @@ fun PostEditScreen(
                                 cursorBrush = SolidColor(primaryColor),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .focusRequester(subjectFocusRequester),
+                                    .focusRequester(subjectFocusRequester)
+                                    .onFocusChanged { if (it.isFocused) switchToKeyboard(focusMessage = false) },
                                 decorationBox = { innerTextField ->
                                     if (subject.isEmpty()) {
                                         Text(
@@ -614,7 +653,8 @@ fun PostEditScreen(
                                 onTextLayout = { textLayout = it },
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .focusRequester(messageFocusRequester),
+                                    .focusRequester(messageFocusRequester)
+                                    .onFocusChanged { if (it.isFocused) switchToKeyboard(focusMessage = false) },
                                 decorationBox = { innerTextField ->
                                     if (message.text.isEmpty()) {
                                         Text(
@@ -739,14 +779,24 @@ fun PostEditScreen(
         }
 
         // @朋友 全屏选择层覆盖在根布局之上
+        var atPickerFocusRequest by remember { mutableStateOf(0) }
+        // 选择页的搜索框抢过焦点，回来必须显式要一次，否则键盘不再弹出、光标也不知去向
+        LaunchedEffect(atPickerFocusRequest) {
+            if (atPickerFocusRequest > 0) {
+                messageFocusRequester.requestFocus()
+                keyboard?.show()
+            }
+        }
         if (showAtPicker) {
             AtUserPickerPage(
-                onDismiss = { showAtPicker = false },
+                onDismiss = {
+                    showAtPicker = false
+                    atPickerFocusRequest++
+                },
                 onPick = { username ->
                     showAtPicker = false
                     viewModel.insertTextAtSelection("@$username ")
-                    messageFocusRequester.requestFocus()
-                    keyboard?.show()
+                    atPickerFocusRequest++
                 },
             )
         }

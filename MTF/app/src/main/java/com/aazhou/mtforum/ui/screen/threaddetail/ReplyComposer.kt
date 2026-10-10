@@ -1517,7 +1517,7 @@ private val ReplyComposerInputHeight = 84.dp
 internal const val RecentSmileyLimit = 8
 
 /** 工具栏下方的子栏高度（快捷表情行、排版插入栏）。两者高度完全保持一致（36.dp）。 */
-private val ComposerSubBarHeight = 36.dp
+internal val ComposerSubBarHeight = 36.dp
 
 /** 表情网格规格：6 列 7 行。格子高度按面板实际高度均分，键盘再矮也是整 7 行。 */
 private const val SmileyGridColumns = 6
@@ -1533,7 +1533,7 @@ internal val MinKeyboardHeight = 100.dp
 internal const val STABLE_KEYBOARD_FRAMES = 6
 
 /** 切回键盘的交接最多等这么多帧（约 0.5s）：还没起来就放弃，表情面板留在原位。 */
-private const val HANDOFF_GIVEUP_FRAMES = 30
+internal const val HANDOFF_GIVEUP_FRAMES = 30
 
 /** 键盘一次都没起来过时，表情面板按这个高度占位兜底（主流设备键盘常见高度）。 */
 private val DefaultKeyboardHeight = 280.dp
