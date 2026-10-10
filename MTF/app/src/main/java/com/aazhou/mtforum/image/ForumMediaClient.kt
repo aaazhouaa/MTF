@@ -2,6 +2,7 @@ package com.aazhou.mtforum.image
 
 import com.aazhou.mtforum.data.network.CDN_IP_RATE_LIMITED
 import com.aazhou.mtforum.data.network.RateLimiter
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -18,10 +19,13 @@ import java.util.concurrent.TimeUnit
  * 会话 Cookie 每次请求实时读取 [cookieHeader]：登录态在应用生命周期内会变（登录、退出、
  * WAF 人机验证回灌），写死一份会在状态变化后失效。
  *
- * 媒体请求还要多过两道关，都是站点 CDN 的 IP 级限频逼出来的：列表一屏会同时发出十几张
- * 配图，突发流量会被判超限并返回 [CDN_IP_RATE_LIMITED]。[RateLimiter] 把请求排开间隔，
- * [MediaRetryInterceptor] 给已经撞上限频的请求一次重来的机会——Coil 2 自身没有重试机制，
- * 不接这一层，灰底会一直挂到列表重组。
+ * 媒体请求里，只有帖子配图与附件（[shouldRateLimitMedia]）才走限流与重试：
+ * 列表一屏会同时发出十几张大配图（forum.php?mod=image），突发流量会被判超限并返回 [CDN_IP_RATE_LIMITED]。
+ * [RateLimiter] 把这类请求排开间隔，[MediaRetryInterceptor] 给撞上限频的请求重试机会。
+ *
+ * 表情（/static/image/smiley/）与头像（avatar.mt2.cn）是纯静态/外站轻量资源，表情面板
+ * 一屏需同时呈现数十张表情，绝不能排入 150ms 串行限流队列，否则不仅排队数秒造成表情
+ * 大面积空白，还会因配图 514 退避而被连坐卡死。
  */
 fun forumMediaClient(
     userAgent: String,
@@ -31,9 +35,13 @@ fun forumMediaClient(
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         // 拦截器按添加顺序嵌套：重试在最外层，退避后的重发会再节一次流
-        .addInterceptor(MediaRetryInterceptor())
+        .addInterceptor(MediaRetryInterceptor(filter = { shouldRateLimitMedia(it.url) }))
         .addInterceptor(
-            RateLimiter(minIntervalMs = MEDIA_MIN_INTERVAL_MS, backoffCodes = setOf(CDN_IP_RATE_LIMITED)),
+            RateLimiter(
+                minIntervalMs = MEDIA_MIN_INTERVAL_MS,
+                backoffCodes = setOf(CDN_IP_RATE_LIMITED),
+                filter = { shouldRateLimitMedia(it.url) },
+            ),
         )
         .addInterceptor { chain ->
             val request = chain.request()
@@ -51,17 +59,23 @@ fun forumMediaClient(
         .build()
 
 /**
- * 媒体请求重试：只重试限频与过载响应，这类响应体为空或极短，重发成本低。
+ * 媒体请求重试：只重试限频与过载响应，且只对 [filter] 允许的媒体请求生效。
  *
  * 间隔逐次递增；重发会再次经过下层的 [RateLimiter]，同一批图片的重试自然被排开，
  * 不会又攒成一记齐射。403 不重试——那是真的被挡，重发多少次都一样。
  */
-private class MediaRetryInterceptor : Interceptor {
+private class MediaRetryInterceptor(
+    private val filter: (Request) -> Boolean = { true },
+) : Interceptor {
 
     override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        if (!filter(request)) {
+            return chain.proceed(request)
+        }
         var retries = 0
         while (true) {
-            val response = chain.proceed(chain.request())
+            val response = chain.proceed(request)
             if (retries >= MAX_RETRIES || response.code !in RETRY_CODES) return response
             // 先关掉旧响应体再重发，否则连接与缓冲区要等 GC 才回收
             response.close()
@@ -75,6 +89,20 @@ private class MediaRetryInterceptor : Interceptor {
         const val BACKOFF_MS = 500L
         val RETRY_CODES = setOf(429, 503, CDN_IP_RATE_LIMITED)
     }
+}
+
+/**
+ * 是否是需要限流与重试的媒体资源：
+ * 只有 Discuz 论坛动态配图/附件接口（forum.php?mod=image 与 mod=attachment）易触发 CDN 514 限频。
+ * 静态表情（/static/image/smiley/）、站点小图标与头像服务完全免除限流。
+ */
+internal fun shouldRateLimitMedia(url: HttpUrl): Boolean {
+    val path = url.encodedPath
+    if (path.contains("/static/image/") || path.contains("/smiley/")) return false
+    if (url.host.contains("avatar.")) return false
+    return path.contains("forum.php") ||
+        url.queryParameter("mod") in setOf("image", "attachment") ||
+        path.contains("/attachment/")
 }
 
 /**

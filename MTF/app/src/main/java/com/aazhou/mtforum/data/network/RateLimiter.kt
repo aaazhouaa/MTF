@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.data.network
 
 import okhttp3.Interceptor
+import okhttp3.Request
 import okhttp3.Response
 import java.util.concurrent.atomic.AtomicLong
 
@@ -21,10 +22,12 @@ private val DEFAULT_BACKOFF_CODES = setOf(403, 429, CDN_IP_RATE_LIMITED)
  * 保证两次请求间隔不小于 [minIntervalMs]；命中 [backoffCodes] 时退避一段时间。
  *
  * [backoffCodes] 可收紧：媒体客户端只对限频码退避，避免一次 403 把所有图片拖停。
+ * [filter] 可按请求过滤：静态表情、头像等无需限流的轻量资源直接放行，不走节流与退避。
  */
 class RateLimiter(
     private val minIntervalMs: Long = 400L,
     private val backoffCodes: Set<Int> = DEFAULT_BACKOFF_CODES,
+    private val filter: (Request) -> Boolean = { true },
 ) : Interceptor {
 
     private val lastRequestAt = AtomicLong(0L)
@@ -33,6 +36,11 @@ class RateLimiter(
     private var blockedUntil = 0L
 
     override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        if (!filter(request)) {
+            return chain.proceed(request)
+        }
+
         val waitForBlock = blockedUntil - System.currentTimeMillis()
         if (waitForBlock > 0) Thread.sleep(waitForBlock)
 
@@ -42,7 +50,7 @@ class RateLimiter(
             lastRequestAt.set(System.currentTimeMillis())
         }
 
-        val response = chain.proceed(chain.request())
+        val response = chain.proceed(request)
         if (response.code in backoffCodes) {
             blockedUntil = System.currentTimeMillis() + 3000
         }
