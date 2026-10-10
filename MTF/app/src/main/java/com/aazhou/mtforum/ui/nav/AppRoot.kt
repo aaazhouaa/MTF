@@ -65,6 +65,12 @@ object Routes {
     const val DOWNLOADED_THREAD = "downloaded/{tid}"
     const val LOGS = "logs"
     const val LOG_DETAIL = "log/{id}"
+    const val MY_POSTS = "my_posts"
+    const val MY_FAVORITES = "my_favorites"
+    const val MY_FRIENDS = "my_friends"
+    const val FOLLOW_LIST = "follow_list?type={type}"
+
+    fun followList(type: String = "following") = "follow_list?type=$type"
 
     fun forum(fid: String, name: String) = "forum/$fid/${Uri.encode(name)}"
     fun thread(tid: String) = "thread/$tid"
@@ -180,6 +186,23 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 ProfileScreen(
                     onLogin = { navController.navigate(Routes.LOGIN) },
                     onDownloads = { navController.navigate(Routes.DOWNLOADS) },
+                    onMyPosts = {
+                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_POSTS)
+                        else navController.navigate(Routes.LOGIN)
+                    },
+                    onMyFavorites = {
+                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_FAVORITES)
+                        else navController.navigate(Routes.LOGIN)
+                    },
+                    onMyFriends = {
+                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_FRIENDS)
+                        else navController.navigate(Routes.LOGIN)
+                    },
+                    onFollowList = { type ->
+                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.followList(type))
+                        else navController.navigate(Routes.LOGIN)
+                    },
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                 )
             }
             composable(Routes.SEARCH) {
@@ -304,6 +327,46 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     forumName = entry.arguments?.getString("name").orEmpty(),
                     onBack = { navController.popBackStack() },
                     onPosted = { navController.popBackStack() },
+                )
+            }
+
+            composable(Routes.MY_POSTS) {
+                com.aazhou.mtforum.ui.screen.myposts.MyPostsScreen(
+                    onBack = { navController.popBackStack() },
+                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                )
+            }
+
+            composable(Routes.MY_FAVORITES) {
+                com.aazhou.mtforum.ui.screen.myfavorites.MyFavoritesScreen(
+                    onBack = { navController.popBackStack() },
+                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                    onForumClick = { fid, name -> navController.navigate(Routes.forum(fid, name)) },
+                )
+            }
+
+            composable(Routes.MY_FRIENDS) {
+                com.aazhou.mtforum.ui.screen.myfriends.MyFriendsScreen(
+                    onBack = { navController.popBackStack() },
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                )
+            }
+
+            composable(
+                Routes.FOLLOW_LIST,
+                arguments = listOf(
+                    navArgument("type") {
+                        type = NavType.StringType
+                        defaultValue = "following"
+                    },
+                ),
+            ) { entry ->
+                val type = entry.arguments?.getString("type") ?: "following"
+                com.aazhou.mtforum.ui.screen.follow.FollowListScreen(
+                    initialType = type,
+                    onBack = { navController.popBackStack() },
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                 )
             }
         }

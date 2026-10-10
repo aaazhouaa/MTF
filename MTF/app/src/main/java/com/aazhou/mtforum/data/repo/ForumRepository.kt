@@ -17,6 +17,13 @@ import com.aazhou.mtforum.data.model.ReplyResult
 import com.aazhou.mtforum.data.model.SearchResult
 import com.aazhou.mtforum.data.model.ThreadPage
 import com.aazhou.mtforum.data.model.UserProfile
+import com.aazhou.mtforum.data.model.FavoriteItem
+import com.aazhou.mtforum.data.model.FavoritePage
+import com.aazhou.mtforum.data.model.FollowUserItem
+import com.aazhou.mtforum.data.model.FollowUserPage
+import com.aazhou.mtforum.data.model.FriendUserItem
+import com.aazhou.mtforum.data.model.FriendUserPage
+import com.aazhou.mtforum.data.model.MyThreadPage
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.parser.ForumParser
 import com.aazhou.mtforum.data.parser.SmileyPack
@@ -629,6 +636,69 @@ class ForumRepository(
             url = http.url("plugin.php?id=k_misign:sign&operation=qiandao&format=text&formhash=$formhash"),
         )
         ForumParser.parseCheckInResponse(body)
+    }
+
+    /** 我的帖子列表（type: thread=我发表的主题, reply=我参与的回复）。 */
+    suspend fun myThreads(type: String = "thread", page: Int = 1): MyThreadPage = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("home.php?mod=space&do=thread&view=me&type=$type&page=$page&mobile=2"))
+        ForumParser.parseMyThreads(html, page)
+    }
+
+    /** 我的收藏列表（type: all=全部, thread=帖子, forum=版块）。 */
+    suspend fun myFavorites(type: String = "all", page: Int = 1): FavoritePage = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("home.php?mod=space&do=favorite&type=$type&page=$page&mobile=2"))
+        ForumParser.parseFavorites(html, page)
+    }
+
+    /** 按 favid 删除收藏。 */
+    suspend fun deleteFavorite(favid: String): Boolean = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("home.php?mod=space&do=favorite&type=all&mobile=2"))
+        val formhash = ForumParser.parseFormhash(html) ?: return@withContext false
+        val url = http.url("home.php?mod=spacecp&ac=favorite&op=delete&favid=$favid&type=all&mobile=2")
+        val body = http.post(
+            url,
+            mapOf(
+                "formhash" to formhash,
+                "deletesubmit" to "true",
+                "handlekey" to "comiis",
+            ),
+            referer = "https://bbs.binmt.cc/home.php?mod=space&do=favorite&type=all&mobile=2",
+        )
+        body.isNotBlank() && !LIKE_ERROR_PATTERN.containsMatchIn(body)
+    }
+
+    /** 好友列表（view: 空为全部好友, visitor=最近来访, trace=我看过谁, blacklist=黑名单）。 */
+    suspend fun myFriends(view: String = "", page: Int = 1): FriendUserPage = withContext(Dispatchers.IO) {
+        val path = if (view.isBlank()) {
+            "home.php?mod=space&do=friend&page=$page&mobile=2"
+        } else {
+            "home.php?mod=space&do=friend&view=$view&page=$page&mobile=2"
+        }
+        val html = http.get(http.url(path))
+        ForumParser.parseFriends(html, page)
+    }
+
+    /** 关注与粉丝列表（type: following=我的关注, follower=我的粉丝）。 */
+    suspend fun followList(type: String, page: Int = 1): FollowUserPage = withContext(Dispatchers.IO) {
+        val path = if (type == "following") {
+            "home.php?mod=follow&do=following&page=$page&mobile=2"
+        } else {
+            "home.php?mod=follow&do=follower&page=$page&mobile=2"
+        }
+        val html = http.get(http.url(path))
+        ForumParser.parseFollowUsers(html, page, defaultIsFollowing = (type == "following"))
+    }
+
+    /** 关注 / 取消关注用户。 */
+    suspend fun toggleFollowUser(uid: String, follow: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("home.php?mod=follow&do=following&mobile=2"))
+        val formhash = ForumParser.parseFormhash(html) ?: ""
+        val url = http.url(
+            "home.php?mod=spacecp&ac=follow&op=${if (follow) "add" else "del"}" +
+                "&fuid=$uid&hash=$formhash&mobile=2",
+        )
+        val res = http.get(url)
+        res.isNotBlank()
     }
 }
 

@@ -345,3 +345,67 @@ data class FollowerUser(
     val followCount: String? = null,
 )
 
+/** 关注/粉丝列表项。 */
+@Serializable
+data class FollowUserItem(
+    val uid: String,
+    val username: String,
+    val avatarUrl: String? = null,
+    val fansCount: String? = null,
+    val followCount: String? = null,
+    val isFollowing: Boolean = false,
+)
+
+/** 关注/粉丝分页数据。 */
+@Serializable
+data class FollowUserPage(
+    val users: List<FollowUserItem>,
+    val page: Int,
+    val hasNext: Boolean,
+)
+
+/** 好友项。 */
+@Serializable
+data class FriendUserItem(
+    val uid: String,
+    val username: String,
+    val avatarUrl: String? = null,
+    val description: String? = null,
+)
+
+/** 好友分页数据。 */
+@Serializable
+data class FriendUserPage(
+    val users: List<FriendUserItem>,
+    val page: Int,
+    val hasNext: Boolean,
+)
+
+/** 收藏项（我的收藏）。 */
+@Serializable
+data class FavoriteItem(
+    val favid: String,
+    val id: String,
+    val title: String,
+    val description: String? = null,
+    val dateText: String? = null,
+    val type: String = "thread", // thread, forum
+)
+
+/** 收藏分页数据。 */
+@Serializable
+data class FavoritePage(
+    val items: List<FavoriteItem>,
+    val page: Int,
+    val hasNext: Boolean,
+)
+
+/** 我的帖子分页数据。 */
+@Serializable
+data class MyThreadPage(
+    val threads: List<Thread>,
+    val page: Int,
+    val hasNext: Boolean,
+)
+
+

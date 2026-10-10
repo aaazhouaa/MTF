@@ -21,6 +21,13 @@ import com.aazhou.mtforum.data.model.SearchResult
 import com.aazhou.mtforum.data.model.Thread
 import com.aazhou.mtforum.data.model.ThreadPage
 import com.aazhou.mtforum.data.model.UserProfile
+import com.aazhou.mtforum.data.model.FavoriteItem
+import com.aazhou.mtforum.data.model.FavoritePage
+import com.aazhou.mtforum.data.model.FollowUserItem
+import com.aazhou.mtforum.data.model.FollowUserPage
+import com.aazhou.mtforum.data.model.FriendUserItem
+import com.aazhou.mtforum.data.model.FriendUserPage
+import com.aazhou.mtforum.data.model.MyThreadPage
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -1173,5 +1180,145 @@ object ForumParser {
     }
 
     private fun hasNextPage(document: Document): Boolean =
-        document.selectFirst("a.nxt, a[href*=page=] i.icon-next") != null
+        document.selectFirst("a.nxt, a[href*=page=] i.icon-next, .pg a.nxt") != null
+
+    /** 解析「我的帖子」（主题 / 回复）。 */
+    fun parseMyThreads(html: String, page: Int): MyThreadPage {
+        val document = doc(html)
+        val threads = mutableListOf<Thread>()
+        for (li in document.select("li.forumlist_li")) {
+            val titleA = li.selectFirst("div.mmlist_li_box h2 a[href*=thread-]")
+                ?: li.selectFirst("a[href*=thread-]")
+                ?: continue
+            val tid = RE_TID.find(titleA.attr("href"))?.groupValues?.get(1) ?: continue
+            val authorA = li.selectFirst("a.top_user")
+            val (replyCount, viewCount, likeCount) = readCardStats(li)
+            threads.add(
+                Thread(
+                    tid = tid,
+                    subject = titleA.text().stripInvisibleChars(),
+                    authorName = authorA?.text()?.trim(),
+                    authorUid = RE_UID.find(authorA?.attr("href") ?: "")?.groupValues?.get(1),
+                    avatarUrl = li.selectFirst("img.top_tximg")?.attr("src"),
+                    level = li.selectFirst("span.top_lev")?.text()?.trim(),
+                    timeText = li.selectFirst("div.forumlist_li_time span")?.text()?.trim(),
+                    replyCount = replyCount,
+                    viewCount = viewCount,
+                    excerpt = li.selectFirst("div.list_body a")?.text()?.stripInvisibleChars(),
+                    forumName = li.selectFirst("div.comiis_xznalist_bk a[href*=forum-]")?.let { a ->
+                        a.ownText().trim().ifEmpty { a.text().trim() }
+                    }?.ifEmpty { null }
+                        ?: li.selectFirst("div.forumlist_li_time a[href*=forum-]")?.text()
+                            ?.substringAfter("来自")?.trim()?.takeIf { it.isNotEmpty() },
+                    imageUrls = collectThreadImages(li),
+                    likeCount = likeCount,
+                )
+            )
+        }
+        return MyThreadPage(
+            threads = threads.distinctBy { it.tid },
+            page = page,
+            hasNext = hasNextPage(document),
+        )
+    }
+
+    /** 解析「我的收藏」（全部 / 帖子 / 版块）。 */
+    fun parseFavorites(html: String, page: Int): FavoritePage {
+        val document = doc(html)
+        val items = mutableListOf<FavoriteItem>()
+        val listElements = document.select("ul.comiis_favoritelist li, .comiis_p12 li, ul#favorite_ul li, div.comiis_body li, li[id^=fav_]")
+        for (el in listElements) {
+            val deleteA = el.selectFirst("a[href*=op=delete]") ?: el.selectFirst("a[href*=favid=]")
+            val favid = deleteA?.let { Regex("""favid=(\d+)""").find(it.attr("href"))?.groupValues?.get(1) }
+                ?: Regex("""fav_(\d+)""").find(el.attr("id"))?.groupValues?.get(1)
+                ?: ""
+            val titleA = el.selectFirst("a[href*=thread-], a[href*=mod=viewthread], a[href*=forum-], a[href*=mod=forumdisplay]")
+                ?: continue
+            val href = titleA.attr("href")
+            val isForum = href.contains("forum-") || href.contains("mod=forumdisplay")
+            val id = (if (isForum) RE_FID.find(href)?.groupValues?.get(1) else RE_TID.find(href)?.groupValues?.get(1))
+                ?: Regex("""[?&](?:tid|id)=(\d+)""").find(href)?.groupValues?.get(1)
+                ?: ""
+            val title = titleA.text().stripInvisibleChars().ifEmpty { continue }
+            val dateText = el.selectFirst("span.f_d, span.xg1, div.forumlist_li_time span")?.text()?.trim()
+            val desc = el.selectFirst("div.list_body, p.txt")?.text()?.stripInvisibleChars()
+            items.add(
+                FavoriteItem(
+                    favid = favid,
+                    id = id,
+                    title = title,
+                    description = desc,
+                    dateText = dateText,
+                    type = if (isForum) "forum" else "thread",
+                )
+            )
+        }
+        return FavoritePage(
+            items = items.distinctBy { if (it.favid.isNotEmpty()) it.favid else it.id },
+            page = page,
+            hasNext = hasNextPage(document),
+        )
+    }
+
+    /** 解析「我的好友」。 */
+    fun parseFriends(html: String, page: Int): FriendUserPage {
+        val document = doc(html)
+        val items = mutableListOf<FriendUserItem>()
+        val listElements = document.select("div.comiis_userlist01 > li, ul.comiis_friend_list > li, li[id^=comiis_friendbox_], li[id^=friend_], .comiis_p12 li")
+        for (li in listElements) {
+            val link = li.selectFirst("p.tit a[href*=profile], a.top_user, a[href*=mod=space&uid=]")
+                ?: li.selectFirst("a[href*=do=profile]")
+                ?: continue
+            val href = link.attr("href")
+            val uid = RE_UID.find(href)?.groupValues?.get(1)
+                ?: Regex("""comiis_friendbox_(\d+)""").find(li.attr("id"))?.groupValues?.get(1)
+                ?: continue
+            val name = link.text().trim().ifEmpty { continue }
+            val avatarUrl = li.selectFirst("img")?.absUrl("src")?.takeIf { it.isNotBlank() }
+            val desc = li.selectFirst("p.txt, span.f_d")?.text()?.trim()
+            items.add(FriendUserItem(uid = uid, username = name, avatarUrl = avatarUrl, description = desc))
+        }
+        return FriendUserPage(
+            users = items.distinctBy { it.uid },
+            page = page,
+            hasNext = hasNextPage(document),
+        )
+    }
+
+    /** 解析「关注」与「粉丝」列表。 */
+    fun parseFollowUsers(html: String, page: Int, defaultIsFollowing: Boolean): FollowUserPage {
+        val document = doc(html)
+        val items = mutableListOf<FollowUserItem>()
+        val elements = document.select("div.comiis_userlist01 > li, li[id^=comiis_friendbox_]")
+        for (li in elements) {
+            val link = li.selectFirst("p.tit a[href*=do=profile]") ?: li.selectFirst("a[href*=do=profile]") ?: continue
+            val href = link.attr("href")
+            val uid = RE_UID.find(href)?.groupValues?.get(1)
+                ?: Regex("""comiis_friendbox_(\d+)""").find(li.attr("id"))?.groupValues?.get(1)
+                ?: continue
+            val name = link.text().trim().ifEmpty { continue }
+            val avatarUrl = li.selectFirst("a.list01_limg img, img")?.absUrl("src")?.takeIf { it.isNotBlank() }
+            val txt = li.selectFirst("p.txt")?.text().orEmpty()
+            val fansCount = Regex("""(\d+)\s*粉丝""").find(txt)?.groupValues?.get(1)
+                ?: li.selectFirst("code[id^=followernum_]")?.text()?.trim()
+            val followCount = Regex("""(\d+)\s*关注""").find(txt)?.groupValues?.get(1)
+            val hasCancelA = li.selectFirst("a.user_gz[href*=op=del]") != null
+            val isFollowing = if (hasCancelA) true else defaultIsFollowing
+            items.add(
+                FollowUserItem(
+                    uid = uid,
+                    username = name,
+                    avatarUrl = avatarUrl,
+                    fansCount = fansCount,
+                    followCount = followCount,
+                    isFollowing = isFollowing,
+                )
+            )
+        }
+        return FollowUserPage(
+            users = items.distinctBy { it.uid },
+            page = page,
+            hasNext = hasNextPage(document),
+        )
+    }
 }
