@@ -56,6 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -296,6 +297,16 @@ fun ThreadDetailScreen(
         val hash = page?.uploadHash
         if (uid != null && hash != null) uid to hash else null
     }
+
+    // 「@朋友」候选名单：与站点网页端编辑器同源。回复面板打开时拉一次，之后输入 @ 按
+    // 关键字过滤；账号没好友时空名单，用户照样能手输用户名
+    var atUsers by remember { mutableStateOf<List<String>?>(null) }
+    LaunchedEffect(composerVisible) {
+        if (composerVisible && atUsers == null) {
+            atUsers = runCatching { container.repository.fetchAtUsers() }.getOrDefault(emptyList())
+        }
+    }
+
     // 返回键与点遮罩同一个路子：键盘在就先收键盘、面板留着，再按一次才收面板，
     // 不把用户直接扔出帖子
     BackHandler(enabled = composerVisible) {
@@ -344,6 +355,10 @@ fun ThreadDetailScreen(
     }
     // 长按评论弹出的操作菜单目标
     var actionTarget by remember { mutableStateOf<Post?>(null) }
+    // 是否显示「@朋友」选择页
+    var atPickerVisible by remember { mutableStateOf(false) }
+    // 从「@朋友」选择页回来时 +1，让回复框把焦点和键盘要回来
+    var composerFocusRequest by remember { mutableIntStateOf(0) }
     // 是否显示打赏弹窗
     var rewardOpen by remember { mutableStateOf(false) }
     // 举报弹窗目标：pid 为 null 表示举报本帖
@@ -723,6 +738,9 @@ fun ThreadDetailScreen(
                     val (uid, hash) = uploadCredentials ?: return@ReplyComposer null
                     container.repository.uploadReplyImage(file, uid, hash)
                 },
+                atUsers = atUsers.orEmpty(),
+                onOpenAtPicker = { atPickerVisible = true },
+                focusRequest = composerFocusRequest,
                 onSend = {
                     val draft = drafts[replyTarget?.pid]
                     if (requireLogin(LOGIN_HINT_REPLY) && draft != null && draft.text.isNotBlank()) {
@@ -734,6 +752,24 @@ fun ThreadDetailScreen(
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
+    }
+
+    // 「@朋友」选择页：整页盖在回复面板之上，返回键只收这一层，别把回复面板一起关掉
+    BackHandler(enabled = atPickerVisible) { atPickerVisible = false }
+    if (atPickerVisible) {
+        AtUserPickerPage(
+            onDismiss = {
+                atPickerVisible = false
+                // 取消也要把焦点还给正文：选择页的搜索框抢过焦点，不还的话键盘直接收起
+                composerFocusRequest++
+            },
+            onPick = { name ->
+                atPickerVisible = false
+                val key = replyTarget?.pid
+                drafts[key] = (drafts[key] ?: TextFieldValue("")).insertAtSelection("@$name ")
+                composerFocusRequest++
+            },
+        )
     }
 
     preview?.let { (urls, index) ->
@@ -1585,6 +1621,7 @@ internal fun ReplyBlock(
                     bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp),
                     modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { onLongPress(reply) }),
                     onLinkClick = { url -> openForumLink(context, url, siteHost, onThreadClick) },
+                    selectable = false,
                 )
             }
         }
@@ -1767,6 +1804,7 @@ private fun NestedReply(
                 .fillMaxWidth()
                 .combinedClickable(onClick = {}, onLongClick = onLongPress),
             onLinkClick = { url -> openForumLink(context, url, siteHost, onThreadClick) },
+            selectable = false,
         )
         }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 30.dp, top = 4.dp)) {

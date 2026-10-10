@@ -978,4 +978,22 @@ class ForumParserTest {
         """.trimIndent()
         assertEquals("看看", ForumParser.replyQuoteSnippet(html))
     }
+
+    @Test
+    fun `at users are parsed from the getatuser xml cdata`() {
+        val body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<root><![CDATA[user1, user2,user3]]></root>"
+        assertEquals(listOf("user1", "user2", "user3"), ForumParser.parseAtUsers(body))
+    }
+
+    @Test
+    fun `at users are empty when the account has no friend`() {
+        val body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<root><![CDATA[]]></root>"
+        assertEquals(emptyList<String>(), ForumParser.parseAtUsers(body))
+    }
+
+    @Test
+    fun `at users ignore a challenge page response`() {
+        val body = "<html><script>var x = 1</script></html>"
+        assertEquals(emptyList<String>(), ForumParser.parseAtUsers(body))
+    }
 }

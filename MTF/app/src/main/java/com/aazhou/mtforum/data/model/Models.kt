@@ -285,3 +285,17 @@ data class NoticePage(
     val loggedOut: Boolean = false,
     val notices: List<Notice> = emptyList(),
 )
+
+/**
+ * 「@朋友」选择页里的用户行。
+ *
+ * 站点的好友列表、关注列表、全局用户搜索共用同一套 comiis 用户列表结构；
+ * [subtitle] 是行内那行小字（等级 + 积分，或粉丝/关注数）。
+ */
+@Serializable
+data class AtUser(
+    val uid: String,
+    val name: String,
+    val avatarUrl: String? = null,
+    val subtitle: String = "",
+)

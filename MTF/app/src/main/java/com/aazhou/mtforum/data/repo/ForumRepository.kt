@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.data.repo
 
 import com.aazhou.mtforum.data.model.ForumGroup
+import com.aazhou.mtforum.data.model.AtUser
 import com.aazhou.mtforum.data.model.ForumPage
 import com.aazhou.mtforum.data.model.HomeData
 import com.aazhou.mtforum.data.model.LikeResult
@@ -203,6 +204,58 @@ class ForumRepository(
         // 响应为 DISCUZUPLOAD|1|0|<aid>|<...>|<附件路径>|<文件名>|...，第 3 段为状态码
         val parts = body.split('|')
         if (parts.size >= 4 && parts[0] == "DISCUZUPLOAD" && parts[2] == "0") parts[3] else null
+    }
+
+    /**
+     * 「@朋友」的可选名单：站点网页端编辑器用的同一个接口。
+     *
+     * 名单只是候选，提到谁最终由用户在输入框里确认（站点同样允许直接手输用户名）。
+     */
+    suspend fun fetchAtUsers(): List<String> = withContext(Dispatchers.IO) {
+        ForumParser.parseAtUsers(
+            http.get("${HttpClient.BASE_URL}misc.php?mod=getatuser&inajax=1"),
+        )
+    }
+
+    /**
+     * 「@朋友」选择页的好友列表（站点「我的好友」）。
+     *
+     * 站点按 24 人一页，这里最多翻 [MAX_AT_USER_PAGES] 页：再往后的好友本来也只能
+     * 靠搜索定位，全量翻页会把首屏拖成十几秒。
+     */
+    suspend fun fetchFriends(): List<AtUser> = withContext(Dispatchers.IO) {
+        atUserPages { page -> "home.php?mod=space&do=friend&page=$page&mobile=2" }
+    }
+
+    /** 「@朋友」选择页的关注列表（站点「我的关注」）。 */
+    suspend fun fetchFollows(): List<AtUser> = withContext(Dispatchers.IO) {
+        atUserPages { page -> "home.php?mod=follow&do=following&page=$page&mobile=2" }
+    }
+
+    /**
+     * 全局用户搜索：站点搜索页的「用户」标签。
+     *
+     * 站点按用户名包含匹配，最多返回 100 条且不分页；关键字为空时站点直接返回空列表。
+     */
+    suspend fun searchUsers(keyword: String): List<AtUser> = withContext(Dispatchers.IO) {
+        val trimmed = keyword.trim()
+        if (trimmed.isEmpty()) return@withContext emptyList()
+        val encoded = java.net.URLEncoder.encode(trimmed, "UTF-8")
+        ForumParser.parseAtUserList(
+            http.get(http.url("search.php?mod=user&searchsubmit=yes&srchtxt=$encoded&mobile=2")),
+        )
+    }
+
+    private suspend fun atUserPages(url: (Int) -> String): List<AtUser> {
+        val all = mutableListOf<AtUser>()
+        var page = 1
+        while (page <= MAX_AT_USER_PAGES) {
+            val batch = ForumParser.parseAtUserList(http.get(http.url(url(page))))
+            all += batch
+            if (batch.size < AT_USER_PAGE_SIZE) break
+            page++
+        }
+        return all
     }
 
     /**
@@ -522,3 +575,9 @@ class ForumRepository(
         ForumParser.parseLoginResult(result)
     }
 }
+
+/** 站点用户列表每页条数（好友/关注都是 24）。 */
+private const val AT_USER_PAGE_SIZE = 24
+
+/** 好友/关注列表最多翻几页，见 [ForumRepository.fetchFriends]。 */
+private const val MAX_AT_USER_PAGES = 5

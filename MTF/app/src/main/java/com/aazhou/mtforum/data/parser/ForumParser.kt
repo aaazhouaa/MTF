@@ -3,6 +3,7 @@ package com.aazhou.mtforum.data.parser
 import com.aazhou.mtforum.data.model.Forum
 import com.aazhou.mtforum.data.model.ForumGroup
 import com.aazhou.mtforum.data.model.ForumPage
+import com.aazhou.mtforum.data.model.AtUser
 import com.aazhou.mtforum.data.model.HomeData
 import com.aazhou.mtforum.data.model.LikeResult
 import com.aazhou.mtforum.data.model.LikeUser
@@ -906,6 +907,43 @@ object ForumParser {
         val success = body.contains("succeedhandle_") || RE_INAJAX_XML.containsMatchIn(body)
         return ReplyResult(success, if (success) null else extractReplyError(body))
     }
+
+    /**
+     * 「@朋友」的好友名单：站点编辑器用的同一个接口，返回 CDATA 里逗号分隔的用户名。
+     *
+     * 没有好友时 CDATA 为空，返回空列表（界面据此提示可以手输用户名）。
+     */
+    fun parseAtUsers(body: String): List<String> =
+        RE_CDATA.find(body)?.groupValues?.get(1)
+            ?.split(',')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
+
+    /**
+     * 用户列表行：好友、关注、全局用户搜索三个页面在 comiis 模板下同结构。
+     *
+     * 昵称链接认 `p.tit` 里指向 `do=profile` 的那个：好友行的操作区还有「发消息」
+     * （mod=space&do=pm...&touid=）和「备注」（...&uid=）两个链接，按 uid 或
+     * mod=space 匹配都会先撞上它们，把昵称取成「发消息」。
+     */
+    fun parseAtUserList(html: String): List<AtUser> =
+        doc(html).select("div.comiis_userlist01 > li").mapNotNull { li ->
+            val link = li.select("p.tit a[href*=\"do=profile\"]").firstOrNull()
+                ?: return@mapNotNull null
+            val uid = RE_UID.find(link.attr("href"))?.groupValues?.get(1) ?: return@mapNotNull null
+            val name = link.text().trim()
+            if (name.isEmpty()) return@mapNotNull null
+            val avatar = li.select("a.list01_limg img").firstOrNull()
+                ?.absUrl("src")
+                ?.takeIf { it.isNotBlank() }
+            AtUser(
+                uid = uid,
+                name = name,
+                avatarUrl = avatar,
+                subtitle = li.select("p.txt").firstOrNull()?.text()?.trim().orEmpty(),
+            )
+        }
 
     /** 摘站点提示原文：优先 errorhandle_xxx('提示', …) 第一参，兜底取 CDATA 去标签纯文本。 */
     private fun extractReplyError(body: String): String? {

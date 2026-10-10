@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.union
@@ -134,6 +135,12 @@ internal fun ReplyComposer(
     onFocusedChange: (Boolean) -> Unit,
     uploadCredentials: Pair<String, String>?,
     onUploadImage: suspend (File) -> String?,
+    /** 「@朋友」候选名单：与站点网页端编辑器同源，输入 @ 时按关键字过滤，点候选插 `@用户名 `。 */
+    atUsers: List<String>,
+    /** 打开「@朋友」选择页：默认列出好友与关注，可全局搜索全站用户。 */
+    onOpenAtPicker: () -> Unit,
+    /** 外部请求聚焦正文的计数：从「@朋友」选择页回来时 +1，把光标和键盘请回正文。 */
+    focusRequest: Int = 0,
     onSend: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
@@ -171,6 +178,14 @@ internal fun ReplyComposer(
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
         keyboard?.show()
+    }
+
+    // 选择页的搜索框抢过焦点，回来必须显式要一次，否则键盘不再弹出、光标也不知去向
+    LaunchedEffect(focusRequest) {
+        if (focusRequest > 0) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
     }
 
     val density = LocalDensity.current
@@ -472,10 +487,8 @@ internal fun ReplyComposer(
                             AppToast.show("上传凭据已失效，返回帖子重进试试")
                         }
                     }
-                    ComposerToolButton(R.drawable.ic_at, "提到朋友") {
-                        onValueChange(value.wrapSelectionOrInsert("@", " "))
-                        switchToKeyboard()
-                    }
+                    // @：打开「@朋友」选择页（好友/关注 + 全站搜索）
+                    ComposerToolButton(R.drawable.ic_at, "提到朋友") { onOpenAtPicker() }
                     ComposerToolButton(R.drawable.ic_add, "插入") {
                         if (panel == ComposerPanel.Smiley) {
                             keyboardHandoff = true
@@ -503,6 +516,29 @@ internal fun ReplyComposer(
                             )
                             .clickable(enabled = publishReady, onClick = onSend)
                             .padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+                }
+            }
+
+            // @候选条：光标正落在 @关键字 里时才出现，贴在工具栏上方。表情/插入面板开着
+            // 时说明没在打字，这时候浮一层候选只会挡住面板
+            val atToken = if (value.selection.collapsed) {
+                atTokenAt(value.text, value.selection.start)
+            } else {
+                null
+            }
+            if (atToken != null && panel == ComposerPanel.None && activeInsertKind == null) {
+                val atSuggestions = filterAtUsers(atUsers, atToken.second)
+                if (atSuggestions.isNotEmpty()) {
+                    AtSuggestionStrip(
+                        suggestions = atSuggestions,
+                        onPick = { name ->
+                            // 整段 @关键字 换成 `@用户名 `，尾空格与站点一致，免得紧贴后续文字
+                            val end = value.selection.start
+                            val merged = value.text.replaceRange(atToken.first, end, "@$name ")
+                            val cursor = atToken.first + name.length + 2
+                            onValueChange(value.copy(text = merged, selection = TextRange(cursor)))
+                        },
                     )
                 }
             }
@@ -906,7 +942,7 @@ private enum class InsertKind(val label: String, val iconRes: Int? = null) {
 }
 
 /** 在光标处插入 [text]，插完光标落在插入内容里第 [cursorOffsetInInserted] 个字符处。 */
-private fun TextFieldValue.insertAtSelection(
+internal fun TextFieldValue.insertAtSelection(
     text: String,
     cursorOffsetInInserted: Int = text.length,
 ): TextFieldValue {
@@ -915,6 +951,66 @@ private fun TextFieldValue.insertAtSelection(
     val merged = this.text.substring(0, start) + text + this.text.substring(end)
     val cursor = start + cursorOffsetInInserted.coerceIn(0, text.length)
     return copy(text = merged, selection = TextRange(cursor))
+}
+
+/**
+ * @候选条：横向滑动的候选名单，贴在工具栏上方。
+ * 刻意不用弹窗：用户视线不用离开输入框，键盘也不收起。
+ */
+@Composable
+private fun AtSuggestionStrip(
+    suggestions: List<String>,
+    onPick: (String) -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = AtSuggestionStripHeight)
+            .padding(horizontal = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        contentPadding = PaddingValues(vertical = 4.dp),
+    ) {
+        items(suggestions, key = { it }) { name ->
+            Text(
+                "@$name",
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                color = bodyTextColor(),
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(colors.quoteBackground)
+                    .clickable { onPick(name) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+private val AtSuggestionStripHeight = 44.dp
+
+/**
+ * 光标处的 @提及 token：返回 [token 起始下标, 已输入的关键字]，光标不在 @xxx 里返回 null。
+ *
+ * 边界是空白符或行首——`@` 出现在词中间（如邮箱 `a@b.com`）不算提及。
+ */
+internal fun atTokenAt(text: String, cursor: Int): Pair<Int, String>? {
+    if (cursor < 0 || cursor > text.length) return null
+    var start = cursor
+    while (start > 0 && !text[start - 1].isWhitespace()) start--
+    val token = text.substring(start, cursor)
+    if (!token.startsWith('@')) return null
+    return start to token.drop(1)
+}
+
+/** 候选名单：前缀命中排在前，其余包含命中排在后；没有关键字就整份名单按原序。 */
+internal fun filterAtUsers(users: List<String>, keyword: String): List<String> {
+    if (users.isEmpty()) return emptyList()
+    if (keyword.isEmpty()) return users
+    val prefix = users.filter { it.startsWith(keyword, ignoreCase = true) }
+    val rest = users.filter { it !in prefix && it.contains(keyword, ignoreCase = true) }
+    return prefix + rest
 }
 
 /**
