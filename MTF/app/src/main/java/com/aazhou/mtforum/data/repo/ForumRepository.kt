@@ -116,10 +116,16 @@ class ForumRepository(
         ForumParser.parseHome(http.get(http.url("forum.php?mod=guide&view=hot&mobile=2")))
     }
 
-    /** 导读-最新发表。 */
-    suspend fun guide(page: Int): ForumPage = withContext(Dispatchers.IO) {
-        ForumParser.parseGuidePage(
-            http.get(http.url("forum.php?mod=guide&view=newthread&index=$page&mobile=2")),
+    /**
+     * 导读列表：guide 模块的各个 view —— 最新发表 / 热门 / 精华 / 回复 / 抢沙发。
+     *
+     * 翻页参数只能是 page。站点模板生成的「下一页」链接把 mod 写坏成
+     * `mod=index=1`（少了 guide），而 index 本身不参与分页：index=1 与 index=2
+     * 返回的是同一页。故地址由客户端自己拼，不取页面上的翻页链接。
+     */
+    suspend fun guideFeed(view: String, page: Int): ForumPage = withContext(Dispatchers.IO) {
+        ForumParser.parseForumPage(
+            http.get(http.url("forum.php?mod=guide&view=$view&page=$page&mobile=2")),
             page,
         )
     }
@@ -328,14 +334,6 @@ class ForumRepository(
         val encoded = java.net.URLEncoder.encode(keyword, "UTF-8")
         ForumParser.parseSearchResult(
             http.get(http.url("search.php?mod=forum&searchsubmit=yes&srchtxt=$encoded&page=$page&mobile=2")),
-            page,
-        )
-    }
-
-    /** 首页帖子流（导读-最新发表），与版块页列表同结构。 */
-    suspend fun homeFeed(page: Int): ForumPage = withContext(Dispatchers.IO) {
-        ForumParser.parseForumPage(
-            http.get(http.url("forum.php?mod=guide&view=newthread&page=$page&mobile=2")),
             page,
         )
     }

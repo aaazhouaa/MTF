@@ -26,7 +26,8 @@ object CacheKeys {
 
     fun home(): String = "home"
 
-    fun guide(): String = "guide|newthread"
+    /** 导读列表按 view 分槽：各 tab 共用一套加载机制但缓存互不覆盖。 */
+    fun guide(view: String): String = "guide|$view"
 
     fun search(keyword: String): String = "search|$keyword"
 }

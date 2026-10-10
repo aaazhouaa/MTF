@@ -31,7 +31,6 @@ import com.aazhou.mtforum.ui.common.GlobalToastHost
 import com.aazhou.mtforum.ui.common.maskAccessibility
 import com.aazhou.mtforum.ui.screen.forumlist.ForumListScreen
 import com.aazhou.mtforum.ui.screen.downloads.DownloadsScreen
-import com.aazhou.mtforum.ui.screen.guide.GuideScreen
 import com.aazhou.mtforum.ui.screen.home.HomeScreen
 import com.aazhou.mtforum.ui.screen.logs.LogDetailScreen
 import com.aazhou.mtforum.ui.screen.logs.LogsScreen
@@ -52,7 +51,6 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 object Routes {
     const val HOME = "home"
     const val FORUMS = "forums"
-    const val GUIDE = "guide"
     const val PROFILE = "profile"
     const val SEARCH = "search"
     const val LOGIN = "login"
@@ -108,10 +106,9 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
     val tabs = listOf(
         GlassTab("首页", painterResource(R.drawable.ic_home)),
         GlassTab("板块", painterResource(R.drawable.ic_list)),
-        GlassTab("导读", painterResource(R.drawable.ic_find)),
         GlassTab("我的", painterResource(R.drawable.ic_me)),
     )
-    val tabRoutes = listOf(Routes.HOME, Routes.FORUMS, Routes.GUIDE, Routes.PROFILE)
+    val tabRoutes = listOf(Routes.HOME, Routes.FORUMS, Routes.PROFILE)
     val selectedIndex = tabRoutes.indexOf(currentRoute)
     val showBottomBar = selectedIndex >= 0
 
@@ -148,7 +145,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
             popExitTransition = { ExitTransition.None },
             modifier = Modifier
                 .fillMaxSize()
-            // 采样层只在 4 个 tab 页挂：非 tab 路由（搜索/登录/帖子详情/通知/发帖）没有玻璃底栏
+            // 采样层只在 3 个 tab 页挂：非 tab 路由（搜索/登录/帖子详情/通知/发帖）没有玻璃底栏
             // 消费这个 backdrop，挂了也只是逐帧把全屏内容录进一个没人读取的图层
             .then(if (showBottomBar) Modifier.layerBackdrop(backdrop) else Modifier),
         ) {
@@ -177,9 +174,6 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 ForumListScreen(onForumClick = { fid, name ->
                     navController.navigate(Routes.forum(fid, name))
                 })
-            }
-            composable(Routes.GUIDE) {
-                GuideScreen(onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) })
             }
             composable(Routes.PROFILE) {
                 ProfileScreen(

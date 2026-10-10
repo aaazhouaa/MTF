@@ -622,9 +622,6 @@ object ForumParser {
         return HomeData(hotForums = hotForums, hotThreads = hotThreads)
     }
 
-    /** 导读页（guide&view=newthread）：结构与版块页帖子列表一致。 */
-    fun parseGuidePage(html: String, page: Int): ForumPage = parseForumPage(html, page)
-
     /** 从任意页面提取当前用户；未登录时 uid 为 "0"。 */
     /** 个人空间页的 uid：优先 discuz_uid，其次 JS 变量 uid（指定 uid 查看时指向被查看者）。 */
     fun parseUserProfile(html: String): UserProfile {

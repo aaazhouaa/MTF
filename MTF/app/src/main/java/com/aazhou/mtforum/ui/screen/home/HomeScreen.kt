@@ -15,11 +15,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -38,8 +40,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -67,7 +71,22 @@ import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.launch
 
-/** 首页：顶栏（头像/登录图标 + 搜索胶囊 + 主题切换 + 消息）、热帖排行头部、帖子卡片流。 */
+/**
+ * 首页 tab 与站点 guide 模块 view 的对应关系：[views] 与 [labels] 按下标一一对应，
+ * 改一个必须同步改另一个。
+ */
+object HomeTabs {
+    const val NEWEST = "newthread"
+    const val HOT = "hot"
+    const val DIGEST = "digest"
+    const val REPLY = "new"
+    const val SOFA = "sofa"
+
+    val views = listOf(NEWEST, HOT, DIGEST, REPLY, SOFA)
+    val labels = listOf("最新", "热门", "精华", "回复", "抢沙发")
+}
+
+/** 首页：顶栏（头像/登录图标 + 搜索胶囊 + 主题切换 + 消息）、分类 tab 行、可左右滑动的帖子流。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -83,11 +102,9 @@ fun HomeScreen(
     val colors = LocalMtfColors.current
     val container = LocalContext.current.container()
     val viewModel: HomeViewModel = appViewModel { HomeViewModel(it.repository, it.contentCache) }
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    val hot by viewModel.hot.collectAsStateWithLifecycle()
-    val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
-    val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
+    val feeds by viewModel.feeds.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+    val hot by viewModel.hot.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     // 当前登录用户：已登录时顶栏左侧用头像替代「MTF」，点击进个人主页
     val me by container.currentUser.collectAsStateWithLifecycle()
@@ -99,17 +116,17 @@ fun HomeScreen(
     val openImage: (List<String>, Int) -> Unit = { urls, index ->
         if (urls.isNotEmpty()) preview = urls to index
     }
-    // 列表状态提升到页面作用域：顶栏双击回顶部时刷新/加载态也要能拿到它
-    val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+
+    val pagerState = rememberPagerState(initialPage = 0) { HomeTabs.views.size }
+    // 每页一个列表状态并提升到页面作用域：切 tab 不丢滚动位置，也不重建已翻页的数据
+    val listStates = HomeTabs.views.map { rememberLazyListState() }
+
     // 加载/操作类提示改走全局轻提示：页面级提示卡片已由 AppToast 统一承载
     LaunchedEffect(actionMessage) {
         val message = actionMessage ?: return@LaunchedEffect
         AppToast.show(message)
         viewModel.consumeActionMessage()
-    }
-    val scrollToTop: () -> Unit = {
-        scope.launch { listState.scrollToTop() }
     }
 
     Scaffold(
@@ -124,54 +141,114 @@ fun HomeScreen(
                 onSearch = onSearch,
                 onToggleTheme = onToggleTheme,
                 onMessages = onMessages,
-                onDoubleTap = scrollToTop,
+                // 双击回顶部作用于当前 tab 的列表
+                onDoubleTap = {
+                    scope.launch { listStates[pagerState.currentPage].scrollToTop() }
+                },
                 hasUnreadNotices = hasUnread,
             )
         },
     ) { padding ->
-        when (val current = state) {
-            is UiState.Loading -> LoadingBox(Modifier.padding(padding))
-            is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.padding(padding))
-            is UiState.Success -> {
-                // 滑到接近末尾时自动追加下一页
-                val shouldLoadMore by remember {
-                    derivedStateOf {
-                        val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                        val total = listState.layoutInfo.totalItemsCount
-                        total > 0 && last >= total - 3
-                    }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            HomeTabRow(
+                selectedIndex = pagerState.currentPage,
+                onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
+            )
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+                // 两侧各少预组一页：默认会把左右邻居也建出来，等于进应用就多打两个请求
+                beyondViewportPageCount = 0,
+            ) { page ->
+                val view = HomeTabs.views[page]
+                // 进入 composition 才拉数据；load 内部对已加载过的 tab 直接返回
+                LaunchedEffect(view) { viewModel.load(view) }
+                val feed = feeds[view] ?: FeedState()
+                FeedPage(
+                    feed = feed,
+                    refreshing = view in refreshing,
+                    listState = listStates[page],
+                    rankThreads = if (view == HomeTabs.HOT) hot?.hotThreads.orEmpty() else emptyList(),
+                    onRefresh = { viewModel.refresh(view) },
+                    onRetry = { viewModel.retry(view) },
+                    onLoadMore = { viewModel.loadMore(view) },
+                    onThreadClick = onThreadClick,
+                    onUserClick = onUserClick,
+                    onImageClick = openImage,
+                )
+            }
+        }
+    }
+
+    preview?.let { (urls, index) ->
+        ImagePreview(urls = urls, initialIndex = index, onDismiss = { preview = null })
+    }
+}
+
+/** 单个 tab 的帖子流：缓存优先上屏、下拉刷新、滑到底部自动翻页。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FeedPage(
+    feed: FeedState,
+    refreshing: Boolean,
+    listState: LazyListState,
+    rankThreads: List<Thread>,
+    onRefresh: () -> Unit,
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+    onThreadClick: (tid: String) -> Unit,
+    onUserClick: (uid: String) -> Unit,
+    onImageClick: (List<String>, Int) -> Unit,
+) {
+    when (val current = feed.state) {
+        is UiState.Loading -> LoadingBox()
+        is UiState.Error -> ErrorBox(current.message, onRetry)
+        is UiState.Success -> {
+            // 滑到接近末尾时自动追加下一页
+            val shouldLoadMore by remember {
+                derivedStateOf {
+                    val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                    val total = listState.layoutInfo.totalItemsCount
+                    total > 0 && last >= total - 3
                 }
-                LaunchedEffect(shouldLoadMore, hasNext) {
-                    if (shouldLoadMore && hasNext) viewModel.loadMore()
-                }
-                PullToRefreshBox(
-                    isRefreshing = refreshing,
-                    onRefresh = { viewModel.refresh() },
-                    modifier = Modifier.fillMaxSize().padding(padding),
+            }
+            LaunchedEffect(shouldLoadMore, feed.hasNext) {
+                if (shouldLoadMore && feed.hasNext) onLoadMore()
+            }
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
                 ) {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
-                    ) {
-                        hot?.takeIf { it.hotThreads.isNotEmpty() }?.let { data ->
-                            item(key = "hot-rank") {
-                                RankCard("热帖排行", data.hotThreads, onThreadClick)
-                            }
+                    if (rankThreads.isNotEmpty()) {
+                        item(key = "hot-rank") {
+                            RankCard("热帖排行", rankThreads, onThreadClick)
                         }
-                        items(current.data, key = { it.tid }) { thread ->
-                            ThreadCard(
-                                thread = thread,
-                                onClick = { onThreadClick(thread.tid) },
-                                onImageClick = openImage,
-                                onUserClick = onUserClick,
-                            )
-                        }
-                        if (loadingMore) {
-                            item(key = "loading-more") {
-                                Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(Modifier.size(22.dp))
-                                }
+                    }
+                    items(current.data, key = { it.tid }) { thread ->
+                        ThreadCard(
+                            thread = thread,
+                            onClick = { onThreadClick(thread.tid) },
+                            onImageClick = onImageClick,
+                            onUserClick = onUserClick,
+                        )
+                    }
+                    if (feed.loadingMore) {
+                        item(key = "loading-more") {
+                            Box(
+                                Modifier.fillMaxWidth().padding(16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(Modifier.size(22.dp))
                             }
                         }
                     }
@@ -179,9 +256,48 @@ fun HomeScreen(
             }
         }
     }
+}
 
-    preview?.let { (urls, index) ->
-        ImagePreview(urls = urls, initialIndex = index, onDismiss = { preview = null })
+/** tab 行：5 等分，选中项加粗 + 主题色，下方一根短指示条。 */
+@Composable
+private fun HomeTabRow(selectedIndex: Int, onSelect: (Int) -> Unit) {
+    val colors = LocalMtfColors.current
+    val primary = MaterialTheme.colorScheme.primary
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.topBar)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HomeTabs.labels.forEachIndexed { index, label ->
+            val active = index == selectedIndex
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onSelect(index) }
+                    .padding(vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                    color = if (active) primary else colors.textSecondary,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(4.dp))
+                Box(
+                    Modifier
+                        .width(18.dp)
+                        .height(2.dp)
+                        .background(
+                            if (active) primary else Color.Transparent,
+                            RoundedCornerShape(1.dp),
+                        ),
+                )
+            }
+        }
     }
 }
 
@@ -309,4 +425,3 @@ private fun HomeTopBar(
         }
     }
 }
-
