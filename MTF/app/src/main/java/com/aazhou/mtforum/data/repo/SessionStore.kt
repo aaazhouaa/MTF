@@ -24,6 +24,18 @@ class SessionStore(private val context: Context) {
     val username: Flow<String> = context.sessionDataStore.data.map { it[nameKey] ?: "" }
     val avatar: Flow<String> = context.sessionDataStore.data.map { it[avatarKey] ?: "" }
 
+    fun checkInDate(uid: String): Flow<String> {
+        val key = stringPreferencesKey("check_in_date_$uid")
+        return context.sessionDataStore.data.map { it[key] ?: "" }
+    }
+
+    suspend fun saveCheckInDate(uid: String, date: String) {
+        val key = stringPreferencesKey("check_in_date_$uid")
+        context.sessionDataStore.edit {
+            it[key] = date
+        }
+    }
+
     suspend fun saveSession(cookieHeader: String, uid: String, username: String, avatar: String?) {
         context.sessionDataStore.edit {
             it[cookieKey] = cookieHeader

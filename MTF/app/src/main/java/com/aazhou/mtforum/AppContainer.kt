@@ -14,6 +14,7 @@ import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.LogSettingsStore
 import com.aazhou.mtforum.data.repo.NoticeChecker
 import com.aazhou.mtforum.data.repo.NoticeUnreadStore
+import com.aazhou.mtforum.data.repo.CheckInManager
 import com.aazhou.mtforum.data.repo.SessionStore
 import com.aazhou.mtforum.data.repo.SmileyStore
 import com.aazhou.mtforum.data.repo.ThemeStore
@@ -62,6 +63,8 @@ class AppContainer(application: Application) {
      */
     private val _currentUser = MutableStateFlow<UserProfile?>(null)
     val currentUser: StateFlow<UserProfile?> = _currentUser.asStateFlow()
+
+    val checkInManager = CheckInManager(repository, sessionStore, httpClient, currentUser, appScope)
 
     /** 本地内容缓存：一个 key 一个 JSON 文件，置于 cacheDir（临时性质，系统空间紧张可回收）。 */
     val contentCache = ContentCache(java.io.File(application.cacheDir, "mtf_content"))

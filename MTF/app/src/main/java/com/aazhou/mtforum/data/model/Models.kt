@@ -214,6 +214,19 @@ data class ReplyResult(
     val message: String? = null,
 )
 
+/** 签到页面状态。 */
+data class CheckInStatus(
+    val hasSigned: Boolean,
+    val formhash: String?,
+)
+
+/** 签到执行结果。 */
+data class CheckInResult(
+    val success: Boolean,
+    val message: String,
+)
+
+
 /** 登录结果。 */
 data class LoginResult(
     val success: Boolean,

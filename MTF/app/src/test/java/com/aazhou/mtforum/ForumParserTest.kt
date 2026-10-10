@@ -1038,4 +1038,51 @@ class ForumParserTest {
         val body = "<html><script>var x = 1</script></html>"
         assertEquals(emptyList<String>(), ForumParser.parseAtUsers(body))
     }
+
+    @Test
+    fun `parseCheckInStatus recognizes unsigned state and formhash`() {
+        val html = """
+            <form action="..."><input type="hidden" name="formhash" value="abcd1234" /></form>
+            <div class="comiis_btnbox b_b cl">
+            <a href="javascript:;" class="comiis_btn bg_c f_f" id="signresult" onclick="ajaxsign();">签到</a>
+            </div>
+        """.trimIndent()
+        val status = ForumParser.parseCheckInStatus(html)
+        assertEquals("abcd1234", status.formhash)
+        assertEquals(false, status.hasSigned)
+    }
+
+    @Test
+    fun `parseCheckInStatus recognizes signed state`() {
+        val html = """
+            <script>var formhash = 'abcd1234';</script>
+            <div class="comiis_btnbox b_b cl">
+            <a href="javascript:;" class="comiis_btn bg_b f_c">已签到</a>
+            </div>
+        """.trimIndent()
+        val status = ForumParser.parseCheckInStatus(html)
+        assertEquals("abcd1234", status.formhash)
+        assertEquals(true, status.hasSigned)
+    }
+
+    @Test
+    fun `parseCheckInResponse handles success cdata`() {
+        val resp = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<root><![CDATA[已签到]]></root>"
+        val result = ForumParser.parseCheckInResponse(resp)
+        assertEquals(true, result.success)
+        assertEquals("签到成功", result.message)
+
+        val respToday = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<root><![CDATA[今日已签]]></root>"
+        val resultToday = ForumParser.parseCheckInResponse(respToday)
+        assertEquals(true, resultToday.success)
+        assertEquals("今日已签到", resultToday.message)
+    }
+
+    @Test
+    fun `parseCheckInResponse handles error message`() {
+        val resp = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<root><![CDATA[您当前的访问请求当中含有非法字符]]></root>"
+        val result = ForumParser.parseCheckInResponse(resp)
+        assertEquals(false, result.success)
+        assertEquals("您当前的访问请求当中含有非法字符", result.message)
+    }
 }

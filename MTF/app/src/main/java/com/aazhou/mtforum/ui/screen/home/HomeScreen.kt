@@ -115,6 +115,10 @@ fun HomeScreen(
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     // 当前登录用户：已登录时顶栏左侧用头像替代「MTF」，点击进个人主页
     val me by container.currentUser.collectAsStateWithLifecycle()
+    // 签到状态与签到管理器
+    val checkInManager = container.checkInManager
+    val hasSigned by checkInManager.hasSigned.collectAsStateWithLifecycle()
+    val isCheckingIn by checkInManager.isCheckingIn.collectAsStateWithLifecycle()
     // 有没有未读新消息：消息图标上那颗主题色小圆点
     val hasUnread by container.unreadNotices.collectAsStateWithLifecycle()
 
@@ -146,6 +150,9 @@ fun HomeScreen(
                 onProfileClick = { me?.uid?.let(onProfileClick) },
                 onLogin = onLogin,
                 onSearch = onSearch,
+                hasSigned = hasSigned,
+                isCheckingIn = isCheckingIn,
+                onCheckIn = { checkInManager.performCheckIn() },
                 onToggleTheme = onToggleTheme,
                 onSettings = onSettings,
                 onMessages = onMessages,
@@ -331,6 +338,9 @@ private fun HomeTopBar(
     onProfileClick: () -> Unit,
     onLogin: () -> Unit,
     onSearch: () -> Unit,
+    hasSigned: Boolean,
+    isCheckingIn: Boolean,
+    onCheckIn: () -> Unit,
     onToggleTheme: () -> Unit,
     onSettings: () -> Unit,
     onMessages: () -> Unit,
@@ -405,6 +415,27 @@ private fun HomeTopBar(
         // 与搜索胶囊等分的空白：胶囊减半后，主题/消息图标仍留在右边缘
         Spacer(Modifier.weight(1f))
         Spacer(Modifier.width(8.dp))
+        val checkInTint = if (hasSigned) colors.textHint else MaterialTheme.colorScheme.primary
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .clickable(
+                    enabled = !isCheckingIn,
+                    onClick = onCheckIn,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(com.aazhou.mtforum.R.drawable.ic_checkin),
+                    contentDescription = if (hasSigned) "已签到" else "签到",
+                    tint = checkInTint,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        Spacer(Modifier.width(4.dp))
         val isDarkTheme = LocalIsDarkTheme.current
         val darkProgress by animateFloatAsState(
             targetValue = if (isDarkTheme) 1f else 0f,

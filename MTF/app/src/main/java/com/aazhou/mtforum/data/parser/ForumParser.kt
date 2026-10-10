@@ -13,6 +13,8 @@ import com.aazhou.mtforum.data.model.NoticePage
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.model.PostQuote
 import com.aazhou.mtforum.data.model.ReplyResult
+import com.aazhou.mtforum.data.model.CheckInStatus
+import com.aazhou.mtforum.data.model.CheckInResult
 import com.aazhou.mtforum.data.model.SearchResult
 import com.aazhou.mtforum.data.model.Thread
 import com.aazhou.mtforum.data.model.ThreadPage
@@ -1061,6 +1063,38 @@ object ForumParser {
     private fun linkTid(href: String): String? =
         Regex("thread-(\\d+)-").find(href)?.groupValues?.get(1)
             ?: Regex("[?&]tid=(\\d+)").find(href)?.groupValues?.get(1)
+
+    /** 解析移动端签到页面状态（是否已签到、formhash）。 */
+    fun parseCheckInStatus(html: String): CheckInStatus {
+        val formhash = parseFormhash(html)
+        val canSign = html.contains("id=\"signresult\"")
+        val hasSigned = html.contains(">已签到<") ||
+            html.contains("class=\"comiis_btn bg_b f_c\">已签到") ||
+            (!canSign && html.contains("已签到"))
+        return CheckInStatus(hasSigned = hasSigned, formhash = formhash)
+    }
+
+    /**
+     * 解析签到接口返回内容。
+     *
+     * 接口返回 XML 且结果包在 CDATA 中，成功通常为「已签到」或「今日已签」。
+     */
+    fun parseCheckInResponse(response: String): CheckInResult {
+        val cdata = RE_CDATA.find(response)?.groupValues?.get(1)?.trim() ?: response.trim()
+        if (cdata.contains("已签到") || cdata.contains("今日已签")) {
+            return CheckInResult(success = true, message = if (cdata.contains("今日已签")) "今日已签到" else "签到成功")
+        }
+        val cleanMsg = cdata
+            .replace(Regex("(?s)<script.*?</script>"), "")
+            .replace(Regex("<[^>]+>"), " ")
+            .replace("&nbsp;", " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return CheckInResult(
+            success = false,
+            message = cleanMsg.ifBlank { "签到失败" },
+        )
+    }
 
     private fun hasNextPage(document: Document): Boolean =
         document.selectFirst("a.nxt, a[href*=page=] i.icon-next") != null

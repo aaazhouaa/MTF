@@ -2,6 +2,8 @@ package com.aazhou.mtforum.data.repo
 
 import com.aazhou.mtforum.data.model.ForumGroup
 import com.aazhou.mtforum.data.model.AtUser
+import com.aazhou.mtforum.data.model.CheckInResult
+import com.aazhou.mtforum.data.model.CheckInStatus
 import com.aazhou.mtforum.data.model.ForumPage
 import com.aazhou.mtforum.data.model.HomeData
 import com.aazhou.mtforum.data.model.LikeResult
@@ -590,6 +592,20 @@ class ForumRepository(
             referer = http.url("member.php?mod=logging&action=login&mobile=2"),
         )
         ForumParser.parseLoginResult(result)
+    }
+
+    /** 获取移动端签到页面状态（是否已签、formhash）。严格单次只读请求。 */
+    suspend fun checkInStatus(): CheckInStatus = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("k_misign-sign.html"))
+        ForumParser.parseCheckInStatus(html)
+    }
+
+    /** 提交签到请求。严格单次串行请求，带 formhash。 */
+    suspend fun submitCheckIn(formhash: String): CheckInResult = withContext(Dispatchers.IO) {
+        val body = http.get(
+            url = http.url("plugin.php?id=k_misign:sign&operation=qiandao&format=text&formhash=$formhash"),
+        )
+        ForumParser.parseCheckInResponse(body)
     }
 }
 
