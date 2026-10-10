@@ -70,6 +70,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
@@ -212,7 +214,7 @@ fun ThreadDetailScreen(
     // 当前的回复对象已经变成本帖，照当时取 key 会清错
     var sendingDraftKey by remember { mutableStateOf<String?>(null) }
     // 键盘是否真的在屏幕上 = 输入框聚焦 且 ime 有高度。只看聚焦不够：用户拿系统返回键
-    // 收键盘时输入法自己吞掉返回事件，输入框仍然持焦，遮罩会以为键盘还在，第一下点了没反应
+    // 收键盘时输入法自己吞掉返回事件，输入框仍然持焦，只剩 ime 这一个信号可用
     var composerFocused by remember { mutableStateOf(false) }
     // ime 高度由 AndroidWindowInsets 内的 MutableState 支撑，组合期读它就会在键盘起落时
     // 重组；取到的是平台原始值，不受面板自己 windowInsetsPadding 消费的影响
@@ -220,6 +222,13 @@ fun ThreadDetailScreen(
     val composerKeyboardVisible = composerFocused && imeVisible
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    // 收起输入面板：焦点、键盘、面板三件套一起收。光把 visible 置 false 不够——面板要播完
+    // 退场动画才离开组合，键盘会悬在屏幕上陪着它滑下去
+    val dismissComposer: () -> Unit = {
+        focusManager.clearFocus()
+        keyboardController?.hide()
+        composerVisible = false
+    }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
@@ -252,7 +261,7 @@ fun ThreadDetailScreen(
             is ThreadDetailViewModel.ReplyState.Success -> {
                 sendingDraftKey?.let { drafts.remove(it) }
                 sendingDraftKey = null
-                composerVisible = false
+                dismissComposer()
                 AppToast.show("回复成功")
                 viewModel.consumeReplyState()
                 // 只重拉第 1 页并合并，保留已加载的后续页，不整页回退
@@ -314,7 +323,7 @@ fun ThreadDetailScreen(
             focusManager.clearFocus()
             keyboardController?.hide()
         } else {
-            composerVisible = false
+            dismissComposer()
         }
     }
     val following = (followState as? ThreadDetailViewModel.FollowState.Done)?.following ?: false
@@ -710,20 +719,30 @@ fun ThreadDetailScreen(
                 Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.2f))
-                    // 遮罩只响应在回复框外部（空白区域）的点按，绝不误吞回复框内部按钮的操作
-                    .pointerInput(composerKeyboardVisible) {
-                        detectTapGestures {
-                            if (composerKeyboardVisible) {
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
-                            } else {
-                                composerVisible = false
-                            }
-                        }
+                    // 遮罩只响应在回复框外部（空白区域）的点按，绝不误吞回复框内部按钮的操作。
+                    // 键盘在不在都一律整体收起：两段式（先收键盘、再点一次才收面板）会在用户
+                    // 拿返回键或输入法自带的收起键收掉键盘后吃掉第一下——那时输入框仍持焦，
+                    // ime 要等收起动画走完才归零，遮罩据此以为键盘还在，执行的 clearFocus/hide
+                    // 全是空操作，得再点一下才管用
+                    .pointerInput(Unit) {
+                        detectTapGestures { dismissComposer() }
                     },
             )
         }
-        if (composerVisible) {
+        // 输入面板：显隐同样走 AnimatedVisibility，收起时往下滑出屏幕，不是当帧从组合里消失。
+        // align 必须挂在 AnimatedVisibility 自己身上：它是 BoxScope 的 ParentDataModifier，
+        // 只有直接子节点才会被 Box 的测量策略读取；写进内容 lambda 里会被 AnimatedVisibility
+        // 内部的测量策略忽略，面板静默掉到屏幕左上角，底部槽空出一大片
+        AnimatedVisibility(
+            visible = composerVisible,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = slideInVertically(
+                animationSpec = tween(durationMillis = ComposerSlideMillis, easing = FastOutSlowInEasing),
+            ) { it } + fadeIn(animationSpec = tween(durationMillis = ComposerSlideMillis)),
+            exit = slideOutVertically(
+                animationSpec = tween(durationMillis = ComposerSlideMillis, easing = FastOutSlowInEasing),
+            ) { it } + fadeOut(animationSpec = tween(durationMillis = ComposerSlideMillis)),
+        ) {
             ReplyComposer(
                 value = drafts[replyTarget?.pid] ?: TextFieldValue(""),
                 onValueChange = { drafts[replyTarget?.pid] = it },
@@ -748,8 +767,7 @@ fun ThreadDetailScreen(
                         viewModel.reply(draft.text)
                     }
                 },
-                onDismiss = { composerVisible = false },
-                modifier = Modifier.align(Alignment.BottomCenter),
+                onDismiss = dismissComposer,
             )
         }
     }
@@ -2080,3 +2098,9 @@ private fun Modifier.flashHighlight(active: Boolean): Modifier {
 
 /** 输入面板遮罩淡入淡出的时长：再短就显得硬闪，再长会拖沓得挡住页面操作。 */
 private val ScrimFadeMillis = 350
+
+/**
+ * 输入面板上滑进场、下滑退场的时长。收起走下滑（不是当帧消失）时不能拖太长，
+ * 拖久了像页面卡住；比遮罩淡出短一截，视觉上先走面板、再散遮罩。
+ */
+private val ComposerSlideMillis = 250
