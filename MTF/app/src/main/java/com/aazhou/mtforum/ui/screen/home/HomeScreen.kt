@@ -73,6 +73,7 @@ import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.launch
@@ -284,7 +285,7 @@ private fun FeedPage(
 @Composable
 private fun HomeTabRow(selectedIndex: Int, scrollFraction: Float, onSelect: (Int) -> Unit) {
     val colors = LocalMtfColors.current
-    val primary = MaterialTheme.colorScheme.primary
+    val accent = accentTextColor()
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
@@ -310,7 +311,7 @@ private fun HomeTabRow(selectedIndex: Int, scrollFraction: Float, onSelect: (Int
                         label,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                        color = if (active) primary else colors.textSecondary,
+                        color = if (active) accent else colors.textSecondary,
                         maxLines = 1,
                     )
                 }
@@ -326,7 +327,7 @@ private fun HomeTabRow(selectedIndex: Int, scrollFraction: Float, onSelect: (Int
                 .offset { IntOffset(indicatorOffset.roundToPx(), 0) }
                 .width(indicatorWidth)
                 .height(2.dp)
-                .background(primary, RoundedCornerShape(1.dp)),
+                .background(accent, RoundedCornerShape(1.dp)),
         )
     }
 }
@@ -413,7 +414,7 @@ private fun HomeTopBar(
             )
         }
         Spacer(Modifier.width(8.dp))
-        val checkInTint = if (hasSigned) colors.textHint else MaterialTheme.colorScheme.primary
+        val checkInTint = if (hasSigned) colors.textHint else accentTextColor()
         Box(
             modifier = Modifier
                 .size(36.dp)

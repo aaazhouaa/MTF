@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.ui.screen.profile
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.aazhou.mtforum.R
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 
@@ -40,6 +42,8 @@ fun LogoutConfirmDialog(
     onConfirm: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val primary = MaterialTheme.colorScheme.primary
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -47,6 +51,13 @@ fun LogoutConfirmDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
+                .then(
+                    if (isDark) {
+                        Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(20.dp))
+                    } else {
+                        Modifier
+                    },
+                )
                 .background(colors.surface)
                 .padding(horizontal = 24.dp, vertical = 22.dp),
         ) {
@@ -112,25 +123,33 @@ fun LogoutConfirmDialog(
                         text = "取消",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         fontWeight = FontWeight.Medium,
-                        color = colors.textPrimary,
+                        color = bodyTextColor(),
                     )
                 }
 
-                // 退出按钮（保持主题色）
+                // 退出按钮（保持主题色并自适应深色微光）
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .weight(1f)
                         .height(42.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.primary)
+                        .then(
+                            if (isDark) {
+                                Modifier
+                                    .border(1.dp, primary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                    .background(primary.copy(alpha = 0.22f))
+                            } else {
+                                Modifier.background(primary)
+                            },
+                        )
                         .clickable(onClick = onConfirm),
                 ) {
                     Text(
                         text = "确认退出",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = if (isDark) primary else MaterialTheme.colorScheme.onPrimary,
                     )
                 }
             }

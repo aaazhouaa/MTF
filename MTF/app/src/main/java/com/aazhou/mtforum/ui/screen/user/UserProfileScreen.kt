@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.ui.screen.user
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -47,6 +48,7 @@ import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.accentTextColor
@@ -187,11 +189,19 @@ private fun ProfileCard(
     content: @Composable () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 6.dp, vertical = 3.dp)
             .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (isDark) {
+                    Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(12.dp))
+                } else {
+                    Modifier
+                },
+            )
             .background(colors.surface)
             .padding(contentPadding),
     ) {

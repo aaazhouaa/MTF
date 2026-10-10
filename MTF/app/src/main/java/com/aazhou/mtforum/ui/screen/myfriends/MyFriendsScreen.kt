@@ -62,6 +62,7 @@ import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -174,15 +175,16 @@ fun MyFriendsScreen(
                     },
                     expandedHeight = MtfTopBarHeight,
                 )
+                val accent = accentTextColor()
                 ScrollableTabRow(
                     selectedTabIndex = selectedTab,
                     containerColor = colors.topBar,
-                    contentColor = MaterialTheme.colorScheme.primary,
+                    contentColor = accent,
                     edgePadding = 16.dp,
                     indicator = { tabPositions ->
                         TabRowDefaults.SecondaryIndicator(
                             Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                            color = MaterialTheme.colorScheme.primary,
+                            color = accent,
                         )
                     },
                 ) {
@@ -198,7 +200,7 @@ fun MyFriendsScreen(
                                     title,
                                     fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
                                     fontSize = 15.sp,
-                                    color = if (selectedTab == index) MaterialTheme.colorScheme.primary else colors.textSecondary,
+                                    color = if (selectedTab == index) accent else colors.textSecondary,
                                 )
                             },
                         )

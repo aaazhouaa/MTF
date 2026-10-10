@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.ui.screen.downloads
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +49,7 @@ import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.common.scrollToTop
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.accentTextColor
@@ -163,11 +165,19 @@ private fun DownloadedRow(
     onDelete: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 6.dp, vertical = 2.5.dp)
             .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (isDark) {
+                    Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(12.dp))
+                } else {
+                    Modifier
+                },
+            )
             .background(colors.surface)
             .clickable(onClick = onOpen)
             .padding(start = 14.dp, end = 4.dp, top = 13.dp, bottom = 13.dp),

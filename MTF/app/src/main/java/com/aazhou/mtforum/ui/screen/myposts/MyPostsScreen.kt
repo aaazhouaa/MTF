@@ -52,6 +52,7 @@ import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -159,14 +160,15 @@ fun MyPostsScreen(
                     },
                     expandedHeight = MtfTopBarHeight,
                 )
+                val accent = accentTextColor()
                 TabRow(
                     selectedTabIndex = selectedTab,
                     containerColor = colors.topBar,
-                    contentColor = MaterialTheme.colorScheme.primary,
+                    contentColor = accent,
                     indicator = { tabPositions ->
                         TabRowDefaults.SecondaryIndicator(
                             Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                            color = MaterialTheme.colorScheme.primary,
+                            color = accent,
                         )
                     },
                 ) {
@@ -182,7 +184,7 @@ fun MyPostsScreen(
                                     title,
                                     fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
                                     fontSize = 15.sp,
-                                    color = if (selectedTab == index) MaterialTheme.colorScheme.primary else colors.textSecondary,
+                                    color = if (selectedTab == index) accent else colors.textSecondary,
                                 )
                             },
                         )

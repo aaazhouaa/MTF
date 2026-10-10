@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.ui.screen.login
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +50,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.ui.common.MtfContentDialog
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 
@@ -59,6 +61,8 @@ fun LoginDialog(
     onSuccess: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val primary = MaterialTheme.colorScheme.primary
     val focusManager = LocalFocusManager.current
     val viewModel: LoginViewModel = appViewModel { LoginViewModel(it.repository, it.sessionStore) }
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -213,25 +217,34 @@ fun LoginDialog(
                 Spacer(Modifier.height(20.dp))
 
                 // 登录主操作按钮
+                val btnBg = if (isLoading) {
+                    primary.copy(alpha = if (isDark) 0.15f else 0.6f)
+                } else if (isDark) {
+                    primary.copy(alpha = 0.22f)
+                } else {
+                    primary
+                }
+                val btnBorder = if (isDark) {
+                    Modifier.border(1.dp, primary.copy(alpha = if (isLoading) 0.3f else 0.5f), RoundedCornerShape(12.dp))
+                } else {
+                    Modifier
+                }
+                val btnContentColor = if (isDark) primary else MaterialTheme.colorScheme.onPrimary
+
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(46.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            if (isLoading) {
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            },
-                        )
+                        .then(btnBorder)
+                        .background(btnBg)
                         .clickable(enabled = !isLoading, onClick = doLogin),
                 ) {
                     if (isLoading) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(
-                                color = MaterialTheme.colorScheme.onPrimary,
+                                color = btnContentColor,
                                 strokeWidth = 2.dp,
                                 modifier = Modifier.size(18.dp),
                             )
@@ -240,7 +253,7 @@ fun LoginDialog(
                                 text = "正在登录…",
                                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimary,
+                                color = btnContentColor,
                             )
                         }
                     } else {
@@ -248,7 +261,7 @@ fun LoginDialog(
                             text = "登 录",
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = btnContentColor,
                         )
                     }
                 }

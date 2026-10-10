@@ -171,20 +171,29 @@ fun MtfConfirmDialog(
                     }
                 }
 
+                val primary = MaterialTheme.colorScheme.primary
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .weight(1f)
                         .height(42.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.primary)
+                        .then(
+                            if (isDark) {
+                                Modifier
+                                    .border(1.dp, primary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                    .background(primary.copy(alpha = 0.22f))
+                            } else {
+                                Modifier.background(primary)
+                            },
+                        )
                         .clickable(onClick = onConfirm),
                 ) {
                     Text(
                         text = confirmText,
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = if (isDark) primary else MaterialTheme.colorScheme.onPrimary,
                     )
                 }
             }

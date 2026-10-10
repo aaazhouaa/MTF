@@ -990,6 +990,8 @@ private fun ReportDialog(
     onSubmit: (reason: String, message: String) -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val primary = MaterialTheme.colorScheme.primary
     var reason by remember { mutableStateOf("其他") }
     var message by remember { mutableStateOf("") }
 
@@ -1063,14 +1065,22 @@ private fun ReportDialog(
                         .weight(1f)
                         .height(42.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.primary)
+                        .then(
+                            if (isDark) {
+                                Modifier
+                                    .border(1.dp, primary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                    .background(primary.copy(alpha = 0.22f))
+                            } else {
+                                Modifier.background(primary)
+                            },
+                        )
                         .clickable { onSubmit(reason, message) },
                 ) {
                     Text(
                         "提交举报",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = if (isDark) primary else MaterialTheme.colorScheme.onPrimary,
                     )
                 }
             }
@@ -1085,6 +1095,8 @@ private fun RewardDialog(
     onSubmit: (Int, String?) -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val primary = MaterialTheme.colorScheme.primary
     val amounts = listOf(1, 5, 10, 50, 100)
     var amount by remember { mutableStateOf(amounts.first()) }
     var message by remember { mutableStateOf("") }
@@ -1101,10 +1113,18 @@ private fun RewardDialog(
                     Text(
                         value.toString(),
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                        color = if (active) MaterialTheme.colorScheme.onPrimary else bodyTextColor(),
+                        color = if (active) (if (isDark) primary else MaterialTheme.colorScheme.onPrimary) else bodyTextColor(),
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .background(if (active) MaterialTheme.colorScheme.primary else colors.quoteBackground)
+                            .then(
+                                if (active && isDark) {
+                                    Modifier
+                                        .border(1.dp, primary.copy(alpha = 0.5f), RoundedCornerShape(50))
+                                        .background(primary.copy(alpha = 0.22f))
+                                } else {
+                                    Modifier.background(if (active) primary else colors.quoteBackground)
+                                },
+                            )
                             .clickable { amount = value }
                             .padding(horizontal = 14.dp, vertical = 7.dp),
                     )
@@ -1156,14 +1176,22 @@ private fun RewardDialog(
                         .weight(1f)
                         .height(42.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.primary)
+                        .then(
+                            if (isDark) {
+                                Modifier
+                                    .border(1.dp, primary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                    .background(primary.copy(alpha = 0.22f))
+                            } else {
+                                Modifier.background(primary)
+                            },
+                        )
                         .clickable { onSubmit(amount, message.ifBlank { null }) },
                 ) {
                     Text(
                         "确认打赏",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = if (isDark) primary else MaterialTheme.colorScheme.onPrimary,
                     )
                 }
             }
