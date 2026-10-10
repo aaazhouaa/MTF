@@ -98,6 +98,7 @@ object HomeTabs {
 fun HomeScreen(
     onSearch: () -> Unit,
     onToggleTheme: () -> Unit,
+    onSettings: () -> Unit,
     onMessages: () -> Unit,
     onForumClick: (fid: String, name: String) -> Unit,
     onThreadClick: (tid: String) -> Unit,
@@ -146,6 +147,7 @@ fun HomeScreen(
                 onLogin = onLogin,
                 onSearch = onSearch,
                 onToggleTheme = onToggleTheme,
+                onSettings = onSettings,
                 onMessages = onMessages,
                 // 双击回顶部作用于当前 tab 的列表
                 onDoubleTap = {
@@ -330,6 +332,7 @@ private fun HomeTopBar(
     onLogin: () -> Unit,
     onSearch: () -> Unit,
     onToggleTheme: () -> Unit,
+    onSettings: () -> Unit,
     onMessages: () -> Unit,
     onDoubleTap: () -> Unit,
     /** 有未读新消息：消息图标右上角亮一颗主题色小圆点。 */
@@ -446,6 +449,23 @@ private fun HomeTopBar(
                             scaleX = 0.6f + darkProgress * 0.4f
                             scaleY = 0.6f + darkProgress * 0.4f
                         },
+                )
+            }
+        }
+        Spacer(Modifier.width(4.dp))
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onSettings),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.size(22.dp)) {
+                Icon(
+                    painterResource(com.aazhou.mtforum.R.drawable.ic_settings),
+                    contentDescription = "设置",
+                    tint = colors.iconSecondary,
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }

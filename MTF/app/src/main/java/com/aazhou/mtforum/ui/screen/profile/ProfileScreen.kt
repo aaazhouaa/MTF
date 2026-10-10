@@ -53,7 +53,7 @@ import com.aazhou.mtforum.ui.theme.dimImageInDark
 import com.aazhou.mtforum.ui.theme.accentTextColor
 
 @Composable
-fun ProfileScreen(onLogin: () -> Unit, onSettings: () -> Unit, onDownloads: () -> Unit) {
+fun ProfileScreen(onLogin: () -> Unit, onDownloads: () -> Unit) {
     val context = LocalContext.current
     val colors = LocalMtfColors.current
     val viewModel: ProfileViewModel = appViewModel { ProfileViewModel(it.repository) }
@@ -94,7 +94,7 @@ fun ProfileScreen(onLogin: () -> Unit, onSettings: () -> Unit, onDownloads: () -
         if (loggedIn) {
             CreditsCard(profile)
         }
-        MenuCard(onSettings = onSettings)
+        MenuCard()
         // 已下载的帖子入口
         val downloadCount by context.container().downloadStore.items
             .collectAsStateWithLifecycle(initialValue = emptyList())
@@ -239,7 +239,7 @@ private fun CreditsCard(profile: UserProfile?) {
 
 /** 卡片 3：「功能」标题 + 菜单项。「设置」进设置页，其余本地暂无对应页面，点击给出提示。 */
 @Composable
-private fun MenuCard(onSettings: () -> Unit) {
+private fun MenuCard() {
     val colors = LocalMtfColors.current
     val todo: (String) -> Unit = {
         AppToast.show("$it 暂未开放")
@@ -254,11 +254,6 @@ private fun MenuCard(onSettings: () -> Unit) {
         )
         HorizontalDivider(color = colors.divider)
         val entries = listOf(
-            MenuEntry(
-                label = "设置",
-                icon = painterResource(com.aazhou.mtforum.R.drawable.ic_settings),
-                onClick = onSettings,
-            ),
             MenuEntry(
                 label = "我的帖子",
                 icon = painterResource(com.aazhou.mtforum.R.drawable.ic_posts),

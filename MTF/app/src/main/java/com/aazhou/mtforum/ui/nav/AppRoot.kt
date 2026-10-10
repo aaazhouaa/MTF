@@ -153,6 +153,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 HomeScreen(
                     onSearch = { navController.navigate(Routes.SEARCH) },
                     onToggleTheme = onToggleTheme,
+                    onSettings = { navController.navigate(Routes.SETTINGS) },
                     // 未登录时顶栏左侧是登录图标，点击进登录页
                     onLogin = { navController.navigate(Routes.LOGIN) },
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
@@ -178,7 +179,6 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
             composable(Routes.PROFILE) {
                 ProfileScreen(
                     onLogin = { navController.navigate(Routes.LOGIN) },
-                    onSettings = { navController.navigate(Routes.SETTINGS) },
                     onDownloads = { navController.navigate(Routes.DOWNLOADS) },
                 )
             }
