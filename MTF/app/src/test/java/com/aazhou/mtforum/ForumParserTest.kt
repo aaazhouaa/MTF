@@ -492,6 +492,48 @@ class ForumParserTest {
     }
 
     @Test
+    fun portalFeedParsedFromXmlCdata() {
+        // 「热门」tab 的列表来自 comiis_app_portal 插件：响应是 XML，帖子列表整段在 CDATA 里。
+        // 与 guide 列表的差别有三处：统计容器是 comiis_znalist_bottom、三个数是「291阅读」
+        // 这样的裸文本且顺序反转为 阅读/评论/赞、版块名不在 comiis_xznalist_bk 而挂在时间行。
+        val fragment = """
+            <div class="comiis_forumlist mb0 cl"><ul>
+            <li class="forumlist_li comiis_znalist bg_f b_t b_b comiis_list_readimgs">
+              <div class="forumlist_li_top cl">
+                <a href="https://bbs.binmt.cc/home.php?mod=space&uid=108469&do=profile" class="wblist_tximg"><img class="top_tximg" src="https://avatar.mt2.cn/avatar.php?uid=108469"></a>
+                <h2><a href="https://bbs.binmt.cc/home.php?mod=space&uid=108469&do=profile" class="top_user">白珩</a><span class="top_lev bg_a f_f">Lv.3</span></h2>
+                <div class="forumlist_li_time"><span class="f_d">昨天&nbsp;21:17</span><a href="https://bbs.binmt.cc/forum-42-1.html" class="f_d">&nbsp来自 编程开发</a></div>
+              </div>
+              <div class="mmlist_li_box cl">
+                <h2><a href="https://bbs.binmt.cc/thread-174324-1-1.html">水印工具 2.0</a></h2>
+                <div class="list_body cl"><a href="https://bbs.binmt.cc/thread-174324-1-1.html" class="f_b">核心功能特色 ...</a></div>
+              </div>
+              <div class="comiis_znalist_bottom b_t cl"><ul class="cl">
+                <li class="f_c"><i class="comiis_font">i</i>291阅读</li>
+                <li class="f_c kmc"><a href="https://bbs.binmt.cc/thread-174324-1-1.html" class="b_l b_r"><i class="comiis_font">i</i>53评论</a></li>
+                <li id="comiis_listzhan_174324"><a href="https://bbs.binmt.cc/forum.php?mod=misc&action=recommend&do=add&tid=174324" tid="174324" class="comiis_recommend_addkey f_c"><i class="comiis_font">i</i><span class="num-all_174324">3</span>赞</a></li>
+              </ul></div>
+            </li>
+            </ul></div>
+        """.trimIndent()
+        val threads = ForumParser.parsePortalFeed("<root><![CDATA[$fragment]]></root>")
+        val thread = threads.single()
+        assertEquals("174324", thread.tid)
+        assertEquals("白珩", thread.authorName)
+        assertEquals("Lv.3", thread.level)
+        assertEquals("编程开发", thread.forumName)
+        assertEquals("291", thread.viewCount)
+        assertEquals("53", thread.replyCount)
+        assertEquals("3", thread.likeCount)
+        assertEquals("核心功能特色 ...", thread.excerpt)
+    }
+
+    @Test
+    fun portalFeedWithoutCdataYieldsNothing() {
+        assertTrue(ForumParser.parsePortalFeed("<root></root>").isEmpty())
+    }
+
+    @Test
     fun cardImagesCollectedInOrderAndPlaceholdersDropped() {
         // 多图卡片：站点把每张图放在 comiis_pyqlist_imgs 的一个 li 里，真实地址在
         // comiis_loadimages（src 是懒加载占位 none.png），取图要保序。

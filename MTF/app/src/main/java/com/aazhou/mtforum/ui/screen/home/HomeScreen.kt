@@ -3,6 +3,7 @@ package com.aazhou.mtforum.ui.screen.home
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -40,11 +42,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -156,6 +158,7 @@ fun HomeScreen(
         ) {
             HomeTabRow(
                 selectedIndex = pagerState.currentPage,
+                scrollFraction = pagerState.currentPageOffsetFraction,
                 onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
             )
             HorizontalPager(
@@ -258,46 +261,60 @@ private fun FeedPage(
     }
 }
 
-/** tab 行：5 等分，选中项加粗 + 主题色，下方一根短指示条。 */
+/**
+ * tab 行：5 等分，选中项加粗 + 主题色，下方一根短指示条。
+ *
+ * 指示条位置由 [selectedIndex] 与 [scrollFraction] 连续算出：pager 的
+ * `currentPage + currentPageOffsetFraction` 在翻页翻转前后取值相同（翻转一侧的
+ * fraction 会变号补偿），所以拖动过程中指示条跟着页面走，不会等落定后才跳。
+ */
 @Composable
-private fun HomeTabRow(selectedIndex: Int, onSelect: (Int) -> Unit) {
+private fun HomeTabRow(selectedIndex: Int, scrollFraction: Float, onSelect: (Int) -> Unit) {
     val colors = LocalMtfColors.current
     val primary = MaterialTheme.colorScheme.primary
-    Row(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .background(colors.topBar)
             .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        HomeTabs.labels.forEachIndexed { index, label ->
-            val active = index == selectedIndex
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { onSelect(index) }
-                    .padding(vertical = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                    color = if (active) primary else colors.textSecondary,
-                    maxLines = 1,
-                )
-                Spacer(Modifier.height(4.dp))
-                Box(
-                    Modifier
-                        .width(18.dp)
-                        .height(2.dp)
-                        .background(
-                            if (active) primary else Color.Transparent,
-                            RoundedCornerShape(1.dp),
-                        ),
-                )
+        val tabWidth = maxWidth / HomeTabs.labels.size
+        val indicatorWidth = 18.dp
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HomeTabs.labels.forEachIndexed { index, label ->
+                val active = index == selectedIndex
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onSelect(index) }
+                        .padding(top = 8.dp, bottom = 14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                        color = if (active) primary else colors.textSecondary,
+                        maxLines = 1,
+                    )
+                }
             }
         }
+        // 指示条是覆盖层：位置只跟 pager 进度有关，不随某个 tab 的选中态跳变
+        val indicatorOffset = tabWidth * (selectedIndex + scrollFraction) +
+            (tabWidth - indicatorWidth) / 2
+        Box(
+            Modifier
+                .align(Alignment.BottomStart)
+                .padding(bottom = 8.dp)
+                .offset { IntOffset(indicatorOffset.roundToPx(), 0) }
+                .width(indicatorWidth)
+                .height(2.dp)
+                .background(primary, RoundedCornerShape(1.dp)),
+        )
     }
 }
 

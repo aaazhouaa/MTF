@@ -54,6 +54,9 @@ private val SMILEY_URL = "${HttpClient.BASE_URL}data/cache/common_smilies_var.js
 /** 表情表的保鲜期：超过这个时间才带 etag 回站确认一次，期内零网络请求。 */
 private const val SMILEY_REVALIDATE_INTERVAL_MS = 12 * 60 * 60 * 1000L
 
+/** guide 模块里由门户插件出列表的视图：站点把 view=hot 做成门户首页，帖子列表走 AJAX。 */
+private const val GUIDE_VIEW_PORTAL = "hot"
+
 /** 论坛数据入口：封装请求 + 解析，UI 层只与它交互。 */
 class ForumRepository(
     private val http: HttpClient,
@@ -124,10 +127,26 @@ class ForumRepository(
      * 返回的是同一页。故地址由客户端自己拼，不取页面上的翻页链接。
      */
     suspend fun guideFeed(view: String, page: Int): ForumPage = withContext(Dispatchers.IO) {
-        ForumParser.parseForumPage(
-            http.get(http.url("forum.php?mod=guide&view=$view&page=$page&mobile=2")),
-            page,
-        )
+        if (view == GUIDE_VIEW_PORTAL) {
+            // 门户流的列表是插件经 AJAX 单独出的：guide&view=hot 本身是门户首页，HTML 里没有列表。
+            // 插件固定 10 页，超出后原样重复最后一页，故这里只能给出「本页有没有内容」，
+            // 真正的到底判定由调用方按去重结果做。
+            val threads = ForumParser.parsePortalFeed(
+                http.get(http.url("plugin.php?id=comiis_app_portal&pid=1&page=$page&inajax=1")),
+            )
+            ForumPage(
+                forumName = null,
+                announcements = emptyList(),
+                threads = threads,
+                page = page,
+                hasNext = threads.isNotEmpty(),
+            )
+        } else {
+            ForumParser.parseForumPage(
+                http.get(http.url("forum.php?mod=guide&view=$view&page=$page&mobile=2")),
+                page,
+            )
+        }
     }
 
     suspend fun forumPage(fid: String, page: Int): ForumPage = withContext(Dispatchers.IO) {

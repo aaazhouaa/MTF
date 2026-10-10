@@ -167,6 +167,15 @@ object ForumParser {
         return groups
     }
 
+    /**
+     * 门户帖子流（comiis_app_portal 插件）：响应是 XML，帖子列表整段包在 CDATA 里。
+     * 卡片骨架与导读列表一致，统计行与版块名的模板差异由下面两个分支分别兼容。
+     */
+    fun parsePortalFeed(xml: String): List<Thread> {
+        val html = RE_CDATA.find(xml)?.groupValues?.get(1) ?: return emptyList()
+        return parseForumPage(html, 1).threads
+    }
+
     /** 版块页帖子列表（forum-{fid}-{page}.html）。 */
     fun parseForumPage(html: String, page: Int): ForumPage {
         val document = doc(html)
@@ -189,7 +198,8 @@ object ForumParser {
             val titleA = li.selectFirst("div.mmlist_li_box h2 a[href*=thread-]") ?: continue
             val tid = RE_TID.find(titleA.attr("href"))?.groupValues?.get(1) ?: continue
             val authorA = li.selectFirst("a.top_user")
-                threads.add(
+            val (replyCount, viewCount, likeCount) = readCardStats(li)
+            threads.add(
                 Thread(
                     tid = tid,
                     subject = titleA.text().stripInvisibleChars(),
@@ -198,14 +208,18 @@ object ForumParser {
                     avatarUrl = li.selectFirst("img.top_tximg")?.attr("src"),
                     level = li.selectFirst("span.top_lev")?.text()?.trim(),
                     timeText = li.selectFirst("div.forumlist_li_time span")?.text()?.trim(),
-                    replyCount = li.selectFirst("div.comiis_xznalist_bottom li a[href*=thread-] span.comiis_tm")?.text()?.trim(),
-                    viewCount = li.select("div.comiis_xznalist_bottom li span.comiis_tm").lastOrNull()?.text()?.trim(),
+                    replyCount = replyCount,
+                    viewCount = viewCount,
                     excerpt = li.selectFirst("div.list_body a")?.text()?.stripInvisibleChars(),
                     forumName = li.selectFirst("div.comiis_xznalist_bk a[href*=forum-]")?.let { a ->
                         a.ownText().trim().ifEmpty { a.text().trim() }
-                    }?.ifEmpty { null },
+                    }?.ifEmpty { null }
+                        // 门户片段没有 xznalist_bk：版块名挂在时间行的链接上，文案形如「来自 编程开发」
+                        // （前缀还有个 &nbsp;，Kotlin 的 trim 去不掉 U+00A0，故按分隔词切而不比前缀）
+                        ?: li.selectFirst("div.forumlist_li_time a[href*=forum-]")?.text()
+                            ?.substringAfter("来自")?.trim()?.takeIf { it.isNotEmpty() },
                     imageUrls = collectThreadImages(li),
-                    likeCount = li.select("div.comiis_xznalist_bottom li span.comiis_tm").firstOrNull()?.text()?.trim(),
+                    likeCount = likeCount,
                 )
             )
         }
@@ -217,6 +231,29 @@ object ForumParser {
             page = page,
             hasNext = hasNextPage(document),
         )
+    }
+
+    /**
+     * 卡片底部统计，依次为 评论 / 阅读 / 赞。
+     *
+     * guide 列表把三个数包在 `span.comiis_tm` 里，顺序是 赞/评论/阅读；门户片段是
+     * 「291阅读」这样的裸文本且顺序反过来，只能按标签文字取。
+     */
+    private fun readCardStats(li: Element): Triple<String?, String?, String?> {
+        val box = li.selectFirst("div[class*=znalist_bottom]") ?: return Triple(null, null, null)
+        val numbers = box.select("li span.comiis_tm")
+        if (numbers.isNotEmpty()) {
+            return Triple(
+                box.selectFirst("li a[href*=thread-] span.comiis_tm")?.text()?.trim(),
+                numbers.lastOrNull()?.text()?.trim(),
+                numbers.firstOrNull()?.text()?.trim(),
+            )
+        }
+        val items = box.select("li")
+        fun statText(label: String): String? =
+            items.firstOrNull { it.text().contains(label) }
+                ?.text()?.filter { it.isDigit() }?.takeIf { it.isNotEmpty() }
+        return Triple(statText("评论"), statText("阅读"), statText("赞"))
     }
 
     /**

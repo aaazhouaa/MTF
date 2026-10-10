@@ -127,11 +127,14 @@ class HomeViewModel(
                 .onSuccess { data ->
                     // 合并时现读，避免把刷新刚换上的新列表又拼回旧数据后面
                     val existing = (_feeds.value[view]?.state as? UiState.Success)?.data.orEmpty()
+                    // 门户流固定 10 页、超出后原样重复最后一页，只能靠「这页有没有新帖」判断到底
+                    val known = existing.mapTo(HashSet()) { it.tid }
+                    val fresh = data.threads.filter { known.add(it.tid) }
                     update(view) {
                         it.copy(
-                            state = UiState.Success(existing + data.threads),
+                            state = UiState.Success(existing + fresh),
                             page = next,
-                            hasNext = data.hasNext,
+                            hasNext = data.hasNext && fresh.isNotEmpty(),
                         )
                     }
                     saveFeedToCache(view)
