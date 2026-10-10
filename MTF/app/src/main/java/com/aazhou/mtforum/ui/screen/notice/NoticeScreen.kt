@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -43,6 +44,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,8 +73,10 @@ import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.common.scrollToTop
+import com.aazhou.mtforum.ui.screen.login.LoginDialog
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
@@ -99,6 +104,9 @@ fun NoticeScreen(
 
     // 申请通知权限
     val context = LocalContext.current
+    val container = context.container()
+    val isLoggedIn = container.httpClient.isLoggedIn()
+    var showLoginDialog by remember { mutableStateOf(!isLoggedIn) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
@@ -155,11 +163,66 @@ fun NoticeScreen(
             ) {
                 when (val current = state) {
                     is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
-                    is UiState.Error -> ErrorBox(
-                        message = current.message,
-                        onRetry = { viewModel.loadCategory(currentCategory) },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    is UiState.Error -> {
+                        if (!container.httpClient.isLoggedIn() || current.message.contains("登录")) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                                    modifier = Modifier
+                                        .padding(horizontal = 32.dp)
+                                        .widthIn(max = 320.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .background(colors.quoteBackground)
+                                        .padding(horizontal = 24.dp, vertical = 28.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(52.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_lock_outline),
+                                            contentDescription = null,
+                                            tint = accentTextColor(),
+                                            modifier = Modifier.size(26.dp),
+                                        )
+                                    }
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            text = "需要登录账号",
+                                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = bodyTextColor(),
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            text = "请先登录后查看消息提醒与互动通知",
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
+                                            color = colors.textSecondary,
+                                        )
+                                    }
+                                    androidx.compose.material3.Button(
+                                        onClick = { showLoginDialog = true },
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth().height(40.dp),
+                                    ) {
+                                        Text("立即登录", fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            }
+                        } else {
+                            ErrorBox(
+                                message = current.message,
+                                onRetry = { viewModel.loadCategory(currentCategory) },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
                     is UiState.Success -> {
                         val content = current.data
                         if (content.isEmpty()) {
@@ -213,6 +276,17 @@ fun NoticeScreen(
                 }
             }
         }
+    }
+
+    if (showLoginDialog) {
+        LoginDialog(
+            onDismiss = { showLoginDialog = false },
+            onSuccess = {
+                showLoginDialog = false
+                container.refreshCurrentUserAsync()
+                viewModel.loadCategory(currentCategory)
+            },
+        )
     }
 }
 

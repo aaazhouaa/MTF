@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -1349,7 +1350,7 @@ internal fun ThreadDetailTopBar(
     }
 }
 
-/** 「更多」竖展菜单：打赏 / 举报 / 下载，纯文字项。 */
+/** 「更多」竖展菜单：打赏 / 举报 / 下载，精致圆角与图标排版。 */
 @Composable
 private fun MoreMenu(
     downloadBusy: Boolean,
@@ -1357,6 +1358,8 @@ private fun MoreMenu(
     onReward: () -> Unit,
     onDownload: () -> Unit,
 ) {
+    val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     var open by remember { mutableStateOf(false) }
     var wasBusy by remember { mutableStateOf(false) }
     LaunchedEffect(downloadBusy) {
@@ -1364,37 +1367,91 @@ private fun MoreMenu(
         wasBusy = downloadBusy
     }
     Box {
-        Icon(
-            painterResource(com.aazhou.mtforum.R.drawable.ic_more),
-            contentDescription = "更多",
-            tint = bodyTextColor(),
+        Box(
             modifier = Modifier
-                .size(28.dp)
+                .size(36.dp)
                 .clip(CircleShape)
-                .clickable(onClick = { open = true })
-                .padding(3.dp),
-        )
+                .clickable(onClick = { open = true }),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(com.aazhou.mtforum.R.drawable.ic_more),
+                contentDescription = "更多",
+                tint = bodyTextColor(),
+                modifier = Modifier.size(22.dp),
+            )
+        }
         DropdownMenu(
             expanded = open,
             onDismissRequest = { open = false },
+            shape = RoundedCornerShape(14.dp),
+            containerColor = colors.surface,
+            shadowElevation = 6.dp,
+            border = if (isDark) androidx.compose.foundation.BorderStroke(0.5.dp, colors.divider) else null,
+            modifier = Modifier.width(118.dp),
         ) {
-            val itemStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp)
+            val itemStyle = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            val itemPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
             DropdownMenuItem(
-                text = { Text("打赏", style = itemStyle) },
+                text = { Text("打赏", style = itemStyle, color = bodyTextColor()) },
+                contentPadding = itemPadding,
+                leadingIcon = {
+                    Icon(
+                        painter = painterResource(com.aazhou.mtforum.R.drawable.ic_reward_gift),
+                        contentDescription = null,
+                        tint = colors.gold,
+                        modifier = Modifier.size(18.dp),
+                    )
+                },
                 onClick = {
                     open = false
                     onReward()
                 },
             )
             DropdownMenuItem(
-                text = { Text("举报", style = itemStyle) },
+                text = { Text("举报", style = itemStyle, color = bodyTextColor()) },
+                contentPadding = itemPadding,
+                leadingIcon = {
+                    Icon(
+                        painter = painterResource(com.aazhou.mtforum.R.drawable.ic_report_shield),
+                        contentDescription = null,
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(18.dp),
+                    )
+                },
                 onClick = {
                     open = false
                     onReport()
                 },
             )
             DropdownMenuItem(
-                text = { Text(if (downloadBusy) "下载中…" else "下载", style = itemStyle) },
+                text = {
+                    Text(
+                        if (downloadBusy) "下载中…" else "下载",
+                        style = itemStyle,
+                        color = bodyTextColor(),
+                    )
+                },
+                contentPadding = itemPadding,
+                leadingIcon = {
+                    if (downloadBusy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(com.aazhou.mtforum.R.drawable.ic_download),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                },
                 enabled = !downloadBusy,
                 onClick = {
                     onDownload()

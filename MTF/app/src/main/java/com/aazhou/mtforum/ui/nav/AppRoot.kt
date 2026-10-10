@@ -163,13 +163,9 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     // 未登录时顶栏左侧是登录图标，点击进登录页
                     onLogin = { navController.navigate(Routes.LOGIN) },
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
-                    // 消息提醒需登录态，未登录时先走登录页（与「我的」一致）
+                    // 消息提醒：未登录时进入也会跳出登录弹窗
                     onMessages = {
-                        if (container.httpClient.isLoggedIn()) {
-                            navController.navigate(Routes.NOTICE)
-                        } else {
-                            navController.navigate(Routes.LOGIN)
-                        }
+                        navController.navigate(Routes.NOTICE)
                     },
                     onForumClick = { fid, name -> navController.navigate(Routes.forum(fid, name)) },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
@@ -207,6 +203,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
             }
             composable(Routes.SEARCH) {
                 SearchScreen(
+                    onBack = { navController.popBackStack() },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                 )
@@ -222,7 +219,10 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 )
             }
             composable(Routes.SETTINGS) {
-                SettingsScreen(onOpenLogs = { navController.navigate(Routes.LOGS) })
+                SettingsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenLogs = { navController.navigate(Routes.LOGS) },
+                )
             }
             composable(Routes.LOGS) {
                 LogsScreen(

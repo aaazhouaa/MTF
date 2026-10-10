@@ -1,8 +1,13 @@
 package com.aazhou.mtforum.ui.screen.threaddetail
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -21,6 +27,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,11 +44,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,17 +61,12 @@ import com.aazhou.mtforum.data.model.AtUser
 import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.LoadingBox
-import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 
-/**
- * 「@朋友」选择页：默认列出好友与关注，顶部搜索框可全局搜索全站用户。
- *
- * 站点好友列表、关注列表、用户搜索三处共用同一套用户列表结构，区别只在请求地址。
- */
 @Composable
 fun AtUserPickerPage(
     onDismiss: () -> Unit,
@@ -71,14 +76,13 @@ fun AtUserPickerPage(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     var keyword by remember { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
     val searchFocusRequester = remember { FocusRequester() }
 
     BackHandler { onDismiss() }
 
-    // 进页面就把键盘请到搜索框上：从回复框点 @ 过来时键盘本来是升起状态，
-    // 不主动要焦点的话它会留在回复框那层，用户敲的字全落进正文草稿里
     LaunchedEffect(Unit) {
         searchFocusRequester.requestFocus()
         keyboard?.show()
@@ -87,34 +91,104 @@ fun AtUserPickerPage(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background),
+            .background(colors.background)
+            .imePadding(),
     ) {
+        // 顶栏：包含状态栏下移背景 + 返回 + 搜索胶囊
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
+                .background(colors.topBar)
                 .statusBarsPadding()
-                .height(MtfTopBarHeight)
-                .padding(horizontal = 4.dp),
+                .padding(start = 6.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
         ) {
-            IconButton(onClick = onDismiss) {
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.size(38.dp),
+            ) {
                 Icon(
-                    painterResource(R.drawable.ic_back),
+                    painter = painterResource(R.drawable.ic_back),
                     contentDescription = "返回",
                     tint = bodyTextColor(),
+                    modifier = Modifier.size(22.dp),
                 )
             }
             Spacer(Modifier.width(4.dp))
-            AtUserSearchField(
-                value = keyword,
-                onValueChange = {
-                    keyword = it
-                    viewModel.search(it)
-                },
-                focusRequester = searchFocusRequester,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(colors.quoteBackground)
+                    .then(
+                        if (isDark) Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(20.dp))
+                        else Modifier
+                    )
+                    .padding(horizontal = 12.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_search_new),
+                    contentDescription = null,
+                    tint = colors.textHint,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                BasicTextField(
+                    value = keyword,
+                    onValueChange = {
+                        keyword = it
+                        viewModel.search(it)
+                    },
+                    textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = {
+                        keyboard?.hide()
+                    }),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(searchFocusRequester),
+                    decorationBox = { inner ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            if (keyword.isEmpty()) {
+                                Text(
+                                    "搜索用户名 / 论坛用户...",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp),
+                                    color = colors.textHint,
+                                )
+                            }
+                            inner()
+                        }
+                    },
+                )
+
+                AnimatedVisibility(
+                    visible = keyword.isNotEmpty(),
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .clickable {
+                                keyword = ""
+                                viewModel.search("")
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_close),
+                            contentDescription = "清空",
+                            tint = colors.textHint,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+            }
         }
 
         val trimmed = keyword.trim()
@@ -122,12 +196,12 @@ fun AtUserPickerPage(
         val hasLists = state.friends.isNotEmpty() || state.follows.isNotEmpty()
         when {
             showLists && state.loadingLists -> LoadingBox()
-            showLists && !hasLists -> EmptyBox("还没有好友和关注，可用上面的搜索框搜全站用户")
+            showLists && !hasLists -> EmptyBox("还没有好友和关注，可搜索全站用户")
             else -> LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .navigationBarsPadding(),
-                contentPadding = PaddingValues(bottom = 16.dp),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp),
             ) {
                 if (showLists) {
                     if (state.friends.isNotEmpty()) {
@@ -152,6 +226,9 @@ fun AtUserPickerPage(
                     } else if (state.results.isEmpty()) {
                         item(key = "no_result") { EmptyBox("没有找到相关用户") }
                     } else {
+                        item(key = "header_search") {
+                            AtUserSectionHeader("搜索结果", state.results.size)
+                        }
                         items(state.results, key = { "search_${it.uid}" }) { user ->
                             AtUserRow(user) { onPick(user.name) }
                         }
@@ -163,53 +240,45 @@ fun AtUserPickerPage(
 }
 
 @Composable
-private fun AtUserSearchField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    focusRequester: FocusRequester,
-    modifier: Modifier = Modifier,
-) {
-    val colors = LocalMtfColors.current
-    BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
-        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        singleLine = true,
-        modifier = modifier
-            .fillMaxWidth()
-            .focusRequester(focusRequester)
-            .clip(RoundedCornerShape(10.dp))
-            .background(colors.quoteBackground)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        decorationBox = { inner ->
-            Box(contentAlignment = Alignment.CenterStart) {
-                if (value.isEmpty()) {
-                    Text(
-                        "搜索用户",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                        color = colors.textHint,
-                    )
-                }
-                inner()
-            }
-        },
-    )
-}
-
-@Composable
 private fun AtUserSectionHeader(title: String, count: Int) {
-    Text(
-        "$title $count",
-        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-        color = LocalMtfColors.current.textHint,
-        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp),
-    )
+    val colors = LocalMtfColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 6.dp),
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+            ),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.width(6.dp))
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .background(colors.quoteBackground)
+                .padding(horizontal = 7.dp, vertical = 2.dp),
+        ) {
+            Text(
+                count.toString(),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                color = colors.textSecondary,
+            )
+        }
+    }
 }
 
 @Composable
 private fun AtUserRow(user: AtUser, onClick: () -> Unit) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val primary = MaterialTheme.colorScheme.primary
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -221,9 +290,13 @@ private fun AtUserRow(user: AtUser, onClick: () -> Unit) {
             model = smallImageRequest(user.avatarUrl),
             contentDescription = null,
             modifier = Modifier
-                .size(40.dp)
+                .size(42.dp)
                 .clip(CircleShape)
                 .background(colors.quoteBackground)
+                .then(
+                    if (isDark) Modifier.border(0.5.dp, colors.divider, CircleShape)
+                    else Modifier
+                )
                 .dimImageInDark(),
         )
         Spacer(Modifier.width(12.dp))
@@ -232,27 +305,66 @@ private fun AtUserRow(user: AtUser, onClick: () -> Unit) {
                 user.name,
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
                 ),
                 color = bodyTextColor(),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             if (user.subtitle.isNotEmpty()) {
-                Text(
-                    user.subtitle,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
-                    color = colors.textHint,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Spacer(Modifier.height(3.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val parts = user.subtitle.split(" ")
+                    val groupName = parts.firstOrNull().orEmpty()
+                    val pointsPart = parts.drop(1).joinToString(" ")
+
+                    if (groupName.isNotBlank()) {
+                        val isSpecialGroup = groupName.contains("管理") || groupName.contains("版主")
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(
+                                    if (isSpecialGroup) colors.gold.copy(alpha = if (isDark) 0.22f else 0.12f)
+                                    else colors.quoteBackground,
+                                )
+                                .padding(horizontal = 5.dp, vertical = 1.5.dp),
+                        ) {
+                            Text(
+                                groupName,
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp),
+                                color = if (isSpecialGroup) colors.gold else colors.textSecondary,
+                            )
+                        }
+                    }
+                    if (pointsPart.isNotBlank()) {
+                        Text(
+                            pointsPart,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = colors.textHint,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
         }
-        Icon(
-            painterResource(R.drawable.ic_at),
-            contentDescription = null,
-            tint = colors.textHint,
-            modifier = Modifier.size(20.dp),
-        )
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(primary.copy(alpha = if (isDark) 0.18f else 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_at),
+                contentDescription = "@该用户",
+                tint = primary,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }

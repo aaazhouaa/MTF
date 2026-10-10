@@ -71,6 +71,7 @@ import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
+import com.aazhou.mtforum.ui.screen.login.LoginDialog
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
@@ -129,6 +130,7 @@ fun HomeScreen(
         if (urls.isNotEmpty()) preview = urls to index
     }
     val scope = rememberCoroutineScope()
+    var showLoginDialog by remember { mutableStateOf(false) }
 
     val pagerState = rememberPagerState(initialPage = 0) { HomeTabs.views.size }
     // 每页一个列表状态并提升到页面作用域：切 tab 不丢滚动位置，也不重建已翻页的数据
@@ -149,7 +151,7 @@ fun HomeScreen(
             HomeTopBar(
                 avatarUrl = me?.avatarUrl,
                 onProfileClick = { me?.uid?.let(onProfileClick) },
-                onLogin = onLogin,
+                onLogin = { showLoginDialog = true },
                 onSearch = onSearch,
                 hasSigned = hasSigned,
                 isCheckingIn = isCheckingIn,
@@ -203,6 +205,17 @@ fun HomeScreen(
 
     preview?.let { (urls, index) ->
         ImagePreview(urls = urls, initialIndex = index, onDismiss = { preview = null })
+    }
+
+    if (showLoginDialog) {
+        LoginDialog(
+            onDismiss = { showLoginDialog = false },
+            onSuccess = {
+                showLoginDialog = false
+                container.refreshCurrentUserAsync()
+                HomeTabs.views.forEach { viewModel.refresh(it) }
+            },
+        )
     }
 }
 

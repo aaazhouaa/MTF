@@ -1,27 +1,35 @@
 package com.aazhou.mtforum.ui.screen.settings
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import com.aazhou.mtforum.ui.common.MtfConfirmDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,32 +40,41 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.imageLoader
+import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.log.LogLevel
-import com.aazhou.mtforum.ui.common.MtfTopBarHeight
-import com.aazhou.mtforum.ui.common.scrollToTop
-import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.AppToast
+import com.aazhou.mtforum.ui.common.MtfConfirmDialog
+import com.aazhou.mtforum.ui.common.MtfTopBarHeight
+import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
+import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.theme.DefaultThemeIndex
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
-import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.ThemePresets
+import com.aazhou.mtforum.ui.theme.bodyTextColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, coil.annotation.ExperimentalCoilApi::class)
 @Composable
-fun SettingsScreen(onOpenLogs: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit = {},
+    onOpenLogs: () -> Unit,
+) {
     val context = LocalContext.current
     val container = context.container()
     val themeStore = container.themeStore
@@ -67,10 +84,10 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
     val dimImagesInDark by themeStore.dimImagesInDark
         .collectAsStateWithLifecycle(initialValue = true)
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     val scrollState = rememberScrollState()
-    // 清理确认框
+
     var clearCacheOpen by remember { mutableStateOf(false) }
-    // 缓存占用：JSON 缓存 + Coil 图片磁盘缓存 + 表情数据，IO 上算，清理后重新触发
     var cacheTick by remember { mutableStateOf(0) }
     val cacheBytes by produceState(initialValue = 0L, cacheTick) {
         value = withContext(Dispatchers.IO) {
@@ -80,7 +97,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
             json + images + smileys
         }
     }
-    // 日志等级与条数：等级改完立刻反映在副标题上，条数每次回到本页重新算
+
     val logLevel by container.logSettings.level
         .collectAsStateWithLifecycle(initialValue = LogLevel.INFO)
     var logTick by remember { mutableStateOf(0) }
@@ -92,7 +109,25 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("设置") },
+                title = {
+                    Text(
+                        "设置",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_back),
+                            contentDescription = "返回",
+                            tint = bodyTextColor(),
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = colors.topBar,
+                    titleContentColor = bodyTextColor(),
+                ),
                 modifier = Modifier.onDoubleTapToTop {
                     scope.launch { scrollState.scrollToTop() }
                 },
@@ -100,7 +135,6 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
             )
         },
         containerColor = colors.background,
-        // 见 UserProfileScreen：语义色取不到 contentColorFor 时会退回旧值
         contentColor = bodyTextColor(),
     ) { padding ->
         Column(
@@ -108,77 +142,137 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(scrollState)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text("主题色彩", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            ThemePresets.indices.chunked(3).forEach { rowIndices ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
+            // 分组 1：主题与显示
+            SettingsSection(title = "主题与显示") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
                 ) {
-                    rowIndices.forEach { index ->
-                        ThemeColorCell(
-                            name = ThemePresets[index].name,
-                            color = ThemePresets[index].primaryDay,
-                            selected = index == themeIndex,
-                            onClick = { scope.launch { themeStore.setThemeIndex(index) } },
-                            modifier = Modifier.weight(1f),
+                    Text(
+                        "主题色彩",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.5.sp,
+                        ),
+                        color = bodyTextColor(),
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    ThemePresets.indices.chunked(3).forEachIndexed { rowIndex, rowIndices ->
+                        if (rowIndex > 0) Spacer(Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            rowIndices.forEach { index ->
+                                ThemeColorCell(
+                                    name = ThemePresets[index].name,
+                                    color = ThemePresets[index].primaryDay,
+                                    selected = index == themeIndex,
+                                    onClick = { scope.launch { themeStore.setThemeIndex(index) } },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            repeat(3 - rowIndices.size) { Box(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = colors.divider.copy(alpha = 0.6f), thickness = 0.5.dp)
+
+                SettingsSwitchRow(
+                    title = "跟随系统深色模式",
+                    subtitle = "关闭后固定为浅色，可用首页顶栏按钮切深色",
+                    checked = darkOverride == null,
+                    onCheckedChange = { follow ->
+                        scope.launch { themeStore.setDarkOverride(if (follow) null else false) }
+                    },
+                )
+
+                HorizontalDivider(color = colors.divider.copy(alpha = 0.6f), thickness = 0.5.dp)
+
+                SettingsSwitchRow(
+                    title = "深色模式压暗图片",
+                    subtitle = "关闭后帖子配图与全屏查看按原始亮度显示",
+                    checked = dimImagesInDark,
+                    onCheckedChange = { dim ->
+                        scope.launch { themeStore.setDimImagesInDark(dim) }
+                    },
+                )
+            }
+
+            // 分组 2：系统与诊断
+            SettingsSection(title = "系统与诊断") {
+                SettingsActionRow(
+                    icon = painterResource(R.drawable.ic_log),
+                    title = "运行日志",
+                    subtitle = "当前等级 ${logLevel.label} · ${formatLogCount(logCount)}",
+                    onClick = onOpenLogs,
+                )
+
+                HorizontalDivider(color = colors.divider.copy(alpha = 0.6f), thickness = 0.5.dp)
+
+                SettingsActionRow(
+                    icon = painterResource(R.drawable.ic_delete),
+                    title = "清理缓存",
+                    subtitle = "已占用 ${formatCacheSize(cacheBytes)}",
+                    onClick = { clearCacheOpen = true },
+                )
+            }
+
+            // 分组 3：关于应用
+            SettingsSection(title = "关于") {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_home),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
                         )
                     }
-                    // 补足末行空位，保持三列对齐
-                    repeat(3 - rowIndices.size) { Box(Modifier.weight(1f)) }
-                }
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f)) {
-                    Text("跟随系统深色模式", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "MTF 论坛客户端",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.5.sp,
+                            ),
+                            color = bodyTextColor(),
+                        )
+                        Text(
+                            "简洁流畅的 Discuz! 移动端体验",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            color = colors.textSecondary,
+                        )
+                    }
                     Text(
-                        "关闭后固定为浅色，可用首页顶栏按钮切深色",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary,
+                        "v${com.aazhou.mtforum.BuildConfig.VERSION_NAME}",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                        ),
+                        color = colors.textHint,
                     )
                 }
-                Switch(
-                    checked = darkOverride == null,
-                    onCheckedChange = { follow -> scope.launch { themeStore.setDarkOverride(if (follow) null else false) } },
-                )
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f)) {
-                    Text("深色模式压暗图片", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "关闭后帖子配图与全屏查看按原始亮度显示",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.textSecondary,
-                    )
-                }
-                Switch(
-                    checked = dimImagesInDark,
-                    onCheckedChange = { dim -> scope.launch { themeStore.setDimImagesInDark(dim) } },
-                )
-            }
-
-            Text(
-                "MTF v${com.aazhou.mtforum.BuildConfig.VERSION_NAME}",
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.textSecondary,
-            )
-
-            SettingsRow(
-                title = "日志",
-                subtitle = "当前等级 ${logLevel.label} · ${formatLogCount(logCount)}",
-                onClick = onOpenLogs,
-            )
-
-            // 清理缓存：JSON 内容缓存、Coil 图片缓存与表情数据一起清，清完图片需重新下载
-            SettingsRow(
-                title = "清理缓存",
-                subtitle = "已占用 ${formatCacheSize(cacheBytes)}",
-                onClick = { clearCacheOpen = true },
-            )
+            Spacer(Modifier.height(16.dp))
         }
     }
 
@@ -208,37 +302,129 @@ fun SettingsScreen(onOpenLogs: () -> Unit) {
     }
 }
 
-/** 缓存占用的可读化展示：不足 1MB 按 KB，不足 1GB 按 MB。 */
-private fun formatCacheSize(bytes: Long): String = when {
-    bytes <= 0 -> "0"
-    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-    bytes < 1024L * 1024 * 1024 -> "${bytes / (1024 * 1024)} MB"
-    else -> String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024))
+@Composable
+private fun SettingsSection(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+            ),
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 6.dp, bottom = 6.dp),
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(colors.surface)
+                .then(
+                    if (isDark) Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(16.dp))
+                    else Modifier
+                ),
+        ) {
+            content()
+        }
+    }
 }
 
-/** 日志条数的展示：没有日志时说明原因，避免副标题出现「0 条」这种无信息量文案。 */
-private fun formatLogCount(count: Int): String = if (count <= 0) "暂无日志" else "$count 条"
-
-/** 设置页的统一条目行：主标题 + 副标题（当前值或说明），整行可点。 */
 @Composable
-private fun SettingsRow(title: String, subtitle: String, onClick: () -> Unit) {
+private fun SettingsSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
     val colors = LocalMtfColors.current
     Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(MaterialTheme.shapes.small)
-            .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.5.sp,
+                ),
+                color = bodyTextColor(),
+            )
             Text(
                 subtitle,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                 color = colors.textSecondary,
+                modifier = Modifier.padding(top = 2.dp),
             )
         }
+        Spacer(Modifier.width(8.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
+    }
+}
+
+@Composable
+private fun SettingsActionRow(
+    icon: Painter,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(colors.quoteBackground),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.5.sp,
+                ),
+                color = bodyTextColor(),
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                color = colors.textSecondary,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        Icon(
+            painter = painterResource(R.drawable.ic_arrow_right),
+            contentDescription = null,
+            tint = colors.textHint,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
@@ -251,33 +437,54 @@ private fun ThemeColorCell(
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalMtfColors.current
+    val scale by animateFloatAsState(if (selected) 1.05f else 1.0f, label = "color_scale")
+
     Column(
         modifier = modifier
-            .clip(MaterialTheme.shapes.small)
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             modifier = Modifier
-                .size(44.dp)
+                .size(46.dp)
+                .scale(scale)
+                .then(
+                    if (selected) Modifier.border(2.5.dp, color.copy(alpha = 0.35f), CircleShape)
+                    else Modifier
+                )
+                .padding(3.dp)
                 .clip(CircleShape)
                 .background(color),
             contentAlignment = Alignment.Center,
         ) {
             if (selected) {
                 Icon(
-                    painterResource(com.aazhou.mtforum.R.drawable.ic_check),
+                    painter = painterResource(R.drawable.ic_check),
                     contentDescription = null,
                     tint = Color.White,
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }
         Text(
             text = name,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 11.5.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            ),
             color = if (selected) color else colors.textSecondary,
             modifier = Modifier.padding(top = 6.dp),
         )
     }
 }
+
+private fun formatCacheSize(bytes: Long): String = when {
+    bytes <= 0 -> "0 KB"
+    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+    bytes < 1024L * 1024 * 1024 -> "${bytes / (1024 * 1024)} MB"
+    else -> String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024))
+}
+
+private fun formatLogCount(count: Int): String = if (count <= 0) "暂无日志" else "$count 条"
