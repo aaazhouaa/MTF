@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.ui.common
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.aazhou.mtforum.R
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 
@@ -46,6 +48,7 @@ fun MtfDialog(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
 
     Dialog(
         onDismissRequest = onDismissRequest,
@@ -61,6 +64,13 @@ fun MtfDialog(
                 modifier = modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(22.dp))
+                    .then(
+                        if (isDark) {
+                            Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(22.dp))
+                        } else {
+                            Modifier
+                        },
+                    )
                     .background(colors.surface)
                     .padding(horizontal = 22.dp, vertical = 20.dp),
                 content = content,
@@ -85,6 +95,7 @@ fun MtfConfirmDialog(
     content: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
 
     MtfDialog(onDismissRequest = onDismissRequest) {
         Column(
@@ -98,7 +109,7 @@ fun MtfConfirmDialog(
                     modifier = Modifier
                         .size(54.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.20f else 0.12f)),
                 ) {
                     Icon(
                         painter = icon,
@@ -155,7 +166,7 @@ fun MtfConfirmDialog(
                             text = cancelText,
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                             fontWeight = FontWeight.Medium,
-                            color = colors.textPrimary,
+                            color = bodyTextColor(),
                         )
                     }
                 }

@@ -52,6 +52,7 @@ import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.screen.login.LoginDialog
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
@@ -166,6 +167,7 @@ private fun InfoCard(
     onAvatarClick: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     val avatarSize = 68.dp
     val avatarProtrude = 34.dp
 
@@ -180,6 +182,13 @@ private fun InfoCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
+                .then(
+                    if (isDark) {
+                        Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(12.dp))
+                    } else {
+                        Modifier
+                    },
+                )
                 .background(colors.surface)
                 .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
@@ -429,6 +438,10 @@ private fun ActionEntranceButton(
     badgeCount: Int = 0,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val actualBg = if (isDark) backgroundColor.copy(alpha = 0.22f) else backgroundColor
+    val iconTint = if (isDark) backgroundColor else Color.White
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
@@ -442,12 +455,12 @@ private fun ActionEntranceButton(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .background(backgroundColor),
+                    .background(actualBg),
             ) {
                 Icon(
                     painter = icon,
                     contentDescription = title,
-                    tint = Color.White,
+                    tint = iconTint,
                     modifier = Modifier.size(24.dp),
                 )
             }
@@ -489,11 +502,19 @@ private fun ProfileCard(
     content: @Composable () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 6.dp, vertical = 3.dp)
             .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (isDark) {
+                    Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(12.dp))
+                } else {
+                    Modifier
+                },
+            )
             .background(colors.surface)
             .padding(contentPadding),
     ) {

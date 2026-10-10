@@ -279,7 +279,7 @@ fun LogsScreen(
                     Text(
                         level.label,
                         style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
-                        color = colors.textPrimary,
+                        color = bodyTextColor(),
                     )
                 }
             }

@@ -129,6 +129,8 @@ fun LoginDialog(
                     ),
                     shape = RoundedCornerShape(12.dp),
                     colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = bodyTextColor(),
+                        unfocusedTextColor = bodyTextColor(),
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
                         unfocusedBorderColor = colors.divider,
                         focusedContainerColor = colors.background,
@@ -180,6 +182,8 @@ fun LoginDialog(
                     ),
                     shape = RoundedCornerShape(12.dp),
                     colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = bodyTextColor(),
+                        unfocusedTextColor = bodyTextColor(),
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
                         unfocusedBorderColor = colors.divider,
                         focusedContainerColor = colors.background,

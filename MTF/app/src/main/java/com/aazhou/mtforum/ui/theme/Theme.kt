@@ -12,12 +12,20 @@ import androidx.compose.ui.graphics.Color
 /** 当前是否深色模式；用户可在设置里覆盖系统深浅，故不能只看 isSystemInDarkTheme。 */
 val LocalIsDarkTheme = staticCompositionLocalOf { false }
 
-/** 主色容器色：把主题色向底色方向压暗/提亮得到，避免为每套配色单独定义。 */
-private fun containerOf(primary: Color) = Color(
-    red = primary.red * 0.22f + 0.78f,
-    green = primary.green * 0.22f + 0.78f,
-    blue = primary.blue * 0.22f + 0.78f,
-)
+/** 主色容器色：把主题色向底色方向压暗/提亮得到，避免为每套配色单独定义。深色下压暗融合，浅色下提亮。 */
+private fun containerOf(primary: Color, darkTheme: Boolean = false) = if (darkTheme) {
+    Color(
+        red = primary.red * 0.22f + 0.12f,
+        green = primary.green * 0.22f + 0.12f,
+        blue = primary.blue * 0.22f + 0.12f,
+    )
+} else {
+    Color(
+        red = primary.red * 0.22f + 0.78f,
+        green = primary.green * 0.22f + 0.78f,
+        blue = primary.blue * 0.22f + 0.78f,
+    )
+}
 
 @Composable
 fun MtfTheme(
@@ -42,7 +50,7 @@ fun MtfTheme(
         darkColorScheme(
             primary = primary,
             onPrimary = Color.White,
-            primaryContainer = containerOf(primary),
+            primaryContainer = containerOf(primary, darkTheme = true),
             secondary = primary,
             background = colors.background,
             surface = colors.surface,
@@ -55,7 +63,7 @@ fun MtfTheme(
         lightColorScheme(
             primary = primary,
             onPrimary = Color.White,
-            primaryContainer = containerOf(primary),
+            primaryContainer = containerOf(primary, darkTheme = false),
             secondary = primary,
             background = colors.background,
             surface = colors.surface,

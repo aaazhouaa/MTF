@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.ui.screen.myfriends
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +60,7 @@ import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
@@ -257,12 +259,20 @@ private fun FriendUserCard(
     onClick: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 6.dp, vertical = 2.5.dp)
             .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (isDark) {
+                    Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(12.dp))
+                } else {
+                    Modifier
+                },
+            )
             .background(colors.surface)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),

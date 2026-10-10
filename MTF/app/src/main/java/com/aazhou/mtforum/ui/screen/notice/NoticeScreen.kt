@@ -72,6 +72,7 @@ import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.common.scrollToTop
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -224,10 +225,12 @@ private fun NoticeCategoryGrid(
     onSelect: (NoticeCategory) -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     Surface(
         color = colors.surface,
         shape = RoundedCornerShape(16.dp),
-        shadowElevation = 0.5.dp,
+        shadowElevation = if (isDark) 0.dp else 0.5.dp,
+        border = if (isDark) androidx.compose.foundation.BorderStroke(0.5.dp, colors.divider) else null,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -314,6 +317,10 @@ private fun CategoryItem(
     onClick: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val actualBg = if (isDark) iconBgColor.copy(alpha = 0.22f) else iconBgColor
+    val iconTint = if (isDark) iconBgColor else Color.White
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
@@ -327,7 +334,7 @@ private fun CategoryItem(
             modifier = Modifier
                 .size(42.dp)
                 .clip(CircleShape)
-                .background(iconBgColor)
+                .background(actualBg)
                 .then(
                     if (isSelected) {
                         Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
@@ -339,7 +346,7 @@ private fun CategoryItem(
             Icon(
                 painter = painterResource(iconRes),
                 contentDescription = category.title,
-                tint = Color.White,
+                tint = iconTint,
                 modifier = Modifier.size(22.dp),
             )
         }

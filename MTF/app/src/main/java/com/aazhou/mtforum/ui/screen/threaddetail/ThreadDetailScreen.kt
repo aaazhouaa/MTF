@@ -1054,7 +1054,7 @@ private fun ReportDialog(
                         "取消",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         fontWeight = FontWeight.Medium,
-                        color = colors.textPrimary,
+                        color = bodyTextColor(),
                     )
                 }
                 Box(
@@ -1147,7 +1147,7 @@ private fun RewardDialog(
                         "取消",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         fontWeight = FontWeight.Medium,
-                        color = colors.textPrimary,
+                        color = bodyTextColor(),
                     )
                 }
                 Box(
