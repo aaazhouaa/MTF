@@ -141,95 +141,121 @@ fun PostContent(
      * 首块不是文字（例如正文以图片开头）时，前缀只能单独占一行，退化成两行排版。
      */
     inlinePrefix: AnnotatedString? = null,
+    /**
+     * 正文是否可长按划选。
+     *
+     * 评论区楼层传 false：楼层自身挂了长按操作菜单（回复/举报），划选手势会抢在
+     * 菜单之前弹出系统的剪切/复制工具条，长按菜单反而点不出来。
+     */
+    selectable: Boolean = true,
+) {
+    if (selectable) {
+        SelectionContainer {
+            PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier, inlinePrefix)
+        }
+    } else {
+        PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier, inlinePrefix)
+    }
+}
+
+@Composable
+private fun PostContentBody(
+    html: String,
+    quote: PostQuote?,
+    onImageClick: ((urls: List<String>, index: Int) -> Unit)?,
+    onVideoClick: ((url: String) -> Unit)?,
+    onLinkClick: ((url: String) -> Unit)?,
+    pageImages: List<String>,
+    bodyStyle: TextStyle,
+    modifier: Modifier,
+    inlinePrefix: AnnotatedString?,
 ) {
     val blocks = remember(html) { parseContentBlocks(html) }
     val colors = LocalMtfColors.current
     val darkTheme = LocalIsDarkTheme.current
-    SelectionContainer {
-        Column(modifier) {
-            if (quote != null && quote.text.isNotBlank()) QuoteCard(quote)
-            // 首块不是文字（正文以图片开头）时，行内前缀无从拼接，只能单独占一行
-            if (inlinePrefix != null && blocks.firstOrNull() !is ContentBlock.Text) {
-                Text(text = inlinePrefix, style = bodyStyle, modifier = Modifier.padding(vertical = 2.dp))
-            }
-            for ((index, block) in blocks.withIndex()) {
-                when (block) {
-                    is ContentBlock.Quote -> {
-                        Text(
-                            text = AnnotatedString(block.text),
-                            style = bodyStyle.copy(fontSize = 13.sp),
-                            color = colors.quoteContent,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(colors.quoteBackground)
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                        )
-                    }
-                    is ContentBlock.Text -> {
-                        val text = block.text.trim('\n')
-                        if (text.isNotBlank()) {
-                            val linkColor = accentTextColor()
-                            val codeBg = colors.quoteBackground
-                            val style = remember(block, bodyStyle) { block.derivedStyle(bodyStyle) }
-                            // 回调经 state 间接引用：链接注解串按正文缓存，重组不会重建，
-                            // 而 onLinkClick 每次重组都是新实例，直接进 key 会让长文反复重建
-                            val linkClick by rememberUpdatedState(onLinkClick)
-                            val body = remember(
-                                text,
-                                block.smiles,
-                                block.spans,
-                                linkColor,
-                                codeBg,
-                                colors.background,
-                                darkTheme,
-                            ) {
-                                buildBodyText(
-                                    text = text,
-                                    smiles = block.smiles,
-                                    spans = block.spans,
-                                    baseFontSize = style.fontSize,
-                                    linkColor = linkColor,
-                                    codeBackground = codeBg,
-                                    background = colors.background,
-                                    darkTheme = darkTheme,
-                                    onLinkClick = linkClick,
-                                )
-                            }
-                            Text(
-                                text = if (index == 0 && inlinePrefix != null) inlinePrefix + body else body,
-                                inlineContent = remember(block.smiles) { smileyInlineContent(block.smiles) },
-                                style = style,
-                                modifier = Modifier.padding(vertical = 2.dp),
-                            )
-                        } else if (index == 0 && inlinePrefix != null) {
-                            // 首块是空文本块：前缀自己占一行，正文从下一块开始
-                            Text(text = inlinePrefix, style = bodyStyle)
-                        }
-                    }
-                    is ContentBlock.Image -> SingleImage(
-                        url = block.url,
-                        onImageClick = onImageClick?.let { click ->
-                            // 单图也放进全帖图片序列，全屏查看时可左右翻到其它图
-                            val urls = pageImages.ifEmpty { listOf(block.url) }
-                            val index = urls.indexOf(block.url).coerceAtLeast(0)
-                            return@let { click(urls, index) }
-                        },
-                        modifier = Modifier.padding(vertical = 4.dp),
+    Column(modifier) {
+        if (quote != null && quote.text.isNotBlank()) QuoteCard(quote)
+        // 首块不是文字（正文以图片开头）时，行内前缀无从拼接，只能单独占一行
+        if (inlinePrefix != null && blocks.firstOrNull() !is ContentBlock.Text) {
+            Text(text = inlinePrefix, style = bodyStyle, modifier = Modifier.padding(vertical = 2.dp))
+        }
+        for ((index, block) in blocks.withIndex()) {
+            when (block) {
+                is ContentBlock.Quote -> {
+                    Text(
+                        text = AnnotatedString(block.text),
+                        style = bodyStyle.copy(fontSize = 13.sp),
+                        color = colors.quoteContent,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(colors.quoteBackground)
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
                     )
-                    is ContentBlock.ImageGroup -> ImageGrid(
-                        urls = block.urls,
-                        onImageClick = onImageClick?.let { click -> { url -> click(block.urls, block.urls.indexOf(url)) } },
-                    )
-                    is ContentBlock.Video -> InlineVideo(
-                        url = block.url,
-                        poster = block.poster,
-                        onPlay = onVideoClick?.let { click -> { click(block.url) } },
-                    )
-                    is ContentBlock.Table -> PostTable(block, bodyStyle)
-                    is ContentBlock.CodeBlock -> PostCodeBlock(block, bodyStyle)
                 }
+                is ContentBlock.Text -> {
+                    val text = block.text.trim('\n')
+                    if (text.isNotBlank()) {
+                        val linkColor = accentTextColor()
+                        val codeBg = colors.quoteBackground
+                        val style = remember(block, bodyStyle) { block.derivedStyle(bodyStyle) }
+                        // 回调经 state 间接引用：链接注解串按正文缓存，重组不会重建，
+                        // 而 onLinkClick 每次重组都是新实例，直接进 key 会让长文反复重建
+                        val linkClick by rememberUpdatedState(onLinkClick)
+                        val body = remember(
+                            text,
+                            block.smiles,
+                            block.spans,
+                            linkColor,
+                            codeBg,
+                            colors.background,
+                            darkTheme,
+                        ) {
+                            buildBodyText(
+                                text = text,
+                                smiles = block.smiles,
+                                spans = block.spans,
+                                baseFontSize = style.fontSize,
+                                linkColor = linkColor,
+                                codeBackground = codeBg,
+                                background = colors.background,
+                                darkTheme = darkTheme,
+                                onLinkClick = linkClick,
+                            )
+                        }
+                        Text(
+                            text = if (index == 0 && inlinePrefix != null) inlinePrefix + body else body,
+                            inlineContent = remember(block.smiles) { smileyInlineContent(block.smiles) },
+                            style = style,
+                            modifier = Modifier.padding(vertical = 2.dp),
+                        )
+                    } else if (index == 0 && inlinePrefix != null) {
+                        // 首块是空文本块：前缀自己占一行，正文从下一块开始
+                        Text(text = inlinePrefix, style = bodyStyle)
+                    }
+                }
+                is ContentBlock.Image -> SingleImage(
+                    url = block.url,
+                    onImageClick = onImageClick?.let { click ->
+                        // 单图也放进全帖图片序列，全屏查看时可左右翻到其它图
+                        val urls = pageImages.ifEmpty { listOf(block.url) }
+                        val index = urls.indexOf(block.url).coerceAtLeast(0)
+                        return@let { click(urls, index) }
+                    },
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+                is ContentBlock.ImageGroup -> ImageGrid(
+                    urls = block.urls,
+                    onImageClick = onImageClick?.let { click -> { url -> click(block.urls, block.urls.indexOf(url)) } },
+                )
+                is ContentBlock.Video -> InlineVideo(
+                    url = block.url,
+                    poster = block.poster,
+                    onPlay = onVideoClick?.let { click -> { click(block.url) } },
+                )
+                is ContentBlock.Table -> PostTable(block, bodyStyle)
+                is ContentBlock.CodeBlock -> PostCodeBlock(block, bodyStyle)
             }
         }
     }
