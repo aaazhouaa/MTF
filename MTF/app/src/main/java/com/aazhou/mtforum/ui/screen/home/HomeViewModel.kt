@@ -57,8 +57,9 @@ class HomeViewModel(
     fun load() {
         _hasNext.value = true
         viewModelScope.launch {
-            // 有缓存就先摆出来（不走全屏 Loading），网络回来再原地替换
-            val cached = contentCache.read(CacheKeys.home(), CacheKeys.LIST_TTL) {
+            // 有缓存就先摆出来（不走全屏 Loading），网络回来再原地替换。
+            // 过期也照摆：内容旧一点也好过对着转圈等网络，刷新失败时下面保留旧内容只提示
+            val cached = contentCache.read(CacheKeys.home(), CacheKeys.LIST_TTL, allowExpired = true) {
                 cacheJson.decodeFromString<CachedFeed>(it)
             }
             if (cached != null) {
@@ -132,6 +133,7 @@ class HomeViewModel(
         val threads = (_state.value as? UiState.Success)?.data ?: return
         contentCache.write(
             key = CacheKeys.home(),
+            ttlMillis = CacheKeys.LIST_TTL,
             value = CachedFeed(hot = _hot.value, threads = threads),
             encode = { cacheJson.encodeToString(CachedFeed.serializer(), it) },
         )

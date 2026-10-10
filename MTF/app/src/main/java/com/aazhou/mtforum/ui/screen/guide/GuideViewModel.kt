@@ -41,9 +41,10 @@ class GuideViewModel(
     fun load(target: Int = page) {
         page = target
         viewModelScope.launch {
-            // 命中缓存先上屏，不走全屏 Loading；请求回来原地替换
+            // 命中缓存先上屏，不走全屏 Loading；请求回来原地替换。
+            // 过期也照摆：内容旧一点也好过对着转圈等网络，刷新失败时下面保留旧内容只提示
             if (target == 1) {
-                val cached = contentCache.read(CacheKeys.guide(), CacheKeys.LIST_TTL) {
+                val cached = contentCache.read(CacheKeys.guide(), CacheKeys.LIST_TTL, allowExpired = true) {
                     cacheJson.decodeFromString<ForumPage>(it)
                 }
                 if (cached != null) {
@@ -60,6 +61,7 @@ class GuideViewModel(
                 page = target
                 contentCache.write(
                     key = CacheKeys.guide(),
+                    ttlMillis = CacheKeys.LIST_TTL,
                     value = data,
                     encode = { cacheJson.encodeToString(ForumPage.serializer(), it) },
                 )

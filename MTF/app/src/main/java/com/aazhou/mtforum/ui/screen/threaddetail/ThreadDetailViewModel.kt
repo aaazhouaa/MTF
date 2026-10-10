@@ -261,11 +261,16 @@ class ThreadDetailViewModel(
         }
     }
 
-    /** 读本地详情快照（楼主 / 正序 / 倒序共用）。 */
+    /**
+     * 读本地详情快照（楼主 / 正序 / 倒序共用）。
+     *
+     * 过期也照读：快照旧一点也好过对着转圈重新拉整帖，缺的页由补拉链补齐。
+     */
     private suspend fun readThreadCache(): ThreadSnapshot? =
         contentCache.read(
             key = CacheKeys.thread(tid),
             ttlMillis = CacheKeys.THREAD_TTL,
+            allowExpired = true,
         ) { cacheJson.decodeFromString<ThreadSnapshot>(it) }
 
     /** 快照灌进楼层池与帖子级字段；会话态仍为空，等一次真实响应补齐。 */
@@ -1122,6 +1127,7 @@ class ThreadDetailViewModel(
     private suspend fun saveToCache() {
         contentCache.write(
             key = CacheKeys.thread(tid),
+            ttlMillis = CacheKeys.THREAD_TTL,
             value = ThreadSnapshot(
                 subject = subject,
                 forumName = forumName,

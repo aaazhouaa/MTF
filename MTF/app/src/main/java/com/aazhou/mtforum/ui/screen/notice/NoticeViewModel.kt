@@ -54,7 +54,11 @@ class NoticeViewModel(
      */
     fun load() {
         viewModelScope.launch {
-            val cached = contentCache.read(CacheKeys.notice(), CacheKeys.LIST_TTL) {
+            val cached = contentCache.read(
+                CacheKeys.notice(),
+                CacheKeys.LIST_TTL,
+                allowExpired = true,
+            ) {
                 cacheJson.decodeFromString<CachedNotices>(it).notices
             }
             if (cached != null) {
@@ -114,6 +118,7 @@ class NoticeViewModel(
     private suspend fun saveToCache(notices: List<Notice>) {
         contentCache.write(
             key = CacheKeys.notice(),
+            ttlMillis = CacheKeys.LIST_TTL,
             value = CachedNotices(notices),
             encode = { cacheJson.encodeToString(CachedNotices.serializer(), it) },
         )

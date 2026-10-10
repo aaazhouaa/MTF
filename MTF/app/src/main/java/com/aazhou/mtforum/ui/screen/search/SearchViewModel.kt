@@ -46,9 +46,13 @@ class SearchViewModel(
         this.page = page
         val targetPage = page
         viewModelScope.launch {
-            // 同一关键词的旧结果先摆出来，不走全屏转圈
+            // 同一关键词的旧结果先摆出来，不走全屏转圈；过期的也照摆，刷新失败保留旧内容
             if (targetPage == 1) {
-                val cached = contentCache.read(CacheKeys.search(trimmed), CacheKeys.LIST_TTL) {
+                val cached = contentCache.read(
+                    CacheKeys.search(trimmed),
+                    CacheKeys.LIST_TTL,
+                    allowExpired = true,
+                ) {
                     cacheJson.decodeFromString<SearchResult>(it)
                 }
                 if (cached != null) _state.value = UiState.Success(cached)
@@ -95,6 +99,7 @@ class SearchViewModel(
     private suspend fun saveToCache(result: SearchResult) {
         contentCache.write(
             key = CacheKeys.search(keyword),
+            ttlMillis = CacheKeys.LIST_TTL,
             value = result,
             encode = { cacheJson.encodeToString(SearchResult.serializer(), it) },
         )
