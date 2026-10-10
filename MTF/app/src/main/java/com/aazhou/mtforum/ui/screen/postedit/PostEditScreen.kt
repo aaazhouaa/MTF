@@ -167,7 +167,7 @@ fun PostEditScreen(
 
     // 键盘与表情面板的下部容器：高度单一真源，键盘收起/弹出时工具栏纹丝不动。
     // 槽必须独立于上面的内容区：插入面板态同样要按键盘高度占位，否则键盘一升起
-    // 就把插入条连工具栏一起盖住。上面的输入区也靠它判断底部有没有东西占位
+    // 就把插入条连工具栏一起盖住
     val bottomSlotHeight = when {
         panel == PostComposerPanel.Smiley || keyboardHandoff -> smileySlot
         imeHeight > 0.dp -> imeHeight
@@ -506,14 +506,10 @@ fun PostEditScreen(
                 }
             },
         ) { paddingValues ->
-            // 底部被键盘/表情面板占位时，输入区在贴住面板的位置再整体上收 40dp
-            val inputAreaBottomGap = if (bottomSlotHeight > 0.dp) 40.dp else 0.dp
-
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues)
-                    .padding(bottom = inputAreaBottomGap),
+                    .padding(paddingValues),
             ) {
                 // 权限限制提示
                 val permissionWarning = initData?.permissionDenied
