@@ -1,7 +1,9 @@
 package com.aazhou.mtforum.ui.screen.profile
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -42,12 +45,10 @@ import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.image.smallImageRequest
-import com.aazhou.mtforum.ui.common.accountIconModel
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
-import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 
@@ -78,16 +79,16 @@ fun ProfileScreen(
             .background(colors.background)
             .statusBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(top = 12.dp, bottom = bottomBarContentPadding()),
+            .padding(top = 40.dp, bottom = bottomBarContentPadding()),
     ) {
-        if (loading && profile == null) {
+        if (loading && profile == null && context.container().repository.isLoggedIn()) {
             Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
             return@Column
         }
 
-        // 顶部个人信息卡片（头像、用户名、UID在左侧，帖子/关注/粉丝统计在右侧）
+        // 顶部个人信息卡片（头像左上突出、右上角放置精致的登录/退出微按钮、左下用户信息、右下统计数据）
         InfoCard(
             profile = profile,
             loggedIn = loggedIn,
@@ -108,25 +109,22 @@ fun ProfileScreen(
             },
         )
 
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(6.dp))
 
-        // 功能入口卡片：横向排布「我的帖子」、「我的收藏」、「我的好友」
+        // 功能入口卡片：横向排布「我的帖子」、「我的收藏」、「我的好友」、「离线缓存」
+        val downloadCount by context.container().downloadStore.items
+            .collectAsStateWithLifecycle(initialValue = emptyList())
         ActionsCard(
             onMyPosts = { if (loggedIn) onMyPosts() else onLogin() },
             onMyFavorites = { if (loggedIn) onMyFavorites() else onLogin() },
             onMyFriends = { if (loggedIn) onMyFriends() else onLogin() },
+            onDownloads = onDownloads,
+            downloadsCount = downloadCount.size,
         )
-
-        Spacer(Modifier.height(4.dp))
-
-        // 已下载的帖子入口
-        val downloadCount by context.container().downloadStore.items
-            .collectAsStateWithLifecycle(initialValue = emptyList())
-        DownloadsCard(onOpen = onDownloads, count = downloadCount.size)
     }
 }
 
-/** 卡片 1：头像 + 名字 + UID（左侧），帖子/关注/粉丝统计（右侧）。 */
+/** 卡片 1：头像（突出一半在卡片上方）+ 名字 + UID（左侧），登录/退出按钮（右上角），帖子/关注/粉丝统计（右侧）。 */
 @Composable
 private fun InfoCard(
     profile: UserProfile?,
@@ -138,111 +136,178 @@ private fun InfoCard(
     onAvatarClick: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    ProfileCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+    val avatarSize = 68.dp
+    val avatarProtrude = 34.dp
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 3.dp)
+            .padding(top = avatarProtrude),
+    ) {
+        // 卡片主体
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(colors.surface)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
-            // 左侧：头像 + 名字 + UID 垂直排布
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable(onClick = onAvatarClick)
-                    .padding(vertical = 4.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(68.dp)
-                        .clip(CircleShape)
-                        .background(if (loggedIn) colors.quoteBackground else colors.surface),
-                ) {
-                    if (loggedIn) {
-                        AsyncImage(
-                            model = smallImageRequest(profile?.avatarUrl),
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize().dimImageInDark(),
-                        )
-                    } else {
-                        Box(
-                            Modifier.fillMaxSize().background(colors.quoteBackground),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painterResource(R.drawable.ic_me),
-                                contentDescription = null,
-                                tint = colors.textHint,
-                                modifier = Modifier.size(36.dp),
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    if (loggedIn) profile?.name.orEmpty().ifBlank { "未知用户" } else "点击登录",
-                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp),
-                    fontWeight = FontWeight.Bold,
-                    color = bodyTextColor(),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    if (loggedIn) "UID: ${profile?.uid.orEmpty()}" else "登录后查看更多",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                    color = colors.textSecondary,
-                )
-            }
-
-            // 右侧：三个统计指标（帖子、关注、粉丝），黄/金色突出，竖线分割
+            // 顶部一行：左侧留空给突出头像，右上角放置典雅的登录/退出小胶囊
             Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(start = 12.dp),
             ) {
-                StatItem(
-                    label = "帖子",
-                    value = profile?.threads,
-                    onClick = onPostsClick,
-                )
-                VerticalDivider(
-                    modifier = Modifier
-                        .height(32.dp)
-                        .padding(horizontal = 10.dp),
-                    color = colors.divider,
-                )
-                StatItem(
-                    label = "关注",
-                    value = profile?.following,
-                    onClick = onFollowClick,
-                )
-                VerticalDivider(
-                    modifier = Modifier
-                        .height(32.dp)
-                        .padding(horizontal = 10.dp),
-                    color = colors.divider,
-                )
-                StatItem(
-                    label = "粉丝",
-                    value = profile?.followers,
-                    onClick = onFansClick,
+                Spacer(Modifier.width(avatarSize))
+                AccountActionButton(
+                    loggedIn = loggedIn,
+                    onClick = onAccountAction,
                 )
             }
 
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.height(8.dp))
 
-            // 登录/登出操作按钮
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onAccountAction),
+            // 主体行：左侧用户名与 UID，右侧三个统计指标
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                // 左侧：用户名与 UID
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onAvatarClick)
+                        .padding(vertical = 2.dp),
+                ) {
+                    Text(
+                        if (loggedIn) profile?.name.orEmpty().ifBlank { "未知用户" } else " ",
+                        style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = bodyTextColor(),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        if (loggedIn && !profile?.uid.isNullOrBlank()) "UID: ${profile?.uid}" else " ",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        color = colors.textSecondary,
+                    )
+                }
+
+                // 右侧：三个统计指标（帖子、关注、粉丝），黄/金色突出，竖线分割
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 12.dp),
+                ) {
+                    StatItem(
+                        label = "帖子",
+                        value = profile?.threads,
+                        onClick = onPostsClick,
+                    )
+                    VerticalDivider(
+                        modifier = Modifier
+                            .height(30.dp)
+                            .padding(horizontal = 10.dp),
+                        color = colors.divider,
+                    )
+                    StatItem(
+                        label = "关注",
+                        value = profile?.following,
+                        onClick = onFollowClick,
+                    )
+                    VerticalDivider(
+                        modifier = Modifier
+                            .height(30.dp)
+                            .padding(horizontal = 10.dp),
+                        color = colors.divider,
+                    )
+                    StatItem(
+                        label = "粉丝",
+                        value = profile?.followers,
+                        onClick = onFansClick,
+                    )
+                }
+            }
+        }
+
+        // 悬浮在卡片左上方的头像（突出一半在卡片外部，未登录时为空白占位）
+        Box(
+            modifier = Modifier
+                .padding(start = 16.dp)
+                .offset(y = -avatarProtrude)
+                .size(avatarSize)
+                .clip(CircleShape)
+                .background(colors.quoteBackground)
+                .border(3.dp, colors.surface, CircleShape)
+                .clickable(onClick = onAvatarClick),
+        ) {
+            if (loggedIn) {
                 AsyncImage(
-                    model = accountIconModel(logout = loggedIn),
-                    contentDescription = if (loggedIn) "退出登录" else "登录",
-                    modifier = Modifier.size(32.dp),
+                    model = smallImageRequest(profile?.avatarUrl),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize().dimImageInDark(),
                 )
             }
+        }
+    }
+}
+
+/** 现代精致的登录/退出微型胶囊按钮。 */
+@Composable
+private fun AccountActionButton(
+    loggedIn: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    if (loggedIn) {
+        // 已登录：低调优雅的小胶囊退出按钮
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(colors.quoteBackground)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_nav_logout),
+                contentDescription = "退出登录",
+                tint = colors.textSecondary,
+                modifier = Modifier.size(13.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                "退出",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp),
+                color = colors.textSecondary,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+    } else {
+        // 未登录：醒目高亮的小胶囊登录按钮
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 5.dp),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_nav_login),
+                contentDescription = "登录",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(14.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                "登录",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+            )
         }
     }
 }
@@ -259,7 +324,7 @@ private fun StatItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .clickable(onClick = onClick)
-            .padding(horizontal = 2.dp, vertical = 6.dp),
+            .padding(horizontal = 2.dp, vertical = 4.dp),
     ) {
         Text(
             text = value?.toString() ?: "0",
@@ -276,14 +341,16 @@ private fun StatItem(
     }
 }
 
-/** 卡片 2：功能入口横向排列（我的帖子、我的收藏、我的好友）。 */
+/** 卡片 2：功能入口横向排列（我的帖子、我的收藏、我的好友、离线缓存）。 */
 @Composable
 private fun ActionsCard(
     onMyPosts: () -> Unit,
     onMyFavorites: () -> Unit,
     onMyFriends: () -> Unit,
+    onDownloads: () -> Unit,
+    downloadsCount: Int,
 ) {
-    ProfileCard(contentPadding = 16.dp) {
+    ProfileCard(contentPadding = 14.dp) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -309,11 +376,19 @@ private fun ActionsCard(
                 onClick = onMyFriends,
                 modifier = Modifier.weight(1f),
             )
+            ActionEntranceButton(
+                icon = painterResource(R.drawable.ic_download),
+                title = "离线缓存",
+                backgroundColor = Color(0xFF10B981),
+                badgeCount = downloadsCount,
+                onClick = onDownloads,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
 
-/** 单个彩色大圆图标入口按钮。 */
+/** 单个彩色大圆图标入口按钮（带可选小角标）。 */
 @Composable
 private fun ActionEntranceButton(
     icon: Painter,
@@ -321,87 +396,59 @@ private fun ActionEntranceButton(
     backgroundColor: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    badgeCount: Int = 0,
 ) {
+    val colors = LocalMtfColors.current
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 6.dp),
+            .padding(vertical = 4.dp),
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(backgroundColor),
-        ) {
-            Icon(
-                painter = icon,
-                contentDescription = title,
-                tint = Color.White,
-                modifier = Modifier.size(24.dp),
-            )
+        Box {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(backgroundColor),
+            ) {
+                Icon(
+                    painter = icon,
+                    contentDescription = title,
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+            if (badgeCount > 0) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 4.dp, y = (-2).dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                ) {
+                    Text(
+                        text = if (badgeCount > 99) "99+" else badgeCount.toString(),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text(
             text = title,
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.5.sp),
             fontWeight = FontWeight.Medium,
             color = bodyTextColor(),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-/** 底部卡片：「已下载的帖子」入口。 */
-@Composable
-private fun DownloadsCard(onOpen: () -> Unit, count: Int) {
-    val colors = LocalMtfColors.current
-    ProfileCard(contentPadding = 0.dp) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
-                .clickable(onClick = onOpen)
-                .padding(horizontal = 16.dp),
-        ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(colors.quoteBackground),
-            ) {
-                Icon(
-                    painterResource(R.drawable.ic_download),
-                    contentDescription = null,
-                    tint = accentTextColor(),
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Spacer(Modifier.width(14.dp))
-            Text(
-                "已下载的帖子",
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
-                color = bodyTextColor(),
-                modifier = Modifier.weight(1f),
-            )
-            if (count > 0) {
-                Text(
-                    "$count 个",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                    color = colors.textSecondary,
-                )
-                Spacer(Modifier.width(6.dp))
-            }
-            Icon(
-                painterResource(R.drawable.ic_arrow_right),
-                contentDescription = null,
-                tint = colors.textHint,
-                modifier = Modifier.size(16.dp),
-            )
-        }
     }
 }
 
