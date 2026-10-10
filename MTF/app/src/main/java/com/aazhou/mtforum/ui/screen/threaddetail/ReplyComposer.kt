@@ -1,9 +1,11 @@
 package com.aazhou.mtforum.ui.screen.threaddetail
 
+import android.content.ContentResolver
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -116,6 +118,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
 import kotlin.math.max
 import kotlin.math.min
 
@@ -1455,26 +1458,29 @@ internal suspend fun prepareUploadFile(context: android.content.Context, uri: Ur
         val resolver = context.contentResolver
         // 全程流式解码，不把原图整个读进内存：相机直出的照片几十 MB，readBytes 会 OOM
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            ?: throw IllegalStateException("读不到所选图片")
+        resolver.openImageInput(uri).use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             throw IllegalStateException("图片解码失败")
         }
         val longEdge = max(bounds.outWidth, bounds.outHeight)
         val cache = File(context.cacheDir, "reply_upload.jpg")
         // 原图没超限就原样拷过去：GIF 动图重编码会丢帧
-        val rawSize = resolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+        val rawSize = try {
+            resolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+        } catch (_: Exception) {
+            -1L
+        }
         if (rawSize in 1..MAX_UPLOAD_BYTES && longEdge in 1 until MAX_UPLOAD_EDGE) {
-            resolver.openInputStream(uri)?.use { input ->
+            resolver.openImageInput(uri).use { input ->
                 cache.outputStream().use { output -> input.copyTo(output) }
-            } ?: throw IllegalStateException("读不到所选图片")
+            }
             return@withContext cache
         }
         val options = BitmapFactory.Options().apply {
             inSampleSize = if (longEdge > MAX_UPLOAD_EDGE) longEdge / MAX_UPLOAD_EDGE else 1
         }
-        val decoded = resolver.openInputStream(uri)
-            ?.use { BitmapFactory.decodeStream(it, null, options) }
+        val decoded = resolver.openImageInput(uri)
+            .use { BitmapFactory.decodeStream(it, null, options) }
             ?: throw IllegalStateException("图片解码失败")
         val scale = min(
             MAX_UPLOAD_EDGE.toFloat() / decoded.width,
@@ -1505,10 +1511,45 @@ internal suspend fun prepareUploadFile(context: android.content.Context, uri: Ur
         cache
     }
 
+/**
+ * 打开选中图的读取流，取不到就重试。
+ *
+ * openInputStream 在 provider 进程刚被系统回收等情况下返回 null 而不抛异常
+ * （AOSP 文档：null if the provider recently crashed），单靠它会把本来读得出来的图误判成「读不到」。
+ */
+private suspend fun ContentResolver.openImageInput(uri: Uri): InputStream {
+    repeat(OPEN_URI_ATTEMPTS) { attempt ->
+        openImageStream(uri)?.let { return it }
+        if (attempt != OPEN_URI_ATTEMPTS - 1) delay(OPEN_URI_RETRY_DELAY_MS)
+    }
+    throw IllegalStateException("读不到所选图片（${uri.scheme}://${uri.authority}）")
+}
+
+private fun ContentResolver.openImageStream(uri: Uri): InputStream? {
+    val stream = try {
+        openInputStream(uri)
+    } catch (_: Exception) {
+        null
+    }
+    if (stream != null) return stream
+    // 部分机型的相册 provider（如 MIUI 的 com.miui.gallery.open）openAssetFile 直接返回 null，
+    // 但 openFileDescriptor 是另一条实现，常常还能拿到 fd
+    val fd = try {
+        openFileDescriptor(uri, "r")
+    } catch (_: Exception) {
+        null
+    }
+    return fd?.let { ParcelFileDescriptor.AutoCloseInputStream(it) }
+}
+
 /** 站点限制：单张 1MB，网页端也会把图缩到 1500px 再传。 */
 private const val MAX_UPLOAD_BYTES = 1024 * 1024L
 private const val MAX_UPLOAD_EDGE = 1500
 private const val MIN_UPLOAD_QUALITY = 15
+
+/** 取选中图读取流的重试次数与间隔：provider 重启后再取通常就好了。 */
+private const val OPEN_URI_ATTEMPTS = 3
+private const val OPEN_URI_RETRY_DELAY_MS = 150L
 
 /** 输入框高度：固定值，不随内容长高。 */
 private val ReplyComposerInputHeight = 84.dp
