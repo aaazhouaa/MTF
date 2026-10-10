@@ -27,6 +27,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +51,7 @@ import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
+import com.aazhou.mtforum.ui.screen.login.LoginDialog
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
@@ -73,6 +77,11 @@ fun ProfileScreen(
 
     val loggedIn = profile?.isLoggedIn == true
 
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    var showLoginDialog by remember { mutableStateOf(false) }
+
+    val requireLogin = { showLoginDialog = true }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -94,18 +103,17 @@ fun ProfileScreen(
             loggedIn = loggedIn,
             onAccountAction = {
                 if (loggedIn) {
-                    context.container().logout()
-                    viewModel.load()
+                    showLogoutDialog = true
                 } else {
-                    onLogin()
+                    showLoginDialog = true
                 }
             },
-            onPostsClick = { if (loggedIn) onMyPosts() else onLogin() },
-            onFollowClick = { if (loggedIn) onFollowList("following") else onLogin() },
-            onFansClick = { if (loggedIn) onFollowList("follower") else onLogin() },
+            onPostsClick = { if (loggedIn) onMyPosts() else requireLogin() },
+            onFollowClick = { if (loggedIn) onFollowList("following") else requireLogin() },
+            onFansClick = { if (loggedIn) onFollowList("follower") else requireLogin() },
             onAvatarClick = {
                 val uid = profile?.uid
-                if (loggedIn && !uid.isNullOrBlank()) onUserClick(uid) else onLogin()
+                if (loggedIn && !uid.isNullOrBlank()) onUserClick(uid) else requireLogin()
             },
         )
 
@@ -115,11 +123,33 @@ fun ProfileScreen(
         val downloadCount by context.container().downloadStore.items
             .collectAsStateWithLifecycle(initialValue = emptyList())
         ActionsCard(
-            onMyPosts = { if (loggedIn) onMyPosts() else onLogin() },
-            onMyFavorites = { if (loggedIn) onMyFavorites() else onLogin() },
-            onMyFriends = { if (loggedIn) onMyFriends() else onLogin() },
+            onMyPosts = { if (loggedIn) onMyPosts() else requireLogin() },
+            onMyFavorites = { if (loggedIn) onMyFavorites() else requireLogin() },
+            onMyFriends = { if (loggedIn) onMyFriends() else requireLogin() },
             onDownloads = onDownloads,
             downloadsCount = downloadCount.size,
+        )
+    }
+
+    if (showLogoutDialog) {
+        LogoutConfirmDialog(
+            username = profile?.name,
+            onDismiss = { showLogoutDialog = false },
+            onConfirm = {
+                showLogoutDialog = false
+                context.container().logout()
+                viewModel.load()
+            },
+        )
+    }
+
+    if (showLoginDialog) {
+        LoginDialog(
+            onDismiss = { showLoginDialog = false },
+            onSuccess = {
+                showLoginDialog = false
+                viewModel.load()
+            },
         )
     }
 }
