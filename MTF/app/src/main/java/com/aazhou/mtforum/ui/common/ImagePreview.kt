@@ -88,16 +88,18 @@ private const val LIGHT_IMAGE_LUMINANCE = 0.6f
 
 /**
  * 全屏图片查看：黑底，多图左右翻页，双指缩放、放大后拖动、双击放大/还原，
- * 底部提供保存到相册 / 分享 / 用浏览器打开。
+ * 顶部提供保存到相册 / 分享 / 用浏览器打开。
  *
  * 前景色随当前图片亮度自适应：浅色图用深色字、深色图用白色字，并给文字垫一层
  * 同调半透明底衬，避免白字压在浅色截图上、深字压在深色图上看不清。
  *
  * [PostContent] 传出的是整组图片地址与命中下标，故同组图片可连续翻看。
+ * 列表项也可以是本地文件（如发帖页刚上传的附件）：这类图没有网络地址可取，
+ * 保存/分享/浏览器打开整套隐藏，只留缩放与翻页。
  */
 @Composable
 fun ImagePreview(
-    urls: List<String>,
+    urls: List<Any>,
     initialIndex: Int,
     onDismiss: () -> Unit,
 ) {
@@ -107,6 +109,9 @@ fun ImagePreview(
     val pagerState = rememberPagerState(initialPage = initialIndex.coerceIn(0, urls.lastIndex)) {
         urls.size
     }
+    // 三项操作都要先走网络下载，列表里混有本地文件时整套不适用
+    val remoteUrls = urls.filterIsInstance<String>()
+    val remoteActions = remoteUrls.size == urls.size
     var busy by remember { mutableStateOf(false) }
     // 顶部操作栏（返回/页码/操作图标）默认隐藏；翻页、缩放、拖动等交互都会重新计时，
     // 显示 [CONTROLS_VISIBLE_MS] 后自动隐去。单击图片不受影响，始终关闭查看器。
@@ -148,7 +153,7 @@ fun ImagePreview(
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                 ZoomableImage(
-                    url = urls[page],
+                    model = urls[page],
                     active = pagerState.currentPage == page,
                     onBackgroundColor = { color -> pageColors[page] = color },
                     onTap = onDismiss,
@@ -201,28 +206,30 @@ fun ImagePreview(
                         )
                     }
                     Spacer(Modifier.weight(1f))
-                    PreviewActionIcon(R.drawable.ic_download, "保存到相册", foreground, actionPill) {
-                        runBusy(scope, { busy = it }, "保存失败") {
-                            val url = urls[pagerState.currentPage]
-                            val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
-                            withContext(Dispatchers.IO) { saveToGallery(context, url, bytes) } != null
+                    if (remoteActions) {
+                        PreviewActionIcon(R.drawable.ic_download, "保存到相册", foreground, actionPill) {
+                            runBusy(scope, { busy = it }, "保存失败") {
+                                val url = remoteUrls[pagerState.currentPage]
+                                val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
+                                withContext(Dispatchers.IO) { saveToGallery(context, url, bytes) } != null
+                            }
                         }
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    PreviewActionIcon(R.drawable.ic_share, "分享", foreground, actionPill) {
-                        runBusy(scope, { busy = it }, "分享失败") {
-                            val url = urls[pagerState.currentPage]
-                            val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
-                            val file = withContext(Dispatchers.IO) { writeCacheFile(context, url, bytes) }
-                            shareImage(context, url, file)
-                            true
+                        Spacer(Modifier.width(8.dp))
+                        PreviewActionIcon(R.drawable.ic_share, "分享", foreground, actionPill) {
+                            runBusy(scope, { busy = it }, "分享失败") {
+                                val url = remoteUrls[pagerState.currentPage]
+                                val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
+                                val file = withContext(Dispatchers.IO) { writeCacheFile(context, url, bytes) }
+                                shareImage(context, url, file)
+                                true
+                            }
                         }
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    PreviewActionIcon(R.drawable.ic_browser, "浏览器打开", foreground, actionPill) {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(urls[pagerState.currentPage])))
-                        }.onFailure { AppToast.show("没有可打开该链接的应用") }
+                        Spacer(Modifier.width(8.dp))
+                        PreviewActionIcon(R.drawable.ic_browser, "浏览器打开", foreground, actionPill) {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(remoteUrls[pagerState.currentPage])))
+                            }.onFailure { AppToast.show("没有可打开该链接的应用") }
+                        }
                     }
                 }
             }
@@ -248,7 +255,7 @@ fun ImagePreview(
  */
 @Composable
 private fun ZoomableImage(
-    url: String,
+    model: Any,
     active: Boolean,
     onBackgroundColor: (Color) -> Unit,
     onTap: () -> Unit,
@@ -258,8 +265,8 @@ private fun ZoomableImage(
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
-    var loading by remember(url) { mutableStateOf(true) }
-    var failed by remember(url) { mutableStateOf(false) }
+    var loading by remember(model) { mutableStateOf(true) }
+    var failed by remember(model) { mutableStateOf(false) }
     // 压暗开启时，前景色按「膜覆盖后的实际亮度」判定：采样拿的是原图均值，
     // 直接按它选前景会让压暗后的浅图配深字，对比度失衡
     val dimScrim = if (LocalIsDarkTheme.current && LocalDimImagesInDark.current) {
@@ -272,7 +279,7 @@ private fun ZoomableImage(
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { boxSize = it }
-            .pointerInput(url, active) {
+            .pointerInput(model, active) {
                 if (!active) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -318,7 +325,7 @@ private fun ZoomableImage(
         contentAlignment = Alignment.Center,
     ) {
         AsyncImage(
-            model = url,
+            model = model,
             contentDescription = null,
             contentScale = ContentScale.Fit,
             onLoading = { loading = true; failed = false },

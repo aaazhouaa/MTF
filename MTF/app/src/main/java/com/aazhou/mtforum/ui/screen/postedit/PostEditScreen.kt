@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -82,6 +83,7 @@ import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.ThreadType
 import com.aazhou.mtforum.ui.common.AppToast
+import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.screen.threaddetail.AtSuggestionStrip
 import com.aazhou.mtforum.ui.screen.threaddetail.AtUserPickerPage
@@ -146,6 +148,8 @@ fun PostEditScreen(
     var inlineUrlInput by remember { mutableStateOf("") }
     var inlineTitleInput by remember { mutableStateOf("") }
     var showAtPicker by remember { mutableStateOf(false) }
+    // 正在看大图的附件下标，-1 表示没打开
+    var previewImageIndex by remember { mutableIntStateOf(-1) }
 
     val subjectFocusRequester = remember { FocusRequester() }
     val messageFocusRequester = remember { FocusRequester() }
@@ -708,7 +712,11 @@ fun PostEditScreen(
                                             model = attachment.localFile,
                                             contentDescription = attachment.fileName,
                                             contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize(),
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clickable {
+                                                    previewImageIndex = uploadedImages.indexOf(attachment)
+                                                },
                                         )
 
                                         // 点击再次插入标记
@@ -798,6 +806,15 @@ fun PostEditScreen(
                     viewModel.insertTextAtSelection("@$username ")
                     atPickerFocusRequest++
                 },
+            )
+        }
+
+        // 点附件缩略图看大图：整组可左右翻页，点中的那张作首页；本地文件没有网络地址，只留缩放与翻页
+        if (previewImageIndex >= 0 && uploadedImages.isNotEmpty()) {
+            ImagePreview(
+                urls = uploadedImages.map { it.localFile },
+                initialIndex = previewImageIndex.coerceAtMost(uploadedImages.lastIndex),
+                onDismiss = { previewImageIndex = -1 },
             )
         }
     }
