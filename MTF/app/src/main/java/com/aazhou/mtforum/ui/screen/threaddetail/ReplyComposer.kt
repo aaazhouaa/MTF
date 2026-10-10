@@ -42,6 +42,9 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -1064,7 +1067,7 @@ private fun ComposerToolButton(iconRes: Int, label: String, onClick: () -> Unit)
     )
 }
 
-/** 表情面板：展开时占住键盘原来的位置，横向切包，网格点选插入。 */
+/** 表情面板：展开时占住键盘原来的位置，左右滑动或点分类栏切包，网格点选插入。 */
 @Composable
 private fun SmileyPanel(
     packs: List<SmileyPack>,
@@ -1083,17 +1086,23 @@ private fun SmileyPanel(
     }
     // 0 = 最近使用，其余按下标对应各个包。默认停在第一个包：最近使用是给用过的人翻历史的，
     // 不该拿它当默认页——用过几个表情的人一开面板只看到那几个，整页就像空了一样
-    var packIndex by remember(packs.isEmpty()) { mutableStateOf(if (packs.isEmpty()) 0 else 1) }
+    val pagerState = rememberPagerState(initialPage = 1) { packs.size + 1 }
+    val scope = rememberCoroutineScope()
+    val tabState = rememberLazyListState()
     val smileyByCode = remember(packs) { packs.flatMap { it.items }.associateBy { it.code } }
     val recent = recentCodes.filter { it !in DefaultSmileyCodes }.mapNotNull { smileyByCode[it] }
     // 最近使用为空时不能就此空格：按默认表情表补，站点里没有才退回第一个包。
     // 否则没用过表情的人一点开表情面板，看到的只有分类栏、网格全空
-    val emojis = when (packIndex) {
+    fun emojisOf(page: Int): List<Smiley> = when (page) {
         0 -> recent.ifEmpty {
             DefaultSmileyCodes.mapNotNull { smileyByCode[it] }
                 .ifEmpty { packs.firstOrNull()?.items.orEmpty() }
         }
-        else -> packs[packIndex - 1].items
+        else -> packs[page - 1].items
+    }
+    // 滑动翻到哪页，分类栏就跟着把那个标签滚进来：包多的时候选中项本来就在屏幕外
+    LaunchedEffect(pagerState.currentPage) {
+        tabState.animateScrollToItem(pagerState.currentPage)
     }
     BoxWithConstraints(modifier) {
         // 网格区高度 = 面板高 - 分类栏（40dp 标签 + 6dp 底部内边距）- 4dp 间隔。按 7 行均分格子
@@ -1104,11 +1113,15 @@ private fun SmileyPanel(
         val iconSize = cellHeight.coerceAtMost(34.dp)
         Column(Modifier.fillMaxSize()) {
             LazyRow(
+                state = tabState,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 6.dp),
             ) {
                 item {
-                    SmileyPackTab(selected = packIndex == 0, onClick = { packIndex = 0 }) {
+                    SmileyPackTab(
+                        selected = pagerState.currentPage == 0,
+                        onClick = { scope.launch { pagerState.animateScrollToPage(0) } },
+                    ) {
                         Icon(
                             painterResource(R.drawable.ic_recent),
                             contentDescription = "最近使用",
@@ -1118,7 +1131,10 @@ private fun SmileyPanel(
                     }
                 }
                 itemsIndexed(packs) { index, pack ->
-                    SmileyPackTab(selected = packIndex == index + 1, onClick = { packIndex = index + 1 }) {
+                    SmileyPackTab(
+                        selected = pagerState.currentPage == index + 1,
+                        onClick = { scope.launch { pagerState.animateScrollToPage(index + 1) } },
+                    ) {
                         AsyncImage(
                             model = pack.items.first().url,
                             contentDescription = pack.name,
@@ -1128,18 +1144,23 @@ private fun SmileyPanel(
                 }
             }
             Spacer(Modifier.height(4.dp))
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(SmileyGridColumns),
+            HorizontalPager(
+                state = pagerState,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                contentPadding = PaddingValues(vertical = 4.dp),
-            ) {
-                emojis.forEach { smiley ->
-                    item(key = smiley.code) {
-                        SmileyCell(smiley, onPick, Modifier.height(cellHeight), iconSize)
+            ) { page ->
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(SmileyGridColumns),
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                ) {
+                    emojisOf(page).forEach { smiley ->
+                        item(key = smiley.code) {
+                            SmileyCell(smiley, onPick, Modifier.height(cellHeight), iconSize)
+                        }
                     }
                 }
             }
