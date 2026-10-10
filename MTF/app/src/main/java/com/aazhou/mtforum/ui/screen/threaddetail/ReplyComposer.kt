@@ -676,7 +676,7 @@ private enum class ComposerPanel { None, Smiley, Insert }
  * 光标位置与选区就会整体偏移。
  */
 /** 光标所在位置之前是否有一个表情码：是则返回它的起始下标，否则 -1。 */
-private fun smileyCodeStartBefore(text: String, cursor: Int): Int {
+internal fun smileyCodeStartBefore(text: String, cursor: Int): Int {
     if (cursor <= 0 || cursor > text.length) return -1
     val open = text.lastIndexOf('[', (cursor - 1).coerceAtLeast(0))
     if (open < 0) return -1
@@ -714,7 +714,7 @@ private fun smileyRangesOf(text: String, smileyByCode: Map<String, Smiley>): Lis
  * 关键约束：字符总数与每个字符的下标必须 100% 保持不变，这样 OffsetMapping 用 Identity
  * 才能杜绝任何输入法 IME 光标抖动或越界崩溃。
  */
-private fun formatRichComposerText(
+internal fun formatRichComposerText(
     source: String,
     smileyByCode: Map<String, Smiley>,
     colors: com.aazhou.mtforum.ui.theme.MtfColors,
@@ -883,7 +883,7 @@ private fun formatRichComposerText(
  * 输入框画在最上层，不会被图片盖住。
  */
 @Composable
-private fun SmileyOverlay(
+internal fun SmileyOverlay(
     text: String,
     layout: TextLayoutResult?,
     smileyByCode: Map<String, Smiley>,
@@ -927,7 +927,7 @@ private fun SmileyOverlay(
 }
 
 /** 「插入」面板里的条目：包含常用格式与网页端插入项。 */
-private enum class InsertKind(val label: String, val iconRes: Int? = null) {
+internal enum class InsertKind(val label: String, val iconRes: Int? = null) {
     Bold("粗体", R.drawable.ic_format_bold),
     Italic("斜体", R.drawable.ic_format_italic),
     Underline("下划线", R.drawable.ic_format_underline),
@@ -958,7 +958,7 @@ internal fun TextFieldValue.insertAtSelection(
  * 刻意不用弹窗：用户视线不用离开输入框，键盘也不收起。
  */
 @Composable
-private fun AtSuggestionStrip(
+internal fun AtSuggestionStrip(
     suggestions: List<String>,
     onPick: (String) -> Unit,
 ) {
@@ -1048,7 +1048,7 @@ private fun TextFieldValue.wrapUrl(): TextFieldValue {
 }
 
 @Composable
-private fun ComposerToolButton(iconRes: Int, label: String, onClick: () -> Unit) {
+internal fun ComposerToolButton(iconRes: Int, label: String, onClick: () -> Unit) {
     Icon(
         painterResource(iconRes),
         contentDescription = label,
@@ -1066,7 +1066,7 @@ private fun ComposerToolButton(iconRes: Int, label: String, onClick: () -> Unit)
 
 /** 表情面板：展开时占住键盘原来的位置，左右滑动或点分类栏切包，网格点选插入。 */
 @Composable
-private fun SmileyPanel(
+internal fun SmileyPanel(
     packs: List<SmileyPack>,
     recentCodes: List<String>,
     onPick: (String) -> Unit,
@@ -1235,7 +1235,7 @@ private fun SmileyCell(
 
 /** 「插入」面板：列出可插入的标记类型（粗斜体/下划线/删除线排在文字链接前）。 */
 @Composable
-private fun InsertPanel(onPick: (InsertKind) -> Unit, modifier: Modifier = Modifier) {
+internal fun InsertPanel(onPick: (InsertKind) -> Unit, modifier: Modifier = Modifier) {
     LazyRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1270,7 +1270,7 @@ private fun InsertPanel(onPick: (InsertKind) -> Unit, modifier: Modifier = Modif
 
 /** 就地内联插入条：打开即自动聚焦输入框并保持软键盘升起，保留选中状态与内容。 */
 @Composable
-private fun InlineInsertBar(
+internal fun InlineInsertBar(
     kind: InsertKind,
     urlInput: String,
     titleInput: String,
@@ -1514,7 +1514,7 @@ private const val MIN_UPLOAD_QUALITY = 15
 private val ReplyComposerInputHeight = 84.dp
 
 /** 最近使用那一行摆几个。 */
-private const val RecentSmileyLimit = 8
+internal const val RecentSmileyLimit = 8
 
 /** 工具栏下方的子栏高度（快捷表情行、排版插入栏）。两者高度完全保持一致（36.dp）。 */
 private val ComposerSubBarHeight = 36.dp
@@ -1527,10 +1527,10 @@ private const val SmileyGridRows = 7
 private val SmileyPackBarHeight = 46.dp
 
 /** 低于这个高度的 ime 不算软键盘（分屏预览、悬浮窗边缘的残值）。 */
-private val MinKeyboardHeight = 100.dp
+internal val MinKeyboardHeight = 100.dp
 
 /** ime 高度连续这么多帧不变才认定为停稳，此时的高度才是键盘真实高度。 */
-private const val STABLE_KEYBOARD_FRAMES = 6
+internal const val STABLE_KEYBOARD_FRAMES = 6
 
 /** 切回键盘的交接最多等这么多帧（约 0.5s）：还没起来就放弃，表情面板留在原位。 */
 private const val HANDOFF_GIVEUP_FRAMES = 30
@@ -1581,5 +1581,5 @@ private val ComposerPublishColor = Color(0xFF97CDAD)
  * code 必须带站点笑脸表里的方括号（SmileyParser 原样产出 `[#呵呵]`，插入正文的也正是这个
  * 标记）；写成分组匹配的 `#呵呵` 会一个都取不到，整行表情直接消失。
  */
-private val DefaultSmileyCodes =
+internal val DefaultSmileyCodes =
     listOf("[#呵呵]", "[#滑稽]", "[#哈哈]", "[#吐舌]", "[#啊]", "[#酷]", "[#怒]", "[#开心]")

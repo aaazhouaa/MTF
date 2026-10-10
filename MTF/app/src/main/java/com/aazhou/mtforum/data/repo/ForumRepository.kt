@@ -25,6 +25,8 @@ import com.aazhou.mtforum.data.model.FollowUserPage
 import com.aazhou.mtforum.data.model.FriendUserItem
 import com.aazhou.mtforum.data.model.FriendUserPage
 import com.aazhou.mtforum.data.model.MyThreadPage
+import com.aazhou.mtforum.data.model.NewThreadPageData
+import com.aazhou.mtforum.data.model.NewThreadResult
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.parser.ForumParser
 import com.aazhou.mtforum.data.parser.SmileyPack
@@ -82,6 +84,12 @@ class ForumRepository(
     /** 发帖页的 formhash（新版帖接口必需）。 */
     suspend fun postFormhash(fid: String): String? = withContext(Dispatchers.IO) {
         ForumParser.parseFormhash(http.get(http.url("forum.php?mod=post&action=newthread&fid=$fid&mobile=2")))
+    }
+
+    /** 发帖页初始数据（包含 formhash、posttime、图片上传凭据 uid/hash、主题分类 types、权限状态）。 */
+    suspend fun fetchNewThreadInit(fid: String): NewThreadPageData = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("forum.php?mod=post&action=newthread&fid=$fid&mobile=2"))
+        ForumParser.parseNewThreadInit(html)
     }
 
     fun isLoggedIn(): Boolean = http.isLoggedIn()
@@ -606,6 +614,36 @@ class ForumRepository(
             ),
             referer = "https://bbs.binmt.cc/forum-$fid-1.html",
         )
+    }
+
+    /** 发新帖（支持主题分类、时间戳、已上传图片附件并返回结构化结果）。 */
+    suspend fun submitNewThread(
+        fid: String,
+        formhash: String,
+        subject: String,
+        message: String,
+        posttime: String? = null,
+        typeid: String? = null,
+        aids: List<String> = emptyList(),
+    ): NewThreadResult = withContext(Dispatchers.IO) {
+        val url = http.url("forum.php?mod=post&action=newthread&fid=$fid&extra=&topicsubmit=yes&mobile=2&handlekey=postform&inajax=1")
+        val params = mutableMapOf(
+            "formhash" to formhash,
+            "subject" to subject,
+            "message" to message,
+            "topicsubmit" to "yes",
+        )
+        if (!posttime.isNullOrBlank()) params["posttime"] = posttime
+        if (!typeid.isNullOrBlank() && typeid != "0") params["typeid"] = typeid
+        for (aid in aids) {
+            params["attachnew[$aid][description]"] = ""
+        }
+        val body = http.post(
+            url,
+            params,
+            referer = "https://bbs.binmt.cc/forum.php?mod=post&action=newthread&fid=$fid&mobile=2",
+        )
+        ForumParser.parseNewThreadResult(body)
     }
 
     /** 登录：先取登录页的 hash，再提交凭据。 */

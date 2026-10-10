@@ -1186,4 +1186,71 @@ class ForumParserTest {
         assertEquals(true, m2.isSelf)
         assertEquals("https://avatar.mt2.cn/avatar2.jpg", m2.avatarUrl)
     }
+
+    @Test
+    fun parseNewThreadInitWithTypesAndUploadCredentials() {
+        val html = """
+            <html>
+            <input type="hidden" name="formhash" id="formhash" value="1011f6f2" />
+            <input type="hidden" name="posttime" id="posttime" value="1791649255" />
+            <select name="typeid" id="typeid">
+                <option value="0">请选择</option>
+                <option value="59">求助问答</option>
+                <option value="58">已解决</option>
+            </select>
+            <script>
+            $.buildfileupload({
+                uploadurl:'misc.php?mod=swfupload&operation=upload&type=image&inajax=yes&infloat=yes&simple=2',
+                uploadformdata:{uid:"160113", hash:"adb645b4ee8a34cf44712acd3cd6162b"},
+                uploadinputname:'Filedata'
+            });
+            </script>
+            </html>
+        """.trimIndent()
+
+        val initData = ForumParser.parseNewThreadInit(html)
+        assertEquals("1011f6f2", initData.formhash)
+        assertEquals("1791649255", initData.posttime)
+        assertEquals("160113", initData.uploadUid)
+        assertEquals("adb645b4ee8a34cf44712acd3cd6162b", initData.uploadHash)
+        assertEquals(2, initData.types.size)
+        assertEquals("59", initData.types[0].id)
+        assertEquals("求助问答", initData.types[0].name)
+        assertEquals("58", initData.types[1].id)
+        assertEquals("已解决", initData.types[1].name)
+        assertNull(initData.permissionDenied)
+    }
+
+    @Test
+    fun parseNewThreadInitPermissionDenied() {
+        val html = """
+            <div class="comiis_bodybox">
+                <p>抱歉，您没有权限在该版块发帖</p>
+            </div>
+        """.trimIndent()
+        val initData = ForumParser.parseNewThreadInit(html)
+        assertEquals("抱歉，您没有权限在该版块发帖", initData.permissionDenied)
+    }
+
+    @Test
+    fun parseNewThreadResultSuccess() {
+        val inajaxXml = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <root><![CDATA[<script type="text/javascript" reload="1">succeedhandle_postform('thread-12345-1-1.html', '非常感谢，您的主题已经发布');</script>]]></root>
+        """.trimIndent()
+        val res = ForumParser.parseNewThreadResult(inajaxXml)
+        assertTrue(res.success)
+        assertEquals("12345", res.tid)
+    }
+
+    @Test
+    fun parseNewThreadResultError() {
+        val errorXml = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <root><![CDATA[<script type="text/javascript" reload="1">errorhandle_postform('抱歉，您两次发表间隔少于 15 秒', {});</script>]]></root>
+        """.trimIndent()
+        val res = ForumParser.parseNewThreadResult(errorXml)
+        assertEquals(false, res.success)
+        assertEquals("抱歉，您两次发表间隔少于 15 秒", res.message)
+    }
 }

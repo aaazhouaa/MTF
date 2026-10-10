@@ -431,4 +431,29 @@ data class MyThreadPage(
     val hasNext: Boolean,
 )
 
+/** 版块主题分类。 */
+@Serializable
+data class ThreadType(
+    val id: String,
+    val name: String,
+)
+
+/** 发帖初始化数据（页面令牌、上传凭据、主题分类等）。 */
+data class NewThreadPageData(
+    val formhash: String,
+    val posttime: String? = null,
+    val uploadUid: String? = null,
+    val uploadHash: String? = null,
+    val types: List<ThreadType> = emptyList(),
+    val permissionDenied: String? = null,
+)
+
+/** 发新帖结果。 */
+data class NewThreadResult(
+    val success: Boolean,
+    val tid: String? = null,
+    val message: String? = null,
+)
+
+
 

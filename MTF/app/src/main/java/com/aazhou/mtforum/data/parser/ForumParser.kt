@@ -23,6 +23,9 @@ import com.aazhou.mtforum.data.model.SearchResult
 import com.aazhou.mtforum.data.model.Thread
 import com.aazhou.mtforum.data.model.ThreadPage
 import com.aazhou.mtforum.data.model.UserProfile
+import com.aazhou.mtforum.data.model.NewThreadPageData
+import com.aazhou.mtforum.data.model.NewThreadResult
+import com.aazhou.mtforum.data.model.ThreadType
 import com.aazhou.mtforum.data.model.FavoriteItem
 import com.aazhou.mtforum.data.model.FavoritePage
 import com.aazhou.mtforum.data.model.FollowUserItem
@@ -1113,7 +1116,10 @@ object ForumParser {
         val targetName = document.selectFirst(".header .name, .category .name, header span:not(.none)")
             ?.text()?.trim()
 
-        val nodes = document.select(".friend_msg, .self_msg, .msgbox > div[class*='msg'], .msgbox li, .comiis_pmlist li, div.dialog_green, div.dialog_white")
+        val nodes = document.select(".msgbox > div[class*='msg'], .friend_msg, .self_msg, .msgbox li, .comiis_pmlist li")
+            .ifEmpty {
+                document.select("div.dialog_green, div.dialog_white")
+            }
             .ifEmpty {
                 document.select("div:has(> .dialog_c), div:has(> div > .dialog_t)")
             }
@@ -1401,5 +1407,80 @@ object ForumParser {
             page = page,
             hasNext = hasNextPage(document),
         )
+    }
+
+    private val RE_POSTTIME_INPUT = Regex("""name="posttime"\s+(?:id="posttime"\s+)?value="(\d+)"""")
+    private val RE_POSTTIME_JS = Regex("""posttime\s*=\s*['"](\d+)['"]""")
+    private val RE_TID_MATCH = Regex("""thread-(\d+)|tid=(\d+)""")
+
+    /**
+     * 解析发帖页初始数据（formhash、posttime、图片上传凭据 uid/hash、主题分类 types、无权限提示）。
+     */
+    fun parseNewThreadInit(html: String): NewThreadPageData {
+        val formhash = parseFormhash(html).orEmpty()
+        val posttime = RE_POSTTIME_INPUT.find(html)?.groupValues?.get(1)
+            ?: RE_POSTTIME_JS.find(html)?.groupValues?.get(1)
+        val uploadUid = RE_UPLOAD_UID.find(html)?.groupValues?.get(1)
+        val uploadHash = RE_UPLOAD_HASH.find(html)?.groupValues?.get(1)
+
+        val document = doc(html)
+        val types = mutableListOf<ThreadType>()
+        val select = document.selectFirst("select[name=typeid], select#typeid")
+        if (select != null) {
+            for (opt in select.select("option")) {
+                val value = opt.attr("value").trim()
+                val text = opt.text().trim()
+                if (value.isNotEmpty() && value != "0" && text.isNotEmpty() && text != "请选择") {
+                    types.add(ThreadType(id = value, name = text))
+                }
+            }
+        }
+
+        val permissionDenied = if (html.contains("抱歉，您没有权限在该版块发帖") || html.contains("您目前没有权限发帖")) {
+            "抱歉，您没有权限在该版块发帖"
+        } else if (html.contains("抱歉，您尚未登录，没有权限发帖")) {
+            "请先登录后再发帖"
+        } else {
+            null
+        }
+
+        return NewThreadPageData(
+            formhash = formhash,
+            posttime = posttime,
+            uploadUid = uploadUid,
+            uploadHash = uploadHash,
+            types = types,
+            permissionDenied = permissionDenied,
+        )
+    }
+
+    /**
+     * 发新帖结果判定（inajax 回执与整页跳转判定）。
+     */
+    fun parseNewThreadResult(body: String): NewThreadResult {
+        if (body.contains("errorhandle_")) {
+            return NewThreadResult(success = false, message = extractReplyError(body))
+        }
+        if (body.contains("succeedhandle_")) {
+            val tid = RE_TID_MATCH.find(body)?.let { m ->
+                m.groupValues.getOrNull(1)?.takeIf { it.isNotEmpty() }
+                    ?: m.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }
+            }
+            return NewThreadResult(success = true, tid = tid)
+        }
+        val tid = RE_TID_MATCH.find(body)?.let { m ->
+            m.groupValues.getOrNull(1)?.takeIf { it.isNotEmpty() }
+                ?: m.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }
+        }
+        if (tid != null) {
+            return NewThreadResult(success = true, tid = tid)
+        }
+        if (body.contains("非常感谢") || body.contains("主题已经发布") || body.contains("帖子发布成功")) {
+            return NewThreadResult(success = true)
+        }
+        val errorMsg = extractReplyError(body)
+            ?: RE_TIP_MESSAGE.find(body)?.groupValues?.get(1)?.replace(Regex("<[^>]+>"), "")?.trim()
+            ?: if (body.contains("两次发表间隔")) "抱歉，您两次发表间隔过短，请稍后再试" else null
+        return NewThreadResult(success = false, message = errorMsg ?: "发帖未成功，请检查内容或重试")
     }
 }
