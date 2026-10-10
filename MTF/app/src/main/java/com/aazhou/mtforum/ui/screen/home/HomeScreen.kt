@@ -1,5 +1,8 @@
 package com.aazhou.mtforum.ui.screen.home
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -42,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -398,22 +402,53 @@ private fun HomeTopBar(
         // 与搜索胶囊等分的空白：胶囊减半后，主题/消息图标仍留在右边缘
         Spacer(Modifier.weight(1f))
         Spacer(Modifier.width(8.dp))
-        Icon(
-            painterResource(
-                if (LocalIsDarkTheme.current) {
-                    com.aazhou.mtforum.R.drawable.ic_theme_moon
-                } else {
-                    com.aazhou.mtforum.R.drawable.ic_theme_sun
-                },
-            ),
-            contentDescription = "切换主题",
-            tint = colors.iconSecondary,
+        val isDarkTheme = LocalIsDarkTheme.current
+        val darkProgress by animateFloatAsState(
+            targetValue = if (isDarkTheme) 1f else 0f,
+            animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+            label = "ThemeToggleProgress",
+        )
+        Box(
             modifier = Modifier
                 .size(36.dp)
                 .clip(CircleShape)
-                .clickable(onClick = onToggleTheme)
-                .padding(7.dp),
-        )
+                .clickable(onClick = onToggleTheme),
+            contentAlignment = Alignment.Center,
+        ) {
+            val sunAlpha = (1f - darkProgress * 1.6f).coerceIn(0f, 1f)
+            val moonAlpha = ((darkProgress - 0.375f) * 1.6f).coerceIn(0f, 1f)
+
+            if (sunAlpha > 0f) {
+                Icon(
+                    painter = painterResource(com.aazhou.mtforum.R.drawable.ic_theme_sun),
+                    contentDescription = "切换主题",
+                    tint = colors.iconSecondary,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .graphicsLayer {
+                            alpha = sunAlpha
+                            rotationZ = darkProgress * 90f
+                            scaleX = 1f - darkProgress * 0.4f
+                            scaleY = 1f - darkProgress * 0.4f
+                        },
+                )
+            }
+            if (moonAlpha > 0f) {
+                Icon(
+                    painter = painterResource(com.aazhou.mtforum.R.drawable.ic_theme_moon),
+                    contentDescription = "切换主题",
+                    tint = colors.iconSecondary,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .graphicsLayer {
+                            alpha = moonAlpha
+                            rotationZ = (darkProgress - 1f) * 90f
+                            scaleX = 0.6f + darkProgress * 0.4f
+                            scaleY = 0.6f + darkProgress * 0.4f
+                        },
+                )
+            }
+        }
         Spacer(Modifier.width(4.dp))
         Box(
             modifier = Modifier
