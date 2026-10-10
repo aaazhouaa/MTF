@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
@@ -35,7 +36,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -164,6 +164,15 @@ fun PostEditScreen(
         mutableStateOf(KeyboardTracker.getInitialHeight(context, density))
     }
     var keyboardHandoff by remember { mutableStateOf(false) }
+
+    // 键盘与表情面板的下部容器：高度单一真源，键盘收起/弹出时工具栏纹丝不动。
+    // 槽必须独立于上面的内容区：插入面板态同样要按键盘高度占位，否则键盘一升起
+    // 就把插入条连工具栏一起盖住。上面的输入区也靠它判断底部有没有东西占位
+    val bottomSlotHeight = when {
+        panel == PostComposerPanel.Smiley || keyboardHandoff -> smileySlot
+        imeHeight > 0.dp -> imeHeight
+        else -> 0.dp
+    }
 
     // 监控软键盘高度
     LaunchedEffect(Unit) {
@@ -473,14 +482,6 @@ fun PostEditScreen(
                         )
                     }
 
-                    // 键盘与表情面板的下部容器：高度单一真源，键盘收起/弹出时工具栏纹丝不动。
-                    // 槽必须独立于上面的内容区：插入面板态同样要按键盘高度占位，否则键盘一升起
-                    // 就把插入条连工具栏一起盖住
-                    val bottomSlotHeight = when {
-                        panel == PostComposerPanel.Smiley || keyboardHandoff -> smileySlot
-                        imeHeight > 0.dp -> imeHeight
-                        else -> 0.dp
-                    }
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -505,13 +506,14 @@ fun PostEditScreen(
                 }
             },
         ) { paddingValues ->
-            val scrollState = rememberScrollState()
+            // 底部被键盘/表情面板占位时，输入区在贴住面板的位置再整体上收 40dp
+            val inputAreaBottomGap = if (bottomSlotHeight > 0.dp) 40.dp else 0.dp
 
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
-                    .verticalScroll(scrollState),
+                    .padding(bottom = inputAreaBottomGap),
             ) {
                 // 权限限制提示
                 val permissionWarning = initData?.permissionDenied
@@ -584,6 +586,7 @@ fun PostEditScreen(
                     color = colors.surface,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .weight(1f)
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -642,7 +645,8 @@ fun PostEditScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(260.dp),
+                                .weight(1f)
+                                .heightIn(min = 80.dp),
                         ) {
                             BasicTextField(
                                 value = message,
@@ -781,8 +785,6 @@ fun PostEditScreen(
                         }
                     }
                 }
-
-                Spacer(Modifier.height(16.dp))
             }
         }
 
