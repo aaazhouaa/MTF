@@ -671,10 +671,11 @@ object ForumParser {
     }
 
     /** 从任意页面提取当前用户；未登录时 uid 为 "0"。 */
-    /** 个人空间页的 uid：优先 discuz_uid，其次 JS 变量 uid（指定 uid 查看时指向被查看者）。 */
-    fun parseUserProfile(html: String): UserProfile {
+    /** 个人空间页的 uid：优先指定 fallbackUid，其次 JS 变量 uid 或 discuz_uid。 */
+    fun parseUserProfile(html: String, fallbackUid: String? = null): UserProfile {
         val document = doc(html)
-        val uid = Regex("discuz_uid\\s*=\\s*'(\\d+)'").find(html)?.groupValues?.get(1)
+        val uid = fallbackUid?.takeIf { it.isNotBlank() }
+            ?: Regex("discuz_uid\\s*=\\s*'(\\d+)'").find(html)?.groupValues?.get(1)
             ?: RE_UID_VAR.find(html)?.groupValues?.get(1)
         if (uid == null || uid == "0") return UserProfile(uid = uid)
         // comiis 模板的个人中心：kmlevs 是等级（Lv.3），kmlev 是用户组（初中生）；
@@ -687,6 +688,15 @@ object ForumParser {
             ?: document.selectFirst("a.sidenv_user")?.text()?.trim()
         val avatar = document.selectFirst(".comiis_space_tx .user_img img")?.attr("src")
             ?: document.selectFirst("img.sidenv_tximg, div.sidenv_user img")?.attr("src")
+
+        val followEl = document.selectFirst("#followmod")
+        val isFollowing = when {
+            followEl == null -> null
+            followEl.hasClass("kmok") || followEl.attr("href").contains("op=del") -> true
+            followEl.attr("href").contains("op=add") -> false
+            else -> null
+        }
+
         return UserProfile(
             uid = uid,
             name = name,
@@ -701,7 +711,28 @@ object ForumParser {
             credits = numberByLabel(document, "积分"),
             gold = numberByLabel(document, "金币"),
             onlineTime = textByLabel(document, "在线时间"),
+            isFollowing = isFollowing,
+            formhash = parseFormhash(html),
         )
+    }
+
+    /** 从 Discuz AJAX 响应中提取提示消息（如「成功收听」「好友请求已发送」「黑名单添加成功」等）。 */
+    fun parseAjaxMessage(response: String): String? {
+        val pMatch = Regex("""<p>([\s\S]*?)(?:<script|</p>)""").find(response)?.groupValues?.get(1)?.trim()
+        if (!pMatch.isNullOrBlank()) {
+            val text = doc(pMatch).text().trim()
+            if (text.isNotBlank()) return text
+        }
+        val dtMatch = Regex("""id=["']messagetext["'][^>]*>([\s\S]*?)</dt>""").find(response)?.groupValues?.get(1)?.trim()
+        if (!dtMatch.isNullOrBlank()) {
+            val text = doc(dtMatch).text().trim()
+            if (text.isNotBlank()) return text
+        }
+        val alertMatch = Regex("""(?:popup\.open|alert)\(['"]([^'"]+)['"]""").find(response)?.groupValues?.get(1)?.trim()
+        if (!alertMatch.isNullOrBlank() && !alertMatch.contains("<img") && !alertMatch.contains("http")) {
+            return alertMatch
+        }
+        return null
     }
 
     /**

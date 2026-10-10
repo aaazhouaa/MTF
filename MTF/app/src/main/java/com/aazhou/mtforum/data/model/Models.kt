@@ -253,6 +253,10 @@ data class UserProfile(
     val credits: Int? = null,
     val gold: Int? = null,
     val onlineTime: String? = null,
+    /** 页面解析到的关注状态（null 表示无关注按钮，如自己主页或未登录）。 */
+    val isFollowing: Boolean? = null,
+    /** 页面解析到的 formhash。 */
+    val formhash: String? = null,
 ) {
     val isLoggedIn: Boolean get() = !uid.isNullOrEmpty() && uid != "0"
 }

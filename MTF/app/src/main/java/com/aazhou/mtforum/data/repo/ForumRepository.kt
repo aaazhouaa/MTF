@@ -475,9 +475,8 @@ class ForumRepository(
 
     /** 指定用户的个人中心（他人主页）。 */
     suspend fun userProfile(uid: String): UserProfile = withContext(Dispatchers.IO) {
-        ForumParser.parseUserProfile(
-            http.get(http.url("home.php?mod=space&uid=$uid&do=profile&mobile=2")),
-        )
+        val html = http.get(http.url("home.php?mod=space&uid=$uid&do=profile&mobile=2"))
+        ForumParser.parseUserProfile(html, fallbackUid = uid)
     }
 
     /** 举报本帖（[pid] 为空）或某条回复；理由与说明由弹窗传入。 */
@@ -699,6 +698,65 @@ class ForumRepository(
         )
         val res = http.get(url)
         res.isNotBlank()
+    }
+
+    /** 关注 / 取消关注用户，返回站点提示文本。 */
+    suspend fun followUser(uid: String, formhash: String?, follow: Boolean): String = withContext(Dispatchers.IO) {
+        val fh = formhash?.takeIf { it.isNotBlank() } ?: run {
+            val html = http.get(http.url("home.php?mod=follow&do=following&mobile=2"))
+            ForumParser.parseFormhash(html) ?: ""
+        }
+        val url = http.url(
+            "home.php?mod=spacecp&ac=follow&op=${if (follow) "add" else "del"}" +
+                "&fuid=$uid&hash=$fh&inajax=1&mobile=2",
+        )
+        val res = http.get(url)
+        ForumParser.parseAjaxMessage(res) ?: if (follow) "已关注" else "已取消关注"
+    }
+
+    /** 添加好友（发送好友申请并带附言）。 */
+    suspend fun addFriend(uid: String, formhash: String, note: String = ""): Result<String> = withContext(Dispatchers.IO) {
+        val url = http.url("home.php?mod=spacecp&ac=friend&op=add&uid=$uid&inajax=1")
+        val params = mapOf(
+            "referer" to http.url("home.php?mod=space&uid=$uid&do=profile&mobile=2"),
+            "addsubmit" to "true",
+            "addsubmit_btn" to "true",
+            "formhash" to formhash,
+            "note" to note,
+            "gid" to "1",
+        )
+        val res = http.post(url, params)
+        val msg = ForumParser.parseAjaxMessage(res) ?: if (res.isNotBlank()) "请求已发送" else "发送失败"
+        Result.success(msg)
+    }
+
+    /** 发送私信（聊聊天）。 */
+    suspend fun sendPrivateMessage(touid: String, formhash: String, message: String): Result<String> = withContext(Dispatchers.IO) {
+        if (message.isBlank()) return@withContext Result.failure(IllegalArgumentException("消息内容不能为空"))
+        val url = http.url("home.php?mod=spacecp&ac=pm&op=send&pmid=0&daterange=2&pmsubmit=yes&inajax=1&mobile=2")
+        val params = mapOf(
+            "formhash" to formhash,
+            "touid" to touid,
+            "message" to message,
+            "pmsubmit" to "yes",
+        )
+        val res = http.post(url, params)
+        val msg = ForumParser.parseAjaxMessage(res) ?: if (res.isNotBlank()) "发送成功" else "发送失败"
+        Result.success(msg)
+    }
+
+    /** 将用户加入黑名单（拉黑ta）。 */
+    suspend fun addUserBlacklist(username: String, formhash: String): Result<String> = withContext(Dispatchers.IO) {
+        val url = http.url("home.php?mod=spacecp&ac=friend&op=blacklist&start=&inajax=1")
+        val params = mapOf(
+            "blacklistsubmit" to "true",
+            "blacklistsubmit_btn" to "true",
+            "formhash" to formhash,
+            "username" to username,
+        )
+        val res = http.post(url, params)
+        val msg = ForumParser.parseAjaxMessage(res) ?: if (res.isNotBlank()) "已加入黑名单" else "操作失败"
+        Result.success(msg)
     }
 }
 
