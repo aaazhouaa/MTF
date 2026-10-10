@@ -5,10 +5,27 @@ import okhttp3.Response
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * 全局请求节流：站点挂阿里云 ESA，短时间高频请求会被 IP 级拦截。
- * 保证两次请求间隔不小于 [minIntervalMs]；命中 403/429 时退避一段时间。
+ * 站点 CDN 对单 IP 访问限频时返回的非标准状态码。
+ *
+ * 阿里云 ESA 的状态码表里没有它（ESA 的扩展段是 498/499 与 520~599），腾讯云 CDN
+ * 把 514 定义为「超出 IP 访问限频」；站点边缘确实按 IP 做访问控制，未命中缓存的请求
+ * 会拿到 `x-tengine-error: denied by ip_access_rule`，与这个码同源。
  */
-class RateLimiter(private val minIntervalMs: Long = 400L) : Interceptor {
+const val CDN_IP_RATE_LIMITED = 514
+
+/** 命中即退避的状态码：403 边缘拦截、429 频控、514 CDN 单 IP 访问限频。 */
+private val DEFAULT_BACKOFF_CODES = setOf(403, 429, CDN_IP_RATE_LIMITED)
+
+/**
+ * 全局请求节流：站点挂阿里云 ESA，短时间高频请求会被 IP 级拦截。
+ * 保证两次请求间隔不小于 [minIntervalMs]；命中 [backoffCodes] 时退避一段时间。
+ *
+ * [backoffCodes] 可收紧：媒体客户端只对限频码退避，避免一次 403 把所有图片拖停。
+ */
+class RateLimiter(
+    private val minIntervalMs: Long = 400L,
+    private val backoffCodes: Set<Int> = DEFAULT_BACKOFF_CODES,
+) : Interceptor {
 
     private val lastRequestAt = AtomicLong(0L)
 
@@ -26,7 +43,7 @@ class RateLimiter(private val minIntervalMs: Long = 400L) : Interceptor {
         }
 
         val response = chain.proceed(chain.request())
-        if (response.code == 403 || response.code == 429) {
+        if (response.code in backoffCodes) {
             blockedUntil = System.currentTimeMillis() + 3000
         }
         return response
