@@ -241,8 +241,15 @@ class ThreadDetailViewModel(
      * 拉取 [seq] 序列的第 [target] 页并入楼层池；target 为 1 表示该序列的头一页。
      * 请求按序列自己的排序口径发：正序第 1 页是最旧的评论，倒序（ordertype=1）
      * 第 1 页是全帖最新的评论，与站点网页端同一套翻页。
+     *
+     * [stalePages] 是主页面之后要顺手重拉的页：切换档位时把该档的头页、末页与切换前
+     * 正在看的页再拉一遍换成最新版。串行、尽力而为，失败不影响主加载。
      */
-    fun load(target: Int = currentMaxPage, orderType: Int = _orderType.value) {
+    fun load(
+        target: Int = currentMaxPage,
+        orderType: Int = _orderType.value,
+        stalePages: Set<Int> = emptySet(),
+    ) {
         val seq = Sequence(opOnlyAuthorId(), orderType)
         val previousOpOnly = _opOnly.value
         val previousOrderType = _orderType.value
@@ -305,6 +312,12 @@ class ThreadDetailViewModel(
             // 界面会先渲染到帖子正文、等目标页到达后再跳过去。
             fetchAnchorPage()
             publish()
+            // 主页面已经上屏，再把要更新的几页拉回来：楼层按 pid 覆盖写，界面就地换版
+            val stale = stalePages - target
+            if (stale.isNotEmpty() && generation == dataGeneration) {
+                refetchStale(seq, stale, generation)
+                publish()
+            }
         }
     }
 
@@ -518,8 +531,18 @@ class ThreadDetailViewModel(
         var added = 0
         val pageMap = pageOf.getOrPut(seq) { mutableMapOf() }
         for (post in page.posts) {
-            if (!pool.containsKey(post.pid)) added++
-            pool[post.pid] = post
+            val existing = pool[post.pid]
+            // authorid 过滤页的楼层号是过滤后集合里的相对编号（「沙发」指第 2 条，不是全帖
+            // 第 2 楼），当绝对楼层用会把共用池的排序打乱、正序视图里整条跳走。过滤页只用
+            // 来更新内容：已入池的沿用原来的楼层号与标签，首次入池的楼层号留空、由
+            // poolOrder 按入池顺序补（标签留着——网页端在过滤页显示的正是「沙发」这类）。
+            val merged = when {
+                seq.authorId == null -> post
+                existing != null -> post.copy(floor = existing.floor, floorLabel = existing.floorLabel)
+                else -> post.copy(floor = null)
+            }
+            if (existing == null) added++
+            pool[post.pid] = merged
             pageMap[post.pid] = pageNo
         }
         return added
@@ -647,16 +670,22 @@ class ThreadDetailViewModel(
     }
 
     /**
-     * 编辑成功后把改后的正文取回来。
+     * 编辑成功后把改后的那一楼上屏。
      *
-     * 站点不单独回传改后的内容，只有重拉的页面里有；被编辑的楼层常在后几页（自己的
-     * 回复多半在末尾），故先按 pid 解析它所在页再拉那一页，解析不出才退回第 1 页。
-     * 解析出的页码是正序口径的编号，与当前视图是不是倒序无关，故按正序拉。
+     * 站点不单独回传改后的内容，只有重拉的页面里有，所以重拉该楼层所在那一页、按 pid
+     * 覆盖写进楼层池。拿本地记录的页码（[pageOf]）先拉，那一页上没有它再问站点的
+     * findpost 跳转；两条路都没找到才退回刷第 1 页。
      */
     private fun refreshEditedFloor(pid: String) {
         viewModelScope.launch {
-            val page = runCatching { repository.noticeReplyPage(tid, pid) }.getOrNull()
-            if (page != null && page > 1) load(page, FETCH_ORDER) else refreshFirstPage()
+            if (refetchFloorPage(pid) == true) {
+                publish()
+                return@launch
+            }
+            // 本地页码没派上用场：走下拉刷新那套——第 1 页加最近可见页。把刚编辑的楼层并进
+            // 可见集，它所在页就一定会被重拉（用户刚才正看着它，多半早就在集里了）。
+            recentVisiblePids = recentVisiblePids + pid
+            refresh()
         }
     }
 
@@ -700,10 +729,22 @@ class ThreadDetailViewModel(
         requestedAnchor = anchor
         _opOnly.value = opOnly
         _orderType.value = orderType
+        val seq = currentSequence
         // 拉「新序列的第 1 页」：站点倒序的第 1 页就是全帖最新评论，与网页端同一套
         // 翻页；这条序列已经拉过了就接着往下，全都拉过就只换视图重发、不再发请求
-        val target = nextPageToFetch(currentSequence)
-        if (target > 0) load(target) else viewModelScope.launch { publish() }
+        val target = nextPageToFetch(seq)
+        // 只换排法看到的是旧数据：切换时把该档的头页、末页与切换前正在看的页重拉一遍
+        val stale = stalePagesOnSwitch(seq, skip = target)
+        if (target > 0) {
+            load(target, orderType = seq.orderType, stalePages = stale)
+            return
+        }
+        // 这一档全都拉过了：没有主加载可搭车，自己走一遍重拉再上屏
+        val generation = dataGeneration
+        viewModelScope.launch {
+            refetchStale(seq, stale, generation)
+            if (generation == dataGeneration) publish()
+        }
     }
 
     /**
@@ -753,17 +794,69 @@ class ThreadDetailViewModel(
             return
         }
         viewModelScope.launch {
-            val ok = runCatching {
+            val submitted = runCatching {
                 repository.deletePost(tid, pid, data.formhash)
             }.getOrDefault(false)
-            if (ok) {
-                // 直接从楼层池移除该楼层并重算树/灌水；
-                // 不能调 refreshFirstPage：它会重新拉第 1 页，把已删楼层按 pid 再加回来。
+            // 回执是字符串匹配，不能单独作准：删除成功会被重定向回帖子页，页面里自己其它
+            // 楼层的「编辑」链接会被误判成「还在编辑表单」。真正该问的是「楼层还在不在」，
+            // 所以重拉该楼层所在页来定论；一页都没拉到时才退回采信回执。
+            val stillThere = refetchFloorPage(pid)
+            val gone = if (stillThere == null) submitted else !stillThere
+            if (gone) {
+                // 直接从楼层池移除该楼层并重算树/灌水
                 pool.remove(pid)
                 publish()
+                _actionMessage.value = "已删除该回复"
+            } else {
+                _actionMessage.value = "删除未生效，站点可能不允许删除"
             }
-            _actionMessage.value = if (ok) "已删除该回复" else "删除未生效，站点可能不允许删除"
         }
+    }
+
+    /** 拉一页；网络不通、被 WAF 挡了、解析出一条都没有时返回 null。 */
+    private suspend fun fetchPageOrNull(seq: Sequence, page: Int): ThreadPage? = try {
+        repository.threadPage(tid, page, seq.orderType, seq.authorId).takeIf { it.posts.isNotEmpty() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * 重拉 [pid] 所在的那一页合入楼层池，返回这个楼层在不在新鲜页面上；一页都没拉到
+     * 返回 null，此时「不在」不能当结论。
+     *
+     * 先按本地记录的页码拉：[pageOf] 在楼层入池时记下了它来自哪一页，连序列一起记，
+     * 页码就是那个序列自己的口径。同一条楼层可能在几个序列下都记过（正序拉过一次、
+     * 倒序又拉过一次），只挑一条来拉的话，万一那条的页码已被新增评论挤过期，这一轮就
+     * 白跑，所以记到的页全拉一遍。都没有它再问站点的 findpost 跳转要它现在的页码
+     * （站点给的是正序口径，故按正序拉）。
+     *
+     * 顺带把那几页合入楼层池：删掉一条之后站点会把后一页的楼层挪上来，池子里的内容和
+     * 页面对不上，合入一次正好换成最新版。
+     */
+    private suspend fun refetchFloorPage(pid: String): Boolean? {
+        var fetched = false
+        for ((seq, page) in pageOf.entries.mapNotNull { (seq, map) -> map[pid]?.let { seq to it } }) {
+            // 只看楼主序列记的页也跳过：那一路的楼层号不带绝对意义，合进来只更新内容
+            // （见 mergeIntoPool），对「这轮有没有拿到新数据」没有帮助，省一次请求。
+            if (seq.authorId != null) continue
+            val data = fetchPageOrNull(seq, page) ?: continue
+            mergeIntoPool(seq, page, data)
+            fetched = true
+            if (data.posts.any { it.pid == pid }) return true
+        }
+        // 记到的页上都没有它：页码过期了，问站点它现在在第几页
+        val located = runCatching { repository.noticeReplyPage(tid, pid) }.getOrNull()
+        if (located != null && located > 0) {
+            // findpost 给的是未过滤口径的页码，故不能带 authorid：带上就连页号都不是一套了
+            val data = fetchPageOrNull(Sequence(null, FETCH_ORDER), located)
+            if (data != null) {
+                mergeIntoPool(Sequence(null, FETCH_ORDER), located, data)
+                return data.posts.any { it.pid == pid }
+            }
+        }
+        return if (fetched) false else null
     }
 
     fun toggleFollow() {
@@ -1064,6 +1157,43 @@ class ThreadDetailViewModel(
     /** 界面回报最近可见的楼层 id：下拉刷新据此决定额外重拉哪几页。 */
     fun noteVisiblePids(pids: Set<String>) {
         recentVisiblePids = pids
+    }
+
+    /**
+     * 把 [pages] 里的页重拉一遍合入楼层池。
+     *
+     * 切换档位与下拉刷新都用它把旧数据换成最新版：楼层按 pid 覆盖写，列表就地换版、
+     * 不闪不跳。尽力而为——某一页失败就跳过，不提示也不中断剩下的页，这些页不是
+     * 用户主动点的，弹失败提示只会刷屏。也不推进页码记录：这些页本来就记过，且站点
+     * 会把越界页夹成末页，据它推进页码会重演幻觉页码那个坑。
+     */
+    private suspend fun refetchStale(seq: Sequence, pages: Set<Int>, generation: Int) {
+        for (page in pages) {
+            if (page <= 0 || generation != dataGeneration) return
+            val data = try {
+                repository.threadPage(tid, page, seq.orderType, seq.authorId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                continue
+            }
+            mergeIntoPool(seq, page, data)
+        }
+    }
+
+    /**
+     * 切换档位时要重拉的页：该序列的头页与末页，加上切换前正在看的那几页。
+     *
+     * 站点两边的新评论落在不同位置：倒序第 1 页就是全帖最新，正序/楼主则追加在最后
+     * 一页之内，所以头页和末页都得拉。[skip] 是这次主加载正要拉的那一页，剔掉避免
+     * 同一页连发两次请求。从没拉过的序列没有末页可记，算出来只剩头页，减掉 [skip]
+     * 后为空集，即只有主加载那一个请求。
+     */
+    private fun stalePagesOnSwitch(seq: Sequence, skip: Int): Set<Int> {
+        val progress = progressOf(seq)
+        val lastPage = maxOf(progress.totalPages, progress.maxPage).coerceAtLeast(1)
+        val seen = recentVisiblePids.mapNotNull { pageOf[seq]?.get(it) }
+        return (setOf(1, lastPage) + seen).filter { it != skip }.toSortedSet()
     }
 
     /** 打赏（pid 为空为打赏首帖）。 */

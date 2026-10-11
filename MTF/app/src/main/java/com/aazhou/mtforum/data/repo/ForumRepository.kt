@@ -49,8 +49,12 @@ private val LIKE_ERROR_PATTERN = Regex(
 private val REPORT_ERROR_PATTERN = Regex("举报理由|action=login|请先登录")
 
 /** 删除未生效：返回的仍是编辑表单（含 editsubmit）或跳登录页。
- * 不能拿 name="message" 判定——删除成功后重定向到的帖子页也带快速回复框。 */
-private val DELETE_STILL_FORM_PATTERN = Regex("action=edit|editsubmit")
+ * 不能拿 name="message" 判定——删除成功后重定向到的帖子页也带快速回复框。
+ * 两个标记都要有才算「还在表单里」：删除成功会被重定向回帖子页，页面里自己其它楼层
+ * 的「编辑」链接（action=edit）单独出现是正常回执，只认一个标记会把删成功的回执误判
+ * 成失败（编辑链路的判据同理，见 ForumParser.parseEditPostResult）。 */
+private val DELETE_FORM_ACTION = Regex("action=edit")
+private val DELETE_FORM_SUBMIT = Regex("editsubmit")
 
 /** 消息提醒的内容类别（默认页只是类别菜单，没有提醒内容）。 */
 private val NOTICE_VIEWS = listOf("mypost", "interactive", "system")
@@ -552,9 +556,8 @@ class ForumRepository(
         val url = http.url("forum.php?mod=post&action=edit&extra=&tid=$tid&pid=$pid&page=1&delete=1&mobile=2")
         val body = http.post(url, params)
         // 未真正删除时编辑页仍返回完整表单，以此区分「已删除」与「服务端拒删却 200」
-        // 判据只认表单本身：帖子页里到处是 action=login（登录入口），拿它当表单标记会把
-        // 删成功的回执误判成「还在表单里」
-        body.isNotBlank() && !DELETE_STILL_FORM_PATTERN.containsMatchIn(body)
+        val stillForm = DELETE_FORM_ACTION.containsMatchIn(body) && DELETE_FORM_SUBMIT.containsMatchIn(body)
+        body.isNotBlank() && !stillForm
     }
 
     /**

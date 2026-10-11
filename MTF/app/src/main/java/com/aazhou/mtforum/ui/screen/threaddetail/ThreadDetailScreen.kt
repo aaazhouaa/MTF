@@ -89,6 +89,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -312,7 +313,8 @@ fun ThreadDetailScreen(
     LaunchedEffect(editForm) {
         when (val f = editForm) {
             is ThreadDetailViewModel.EditFormState.Ready -> {
-                editText = TextFieldValue(f.text)
+                // 光标落在正文末尾：编辑是从头补改，不是接着开头写
+                editText = TextFieldValue(f.text, selection = TextRange(f.text.length))
                 // 只消费一次：不复位的话面板每次重组都会又被这一态拉起
                 viewModel.consumeEditForm()
                 keyboardShown = false
@@ -674,7 +676,13 @@ fun ThreadDetailScreen(
                                             }
                                         },
                                         onLinkClick = { url ->
-                                            openForumLink(context, url, container.httpClient.host, onThreadClick)
+                                            openForumLink(
+                                                context,
+                                                url,
+                                                container.httpClient.host,
+                                                onThreadClick,
+                                                onUserClick,
+                                            )
                                         },
                                     )
                                 }
@@ -1850,7 +1858,9 @@ internal fun ReplyBlock(
                     pageImages = pageImages,
                     bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp),
                     modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { onLongPress(reply) }),
-                    onLinkClick = { url -> openForumLink(context, url, siteHost, onThreadClick) },
+                    onLinkClick = { url ->
+                        openForumLink(context, url, siteHost, onThreadClick, onUserClick)
+                    },
                     selectable = false,
                 )
             }

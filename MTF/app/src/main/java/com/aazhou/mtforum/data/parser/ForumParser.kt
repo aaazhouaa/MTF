@@ -346,7 +346,7 @@ object ForumParser {
         val firstPostIndex = postNodes.indexOfFirst { it.selectFirst("div.comiis_postli_topv1") != null }
         val posts = postNodes.mapIndexed { index, li ->
             val post = parsePost(li, authorId)
-            val label = li.selectFirst("span.f_d.y")?.text()?.trim()
+            val label = li.selectFirst("span.f_d.y")?.text()?.stripInvisibleChars()
             val explicit = floorNumberOf(label)
             val floor = when {
                 post.isFirstPost -> 0
@@ -360,8 +360,7 @@ object ForumParser {
             }
             post.copy(
                 floor = floor,
-                // 楼层显示统一成 «N#»：站点第 1 页不给标签，给了也是「沙发」这类称谓
-                floorLabel = floor?.let { "$it#" },
+                floorLabel = floorLabelOf(label, floor),
             )
         }
         // 「全部评论」只计回复，首帖不计入
@@ -580,6 +579,16 @@ object ForumParser {
         // 第二页起站点给的标签形如 «16<sup>#</sup>»，取开头数字即可
         RE_FLOOR_NUMBER.find(text)?.groupValues?.get(1)?.let { return it.toInt() }
         return FLOOR_NAMES[text]
+    }
+
+    /**
+     * 楼层显示按网页端来：站点第 1 页给的是「沙发」这类称谓，原样显示；
+     * 「置顶 来自2#」与 «N#» 都归一到楼层号，免得列表里混进一串前缀。
+     */
+    private fun floorLabelOf(label: String?, floor: Int?): String? {
+        val text = label.orEmpty()
+        if (text.isNotEmpty() && FLOOR_NAMES.containsKey(text)) return text
+        return floor?.let { "$it#" }
     }
 
     /**
