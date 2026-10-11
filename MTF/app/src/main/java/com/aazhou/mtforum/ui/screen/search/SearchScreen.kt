@@ -75,6 +75,7 @@ import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.LoadingBox
+import com.aazhou.mtforum.ui.common.SwipeTabIndicator
 import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
@@ -290,6 +291,9 @@ fun SearchScreen(
                     selectedTabIndex = pagerState.currentPage,
                     containerColor = colors.topBar,
                     contentColor = accent,
+                    indicator = { tabPositions ->
+                        SwipeTabIndicator(pagerState, tabPositions, accent)
+                    },
                 ) {
                     searchTabs.forEachIndexed { index, tab ->
                         Tab(
