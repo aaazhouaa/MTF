@@ -15,8 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,7 +38,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -52,9 +54,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.aazhou.mtforum.R
+import com.aazhou.mtforum.data.cache.CacheKeys
+import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.model.FavoriteItem
+import com.aazhou.mtforum.data.model.FavoritePage
 import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.ForumRepository
+import com.aazhou.mtforum.data.repo.SessionStore
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
@@ -70,78 +76,140 @@ import com.aazhou.mtforum.ui.theme.bodyTextColor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+
+/** 单个 tab（全部/帖子/版块）的收藏列表状态。 */
+data class FavoritesTabState(
+    val state: UiState<List<FavoriteItem>> = UiState.Loading,
+    val page: Int = 1,
+    val loadingMore: Boolean = false,
+    val hasNext: Boolean = true,
+)
 
 class MyFavoritesViewModel(
     private val repository: ForumRepository,
     private val actionStore: ActionStore,
+    private val contentCache: ContentCache,
+    private val sessionStore: SessionStore,
 ) : ViewModel() {
-    private val _type = MutableStateFlow("all")
-    val type: StateFlow<String> = _type.asStateFlow()
 
-    private val _state = MutableStateFlow<UiState<List<FavoriteItem>>>(UiState.Loading)
-    val state: StateFlow<UiState<List<FavoriteItem>>> = _state.asStateFlow()
-
-    private val _hasNext = MutableStateFlow(false)
-    val hasNext: StateFlow<Boolean> = _hasNext.asStateFlow()
-
-    private val _loadingMore = MutableStateFlow(false)
-    val loadingMore: StateFlow<Boolean> = _loadingMore.asStateFlow()
+    /** 各 tab 的列表状态，key 为收藏类型；未加载过的 tab 不在表内。 */
+    private val _tabStates = MutableStateFlow<Map<String, FavoritesTabState>>(emptyMap())
+    val tabStates: StateFlow<Map<String, FavoritesTabState>> = _tabStates.asStateFlow()
 
     /** 正在取消收藏的条目 key（favid，取不到时退到 id）：行内转圈并防连点。 */
     private val _removing = MutableStateFlow("")
     val removing: StateFlow<String> = _removing.asStateFlow()
 
-    private var currentPage = 1
+    /** 一次性提示（如「新数据获取失败」）；界面展示后调 [consumeActionMessage] 清掉。 */
+    private val _actionMessage = MutableStateFlow<String?>(null)
+    val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
 
-    init {
-        load("all")
+    fun consumeActionMessage() {
+        _actionMessage.value = null
     }
 
-    fun switchTab(newType: String) {
-        if (_type.value == newType) return
-        _type.value = newType
-        load(newType)
-    }
+    private val cacheJson = Json { ignoreUnknownKeys = true }
 
-    fun load(type: String = _type.value) {
-        currentPage = 1
-        _state.value = UiState.Loading
+    /**
+     * 首次进入某个 tab：有缓存就先摆出来（不走全屏 Loading），网络回来再原地替换。
+     *
+     * 已加载过的 tab 直接返回：切 tab 不重新请求，滚动位置与已翻页的数据都留着。
+     */
+    fun load(type: String) {
+        if (_tabStates.value.containsKey(type)) return
+        update(type) { FavoritesTabState() }
         viewModelScope.launch {
-            try {
-                val pageData = repository.myFavorites(type = type, page = 1)
-                _hasNext.value = pageData.hasNext
-                _state.value = UiState.Success(pageData.items)
-            } catch (e: Exception) {
-                _state.value = UiState.Error(e.message ?: "加载失败")
+            val uid = sessionStore.uid.first()
+            // 过期也照摆：内容旧一点也好过对着转圈等网络，刷新失败时下面保留旧内容只提示
+            val cached = contentCache.read(
+                CacheKeys.myFavorites(uid, type),
+                CacheKeys.LIST_TTL,
+                allowExpired = true,
+            ) {
+                cacheJson.decodeFromString<FavoritePage>(it)
             }
+            if (cached != null) {
+                update(type) {
+                    it.copy(
+                        state = UiState.Success(cached.items),
+                        page = cached.page,
+                        hasNext = cached.hasNext,
+                    )
+                }
+            }
+            reload(type, uid)
         }
     }
 
-    fun loadMore() {
-        if (_loadingMore.value || !_hasNext.value) return
-        _loadingMore.value = true
-        val nextPage = currentPage + 1
-        viewModelScope.launch {
-            try {
-                val pageData = repository.myFavorites(type = _type.value, page = nextPage)
-                val current = (_state.value as? UiState.Success)?.data.orEmpty()
-                _state.value = UiState.Success((current + pageData.items).distinctBy { if (it.favid.isNotEmpty()) it.favid else it.id })
-                currentPage = nextPage
-                _hasNext.value = pageData.hasNext
-            } catch (_: Exception) {
-            } finally {
-                _loadingMore.value = false
+    /** 加载失败后的重试：不受「已加载过」限制，直接重拉第一页。 */
+    fun retry(type: String) {
+        viewModelScope.launch { reload(type, sessionStore.uid.first()) }
+    }
+
+    private suspend fun reload(type: String, uid: String) {
+        runCatching { repository.myFavorites(type = type, page = 1) }
+            .onSuccess { data ->
+                update(type) {
+                    it.copy(state = UiState.Success(data.items), page = 1, hasNext = data.hasNext)
+                }
+                saveToCache(uid, type)
             }
+            .onFailure { e ->
+                // 有缓存就留着旧内容，只提示这次没拿到新的
+                if (_tabStates.value[type]?.state is UiState.Success) {
+                    _actionMessage.value = "新数据获取失败"
+                } else {
+                    update(type) { it.copy(state = UiState.Error(e.message ?: "加载失败")) }
+                }
+            }
+    }
+
+    /** 滑到底部时追加下一页。 */
+    fun loadMore(type: String) {
+        val current = _tabStates.value[type] ?: return
+        if (current.loadingMore || !current.hasNext) return
+        if (current.state !is UiState.Success) return
+        update(type) { it.copy(loadingMore = true) }
+        viewModelScope.launch {
+            val next = current.page + 1
+            runCatching { repository.myFavorites(type = type, page = next) }
+                .onSuccess { data ->
+                    // 合并时现读，避免把刚替换上的新列表又拼回旧数据后面
+                    val existing = (_tabStates.value[type]?.state as? UiState.Success)?.data.orEmpty()
+                    val known = existing.mapTo(HashSet()) { favoriteKey(it) }
+                    val fresh = data.items.filter { known.add(favoriteKey(it)) }
+                    update(type) {
+                        it.copy(
+                            state = UiState.Success(existing + fresh),
+                            page = next,
+                            hasNext = data.hasNext && fresh.isNotEmpty(),
+                        )
+                    }
+                    saveToCache(sessionStore.uid.first(), type)
+                }
+                .onFailure { update(type) { it.copy(hasNext = false) } }
+            update(type) { it.copy(loadingMore = false) }
         }
     }
 
+    /** 取消收藏：先摘掉各 tab 里的同一条目（「全部」与「帖子」可能同时有它），失败再放回去。 */
     fun removeFavorite(item: FavoriteItem) {
-        val currentList = (_state.value as? UiState.Success)?.data ?: return
         val key = item.favid.ifEmpty { item.id }
         if (_removing.value.isNotEmpty() || key.isEmpty()) return
+        val affected = _tabStates.value.keys.filter { type -> listOf(type).any { sameFavorite(it, item) } }
+        if (affected.isEmpty()) return
+        val snapshot = affected.associateWith { listOf(it) }
         _removing.value = key
-        _state.value = UiState.Success(currentList.filterNot { sameFavorite(it, item) })
+        affected.forEach { type ->
+            update(type) {
+                it.copy(
+                    state = UiState.Success(snapshot[type].orEmpty().filterNot { fav -> sameFavorite(fav, item) }),
+                )
+            }
+        }
         viewModelScope.launch {
             val ok = runCatching { repository.deleteFavorite(item.favid) }
                 .getOrElse { false }
@@ -151,17 +219,45 @@ class MyFavoritesViewModel(
                 if (item.type == "thread" && item.id.isNotBlank()) {
                     actionStore.setFavorited(item.id, false)
                 }
+                val uid = sessionStore.uid.first()
+                affected.forEach { type -> saveToCache(uid, type) }
             } else {
                 AppToast.show("取消收藏失败")
-                _state.value = UiState.Success(currentList)
+                snapshot.forEach { (type, list) ->
+                    update(type) { it.copy(state = UiState.Success(list)) }
+                }
             }
             _removing.value = ""
         }
     }
 
+    private fun listOf(type: String): List<FavoriteItem> =
+        (_tabStates.value[type]?.state as? UiState.Success)?.data ?: emptyList()
+
+    private fun favoriteKey(item: FavoriteItem): String = item.favid.ifEmpty { item.id }
+
     private fun sameFavorite(a: FavoriteItem, b: FavoriteItem): Boolean =
         (a.favid.isNotEmpty() && a.favid == b.favid) || (a.id.isNotEmpty() && a.id == b.id)
+
+    private fun update(type: String, transform: (FavoritesTabState) -> FavoritesTabState) {
+        val current = _tabStates.value[type] ?: FavoritesTabState()
+        _tabStates.value = _tabStates.value + (type to transform(current))
+    }
+
+    /** 列表缓存 = 当前已加载的收藏流（含翻页追加的部分）与其页码。 */
+    private suspend fun saveToCache(uid: String, type: String) {
+        val tab = _tabStates.value[type] ?: return
+        val items = (tab.state as? UiState.Success)?.data ?: return
+        contentCache.write(
+            key = CacheKeys.myFavorites(uid, type),
+            ttlMillis = CacheKeys.LIST_TTL,
+            value = FavoritePage(items = items, page = tab.page, hasNext = tab.hasNext),
+            encode = { cacheJson.encodeToString(FavoritePage.serializer(), it) },
+        )
+    }
 }
+
+private val MY_FAVORITES_TABS = listOf("全部" to "all", "帖子" to "thread", "版块" to "forum")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -171,18 +267,28 @@ fun MyFavoritesScreen(
     onForumClick: (String, String) -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    val viewModel: MyFavoritesViewModel = appViewModel { MyFavoritesViewModel(it.repository, it.actionStore) }
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("全部" to "all", "帖子" to "thread", "版块" to "forum")
-
-    val uiState by viewModel.state.collectAsStateWithLifecycle()
-    val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
-    val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
+    val viewModel: MyFavoritesViewModel = appViewModel {
+        MyFavoritesViewModel(it.repository, it.actionStore, it.contentCache, it.sessionStore)
+    }
+    val tabs = MY_FAVORITES_TABS
+    val tabStates by viewModel.tabStates.collectAsStateWithLifecycle()
     val removingKey by viewModel.removing.collectAsStateWithLifecycle()
-    val listState = rememberLazyListState()
+    val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
+
+    val pagerState = rememberPagerState(initialPage = 0) { tabs.size }
+    // 每页一个列表状态并提升到页面作用域：切 tab 不丢滚动位置，也不重建已翻页的数据
+    val listStates = tabs.map { rememberLazyListState() }
+    val scope = rememberCoroutineScope()
 
     // 取消收藏前弹窗确认，避免误触
     var pendingRemove by remember { mutableStateOf<FavoriteItem?>(null) }
+
+    // 加载类提示改走全局轻提示
+    LaunchedEffect(actionMessage) {
+        val message = actionMessage ?: return@LaunchedEffect
+        AppToast.show(message)
+        viewModel.consumeActionMessage()
+    }
 
     Scaffold(
         containerColor = colors.background,
@@ -212,29 +318,26 @@ fun MyFavoritesScreen(
                 )
                 val accent = accentTextColor()
                 TabRow(
-                    selectedTabIndex = selectedTab,
+                    selectedTabIndex = pagerState.currentPage,
                     containerColor = colors.topBar,
                     contentColor = accent,
                     indicator = { tabPositions ->
                         TabRowDefaults.SecondaryIndicator(
-                            Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                            Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
                             color = accent,
                         )
                     },
                 ) {
-                    tabs.forEachIndexed { index, (title, type) ->
+                    tabs.forEachIndexed { index, (title, _) ->
                         Tab(
-                            selected = selectedTab == index,
-                            onClick = {
-                                selectedTab = index
-                                viewModel.switchTab(type)
-                            },
+                            selected = pagerState.currentPage == index,
+                            onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
                             text = {
                                 Text(
                                     title,
-                                    fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
+                                    fontWeight = if (pagerState.currentPage == index) FontWeight.Bold else FontWeight.Normal,
                                     fontSize = 15.sp,
-                                    color = if (selectedTab == index) accent else colors.textSecondary,
+                                    color = if (pagerState.currentPage == index) accent else colors.textSecondary,
                                 )
                             },
                         )
@@ -243,56 +346,31 @@ fun MyFavoritesScreen(
             }
         },
     ) { padding ->
-        when (val current = uiState) {
-            is UiState.Loading -> LoadingBox(Modifier.padding(padding))
-            is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.padding(padding))
-            is UiState.Success -> {
-                val items = current.data
-                if (items.isEmpty()) {
-                    EmptyBox("暂无收藏内容", Modifier.padding(padding))
-                } else {
-                    val shouldLoadMore by remember {
-                        derivedStateOf {
-                            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                            val total = listState.layoutInfo.totalItemsCount
-                            total > 0 && last >= total - 3
-                        }
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize().padding(padding),
+            // 两侧各少预组一页：默认会把左右邻居也建出来，等于进页面就多打一个请求
+            beyondViewportPageCount = 0,
+        ) { page ->
+            val type = tabs[page].second
+            // 进入 composition 才拉数据；load 内部对已加载过的 tab 直接返回
+            LaunchedEffect(type) { viewModel.load(type) }
+            val tab = tabStates[type] ?: FavoritesTabState()
+            FavoritesTab(
+                tab = tab,
+                listState = listStates[page],
+                removingKey = removingKey,
+                onRetry = { viewModel.retry(type) },
+                onLoadMore = { viewModel.loadMore(type) },
+                onClick = { fav ->
+                    if (fav.type == "forum") {
+                        onForumClick(fav.id, fav.title)
+                    } else {
+                        onThreadClick(fav.id)
                     }
-                    LaunchedEffect(shouldLoadMore, hasNext) {
-                        if (shouldLoadMore && hasNext) viewModel.loadMore()
-                    }
-                    LazyColumn(
-                        state = listState,
-                        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
-                        modifier = Modifier.fillMaxSize().padding(padding),
-                    ) {
-                        items(items, key = { if (it.favid.isNotEmpty()) it.favid else it.id }) { fav ->
-                            FavoriteCard(
-                                item = fav,
-                                removing = removingKey == fav.favid.ifEmpty { fav.id },
-                                onClick = {
-                                    if (fav.type == "forum") {
-                                        onForumClick(fav.id, fav.title)
-                                    } else {
-                                        onThreadClick(fav.id)
-                                    }
-                                },
-                                onDelete = { pendingRemove = fav },
-                            )
-                        }
-                        if (loadingMore) {
-                            item(key = "loading-more") {
-                                Box(
-                                    Modifier.fillMaxWidth().padding(16.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    CircularProgressIndicator(Modifier.size(22.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+                },
+                onDelete = { fav -> pendingRemove = fav },
+            )
         }
     }
 
@@ -307,6 +385,64 @@ fun MyFavoritesScreen(
                 pendingRemove = null
             },
         )
+    }
+}
+
+/** 单个 tab 的收藏流：缓存优先上屏、滑到底部自动翻页。 */
+@Composable
+private fun FavoritesTab(
+    tab: FavoritesTabState,
+    listState: LazyListState,
+    removingKey: String,
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+    onClick: (FavoriteItem) -> Unit,
+    onDelete: (FavoriteItem) -> Unit,
+) {
+    when (val current = tab.state) {
+        is UiState.Loading -> LoadingBox()
+        is UiState.Error -> ErrorBox(current.message, onRetry)
+        is UiState.Success -> {
+            val items = current.data
+            if (items.isEmpty()) {
+                EmptyBox("暂无收藏内容")
+            } else {
+                val shouldLoadMore by remember {
+                    derivedStateOf {
+                        val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                        val total = listState.layoutInfo.totalItemsCount
+                        total > 0 && last >= total - 3
+                    }
+                }
+                LaunchedEffect(shouldLoadMore, tab.hasNext) {
+                    if (shouldLoadMore && tab.hasNext) onLoadMore()
+                }
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(items, key = { if (it.favid.isNotEmpty()) it.favid else it.id }) { fav ->
+                        FavoriteCard(
+                            item = fav,
+                            removing = removingKey == fav.favid.ifEmpty { fav.id },
+                            onClick = { onClick(fav) },
+                            onDelete = { onDelete(fav) },
+                        )
+                    }
+                    if (tab.loadingMore) {
+                        item(key = "loading-more") {
+                            Box(
+                                Modifier.fillMaxWidth().padding(16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(Modifier.size(22.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

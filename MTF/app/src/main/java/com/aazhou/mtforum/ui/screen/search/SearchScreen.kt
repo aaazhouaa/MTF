@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -109,7 +111,6 @@ fun SearchScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
-    val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
     val forumState by viewModel.forumState.collectAsStateWithLifecycle()
     val userState by viewModel.userState.collectAsStateWithLifecycle()
 
@@ -146,8 +147,15 @@ fun SearchScreen(
         if (urls.isNotEmpty()) preview = urls to index
     }
 
-    val listState = rememberLazyListState()
+    val listStates = SearchTab.values().map { rememberLazyListState() }
+    val searchTabs = SearchTab.values()
+    val pagerState = rememberPagerState(initialPage = 0) { searchTabs.size }
     val scope = rememberCoroutineScope()
+
+    // 滑动落定即切换分类：与点 tab 走同一条路，避免两处各提交一次搜索
+    LaunchedEffect(pagerState.currentPage) {
+        viewModel.selectTab(searchTabs[pagerState.currentPage])
+    }
 
     LaunchedEffect(actionMessage) {
         val message = actionMessage ?: return@LaunchedEffect
@@ -279,20 +287,20 @@ fun SearchScreen(
 
                 val accent = accentTextColor()
                 TabRow(
-                    selectedTabIndex = SearchTab.values().indexOf(selectedTab),
+                    selectedTabIndex = pagerState.currentPage,
                     containerColor = colors.topBar,
                     contentColor = accent,
                 ) {
-                    SearchTab.values().forEach { tab ->
+                    searchTabs.forEachIndexed { index, tab ->
                         Tab(
-                            selected = tab == selectedTab,
-                            onClick = { viewModel.selectTab(tab) },
+                            selected = pagerState.currentPage == index,
+                            onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
                             text = {
                                 Text(
                                     tab.label,
-                                    fontWeight = if (tab == selectedTab) FontWeight.Bold else FontWeight.Normal,
+                                    fontWeight = if (pagerState.currentPage == index) FontWeight.Bold else FontWeight.Normal,
                                     fontSize = 14.sp,
-                                    color = if (tab == selectedTab) accent else colors.textSecondary,
+                                    color = if (pagerState.currentPage == index) accent else colors.textSecondary,
                                 )
                             },
                         )
@@ -306,56 +314,99 @@ fun SearchScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .onDoubleTapToTop {
-                    scope.launch { listState.scrollToTop() }
+                    scope.launch { listStates[pagerState.currentPage].scrollToTop() }
                 },
         ) {
-            when (selectedTab) {
-                SearchTab.Thread -> {
-                    when (val current = state) {
-                null -> {
-                    // 未搜索时的精美发现视图：搜索历史 + 推荐搜索
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                    ) {
-                        if (historyList.isNotEmpty()) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+                // 两侧各少预组一页：默认会把左右邻居也建出来，等于切一次 tab 多打两个请求
+                beyondViewportPageCount = 0,
+            ) { page ->
+                when (searchTabs[page]) {
+                    SearchTab.Thread -> {
+                        when (val current = state) {
+                    null -> {
+                        // 未搜索时的精美发现视图：搜索历史 + 推荐搜索
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                        ) {
+                            if (historyList.isNotEmpty()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_recent),
+                                            contentDescription = null,
+                                            tint = colors.textSecondary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            "搜索历史",
+                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = bodyTextColor(),
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .clickable {
+                                                historyList = emptyList()
+                                                clearSearchHistory(context)
+                                            }
+                                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    ) {
+                                        Text(
+                                            "清空",
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                            color = colors.textHint,
+                                        )
+                                    }
+                                }
+
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 20.dp),
+                                ) {
+                                    historyList.forEach { tag ->
+                                        SearchChip(
+                                            text = tag,
+                                            onClick = { performSearch(tag) },
+                                        )
+                                    }
+                                }
+                            }
+
+                            // 热门推荐
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_recent),
-                                        contentDescription = null,
-                                        tint = colors.textSecondary,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        "搜索历史",
-                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = bodyTextColor(),
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable {
-                                            historyList = emptyList()
-                                            clearSearchHistory(context)
-                                        }
-                                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                                ) {
-                                    Text(
-                                        "清空",
-                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                                        color = colors.textHint,
-                                    )
-                                }
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_posts),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "热门搜索",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = bodyTextColor(),
+                                )
                             }
 
                             FlowRow(
@@ -363,146 +414,110 @@ fun SearchScreen(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(bottom = 20.dp),
+                                    .padding(top = 4.dp),
                             ) {
-                                historyList.forEach { tag ->
+                                HOT_SEARCH_WORDS.forEach { tag ->
                                     SearchChip(
                                         text = tag,
+                                        isHighlight = tag == "MT管理器" || tag == "逆向破解",
                                         onClick = { performSearch(tag) },
                                     )
                                 }
                             }
                         }
-
-                        // 热门推荐
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_posts),
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                "热门搜索",
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                color = bodyTextColor(),
-                            )
-                        }
-
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                        ) {
-                            HOT_SEARCH_WORDS.forEach { tag ->
-                                SearchChip(
-                                    text = tag,
-                                    isHighlight = tag == "MT管理器" || tag == "逆向破解",
-                                    onClick = { performSearch(tag) },
-                                )
+                    }
+                    is UiState.Loading -> LoadingBox()
+                    is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
+                    is UiState.Success -> {
+                        val result = current.data
+                        if (result.threads.isEmpty()) {
+                            EmptyBox("没有找到相关主题，换个词试试")
+                        } else {
+                            val shouldLoadMore by remember {
+                                derivedStateOf {
+                                    val last = listStates[page].layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                                    val total = listStates[page].layoutInfo.totalItemsCount
+                                    total > 0 && last >= total - 3
+                                }
+                            }
+                            LaunchedEffect(shouldLoadMore) {
+                                if (shouldLoadMore) viewModel.loadMore()
+                            }
+                            LazyColumn(
+                                state = listStates[page],
+                                contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                items(result.threads, key = { it.tid }) { thread ->
+                                    ThreadCard(
+                                        thread = thread,
+                                        onClick = { onThreadClick(thread.tid) },
+                                        onImageClick = openImage,
+                                        onUserClick = onUserClick,
+                                    )
+                                }
+                                if (loadingMore) {
+                                    item(key = "loading-more") {
+                                        Box(
+                                            Modifier.fillMaxWidth().padding(16.dp),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            CircularProgressIndicator(Modifier.size(22.dp))
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                }
-                is UiState.Loading -> LoadingBox()
-                is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
-                is UiState.Success -> {
-                    val result = current.data
-                    if (result.threads.isEmpty()) {
-                        EmptyBox("没有找到相关主题，换个词试试")
-                    } else {
-                        val shouldLoadMore by remember {
-                            derivedStateOf {
-                                val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                                val total = listState.layoutInfo.totalItemsCount
-                                total > 0 && last >= total - 3
-                            }
-                        }
-                        LaunchedEffect(shouldLoadMore) {
-                            if (shouldLoadMore) viewModel.loadMore()
-                        }
-                        LazyColumn(
-                            state = listState,
-                            contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
-                            modifier = Modifier.fillMaxSize(),
-                        ) {
-                            items(result.threads, key = { it.tid }) { thread ->
-                                ThreadCard(
-                                    thread = thread,
-                                    onClick = { onThreadClick(thread.tid) },
-                                    onImageClick = openImage,
-                                    onUserClick = onUserClick,
-                                )
-                            }
-                            if (loadingMore) {
-                                item(key = "loading-more") {
-                                    Box(
-                                        Modifier.fillMaxWidth().padding(16.dp),
-                                        contentAlignment = Alignment.Center,
+                    }
+                    }
+                    SearchTab.Forum -> {
+                        when (val current = forumState) {
+                            null -> EmptyBox("输入关键词搜索圈子")
+                            is UiState.Loading -> LoadingBox()
+                            is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
+                            is UiState.Success -> {
+                                val forums = current.data
+                                if (forums.isEmpty()) {
+                                    EmptyBox("没有找到相关圈子")
+                                } else {
+                                    LazyColumn(
+                                        state = listStates[page],
+                                        contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                                        modifier = Modifier.fillMaxSize(),
                                     ) {
-                                        CircularProgressIndicator(Modifier.size(22.dp))
+                                        items(forums, key = { it.fid }) { forum ->
+                                            ForumResultRow(
+                                                forum = forum,
+                                                onClick = { onForumClick(forum.fid, forum.name) },
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
-                }
-                }
-                SearchTab.Forum -> {
-                    when (val current = forumState) {
-                        null -> EmptyBox("输入关键词搜索圈子")
-                        is UiState.Loading -> LoadingBox()
-                        is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
-                        is UiState.Success -> {
-                            val forums = current.data
-                            if (forums.isEmpty()) {
-                                EmptyBox("没有找到相关圈子")
-                            } else {
-                                LazyColumn(
-                                    state = listState,
-                                    contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
-                                    modifier = Modifier.fillMaxSize(),
-                                ) {
-                                    items(forums, key = { it.fid }) { forum ->
-                                        ForumResultRow(
-                                            forum = forum,
-                                            onClick = { onForumClick(forum.fid, forum.name) },
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                SearchTab.User -> {
-                    when (val current = userState) {
-                        null -> EmptyBox("输入关键词搜索用户")
-                        is UiState.Loading -> LoadingBox()
-                        is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
-                        is UiState.Success -> {
-                            val users = current.data
-                            if (users.isEmpty()) {
-                                EmptyBox("没有找到相关用户")
-                            } else {
-                                LazyColumn(
-                                    state = listState,
-                                    contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
-                                    modifier = Modifier.fillMaxSize(),
-                                ) {
-                                    items(users, key = { it.uid }) { user ->
-                                        UserResultRow(
-                                            user = user,
-                                            onClick = { onUserClick(user.uid) },
-                                        )
+                    SearchTab.User -> {
+                        when (val current = userState) {
+                            null -> EmptyBox("输入关键词搜索用户")
+                            is UiState.Loading -> LoadingBox()
+                            is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
+                            is UiState.Success -> {
+                                val users = current.data
+                                if (users.isEmpty()) {
+                                    EmptyBox("没有找到相关用户")
+                                } else {
+                                    LazyColumn(
+                                        state = listStates[page],
+                                        contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                                        modifier = Modifier.fillMaxSize(),
+                                    ) {
+                                        items(users, key = { it.uid }) { user ->
+                                            UserResultRow(
+                                                user = user,
+                                                onClick = { onUserClick(user.uid) },
+                                            )
+                                        }
                                     }
                                 }
                             }

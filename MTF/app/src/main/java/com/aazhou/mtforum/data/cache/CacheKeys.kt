@@ -28,6 +28,23 @@ object CacheKeys {
 
     fun forumList(): String = "forumlist"
 
+    /**
+     * 登录态私有列表按 uid 与页内分类分槽：换账号后不闪出上一个账号的列表。
+     */
+    fun myThreads(uid: String, type: String): String = "my_threads|$uid|$type"
+
+    fun myFavorites(uid: String, type: String): String = "my_favorites|$uid|$type"
+
+    /** 好友/来访/黑名单按 view 分槽；view 为空串时是全部好友。 */
+    fun myFriends(uid: String, view: String): String = "my_friends|$uid|$view"
+
+    fun friendRequests(uid: String): String = "friend_requests|$uid"
+
+    fun followList(uid: String, type: String): String = "follow_list|$uid|$type"
+
+    /** 他人个人主页按 uid 分槽，与「个人中心」的资料缓存互不覆盖。 */
+    fun userProfile(uid: String): String = "user_profile|$uid"
+
     /** 个人中心按 uid 分槽：换账号后不闪出上一个账号的资料。 */
     fun profile(uid: String): String = "profile|$uid"
 }

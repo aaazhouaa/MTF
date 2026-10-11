@@ -3,7 +3,6 @@ package com.aazhou.mtforum.ui.screen.myfriends
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,8 +14,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,9 +40,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,10 +55,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
+import com.aazhou.mtforum.data.cache.CacheKeys
+import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.model.FriendRequestItem
+import com.aazhou.mtforum.data.model.FriendRequestPage
 import com.aazhou.mtforum.data.model.FriendUserItem
+import com.aazhou.mtforum.data.model.FriendUserPage
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.FriendsRepo
+import com.aazhou.mtforum.data.repo.SessionStore
 import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.EmptyBox
@@ -74,29 +80,34 @@ import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+
+/** 单个 tab（好友/来访/看过/黑名单）的用户列表状态。 */
+data class FriendsTabState(
+    val state: UiState<List<FriendUserItem>> = UiState.Loading,
+    val page: Int = 1,
+    val loadingMore: Boolean = false,
+    val hasNext: Boolean = true,
+)
 
 class MyFriendsViewModel(
     private val repository: ForumRepository,
     private val friendsRepo: FriendsRepo,
+    private val contentCache: ContentCache,
+    private val sessionStore: SessionStore,
 ) : ViewModel() {
 
-    private val _view = MutableStateFlow("")
-    val view: StateFlow<String> = _view.asStateFlow()
-
-    private val _state = MutableStateFlow<UiState<List<FriendUserItem>>>(UiState.Loading)
-    val state: StateFlow<UiState<List<FriendUserItem>>> = _state.asStateFlow()
-
-    private val _hasNext = MutableStateFlow(false)
-    val hasNext: StateFlow<Boolean> = _hasNext.asStateFlow()
-
-    private val _loadingMore = MutableStateFlow(false)
-    val loadingMore: StateFlow<Boolean> = _loadingMore.asStateFlow()
+    /** 各 tab 的列表状态，key 为站点 view；未加载过的 tab 不在表内。 */
+    private val _tabStates = MutableStateFlow<Map<String, FriendsTabState>>(emptyMap())
+    val tabStates: StateFlow<Map<String, FriendsTabState>> = _tabStates.asStateFlow()
 
     /** 正在删除的好友 uid：行内转圈并防连点。 */
     private val _friendPending = MutableStateFlow("")
     val friendPending: StateFlow<String> = _friendPending.asStateFlow()
 
+    /** 好友请求列表：站点把它放在 spacecp 下，不是 do=friend 的 view，单独一份状态。 */
     private val _requestState = MutableStateFlow<UiState<List<FriendRequestItem>>>(UiState.Loading)
     val requestState: StateFlow<UiState<List<FriendRequestItem>>> = _requestState.asStateFlow()
 
@@ -110,84 +121,165 @@ class MyFriendsViewModel(
     private val _requestPending = MutableStateFlow("")
     val requestPending: StateFlow<String> = _requestPending.asStateFlow()
 
+    /** 一次性提示（如「新数据获取失败」）；界面展示后调 [consumeActionMessage] 清掉。 */
+    private val _actionMessage = MutableStateFlow<String?>(null)
+    val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
+
+    fun consumeActionMessage() {
+        _actionMessage.value = null
+    }
+
+    private val cacheJson = Json { ignoreUnknownKeys = true }
+
     private var requestFormhash: String? = null
-    private var currentPage = 1
     private var requestPage = 1
+    private var requestLoaded = false
 
-    init {
-        load("")
-    }
-
-    fun switchTab(newView: String) {
-        if (_view.value == newView) return
-        _view.value = newView
-        if (newView == VIEW_REQUEST) loadRequests() else load(newView)
-    }
-
-    fun load(view: String = _view.value) {
-        currentPage = 1
-        _state.value = UiState.Loading
+    /**
+     * 首次进入某个 tab：有缓存就先摆出来（不走全屏 Loading），网络回来再原地替换。
+     *
+     * 已加载过的 tab 直接返回：切 tab 不重新请求，滚动位置与已翻页的数据都留着。
+     */
+    fun load(view: String) {
+        if (_tabStates.value.containsKey(view)) return
+        update(view) { FriendsTabState() }
         viewModelScope.launch {
-            try {
-                val pageData = repository.myFriends(view = view, page = 1)
-                _hasNext.value = pageData.hasNext
-                _state.value = UiState.Success(pageData.users)
-            } catch (e: Exception) {
-                _state.value = UiState.Error(e.message ?: "加载失败")
+            val uid = sessionStore.uid.first()
+            // 过期也照摆：内容旧一点也好过对着转圈等网络，刷新失败时下面保留旧内容只提示
+            val cached = contentCache.read(
+                CacheKeys.myFriends(uid, view),
+                CacheKeys.LIST_TTL,
+                allowExpired = true,
+            ) {
+                cacheJson.decodeFromString<FriendUserPage>(it)
             }
+            if (cached != null) {
+                update(view) {
+                    it.copy(
+                        state = UiState.Success(cached.users),
+                        page = cached.page,
+                        hasNext = cached.hasNext,
+                    )
+                }
+            }
+            reload(view, uid)
         }
     }
 
-    fun loadMore() {
-        if (_loadingMore.value || !_hasNext.value) return
-        _loadingMore.value = true
-        val nextPage = currentPage + 1
-        viewModelScope.launch {
-            try {
-                val pageData = repository.myFriends(view = _view.value, page = nextPage)
-                val current = (_state.value as? UiState.Success)?.data.orEmpty()
-                _state.value = UiState.Success((current + pageData.users).distinctBy { it.uid })
-                currentPage = nextPage
-                _hasNext.value = pageData.hasNext
-            } catch (_: Exception) {
-            } finally {
-                _loadingMore.value = false
+    /** 加载失败后的重试：不受「已加载过」限制，直接重拉第一页。 */
+    fun retry(view: String) {
+        viewModelScope.launch { reload(view, sessionStore.uid.first()) }
+    }
+
+    private suspend fun reload(view: String, uid: String) {
+        runCatching { repository.myFriends(view = view, page = 1) }
+            .onSuccess { data ->
+                update(view) {
+                    it.copy(state = UiState.Success(data.users), page = 1, hasNext = data.hasNext)
+                }
+                saveToCache(uid, view)
             }
+            .onFailure { e ->
+                // 有缓存就留着旧内容，只提示这次没拿到新的
+                if (_tabStates.value[view]?.state is UiState.Success) {
+                    _actionMessage.value = "新数据获取失败"
+                } else {
+                    update(view) { it.copy(state = UiState.Error(e.message ?: "加载失败")) }
+                }
+            }
+    }
+
+    /** 滑到底部时追加下一页。 */
+    fun loadMore(view: String) {
+        val current = _tabStates.value[view] ?: return
+        if (current.loadingMore || !current.hasNext) return
+        if (current.state !is UiState.Success) return
+        update(view) { it.copy(loadingMore = true) }
+        viewModelScope.launch {
+            val next = current.page + 1
+            runCatching { repository.myFriends(view = view, page = next) }
+                .onSuccess { data ->
+                    // 合并时现读，避免把刚替换上的新列表又拼回旧数据后面
+                    val existing = (_tabStates.value[view]?.state as? UiState.Success)?.data.orEmpty()
+                    val known = existing.mapTo(HashSet()) { it.uid }
+                    val fresh = data.users.filter { known.add(it.uid) }
+                    update(view) {
+                        it.copy(
+                            state = UiState.Success(existing + fresh),
+                            page = next,
+                            hasNext = data.hasNext && fresh.isNotEmpty(),
+                        )
+                    }
+                    saveToCache(sessionStore.uid.first(), view)
+                }
+                .onFailure { update(view) { it.copy(hasNext = false) } }
+            update(view) { it.copy(loadingMore = false) }
         }
     }
 
-    /** 好友请求列表：站点把它放在 spacecp 下，不是 do=friend 的 view。 */
+    /** 好友请求首屏：与好友列表同一套「缓存先上屏、网络静默替换」。 */
     fun loadRequests() {
-        requestPage = 1
-        _requestState.value = UiState.Loading
+        if (requestLoaded) return
+        requestLoaded = true
         viewModelScope.launch {
-            try {
-                val pageData = friendsRepo.friendRequests(1)
+            val uid = sessionStore.uid.first()
+            val cached = contentCache.read(
+                CacheKeys.friendRequests(uid),
+                CacheKeys.LIST_TTL,
+                allowExpired = true,
+            ) {
+                cacheJson.decodeFromString<FriendRequestPage>(it)
+            }
+            if (cached != null) {
+                requestPage = cached.page
+                _requestHasNext.value = cached.hasNext
+                _requestState.value = UiState.Success(cached.requests)
+            }
+            reloadRequests(uid)
+        }
+    }
+
+    /** 好友请求加载失败后的重试。 */
+    fun retryRequests() {
+        viewModelScope.launch { reloadRequests(sessionStore.uid.first()) }
+    }
+
+    private suspend fun reloadRequests(uid: String) {
+        runCatching { friendsRepo.friendRequests(1) }
+            .onSuccess { pageData ->
                 requestFormhash = pageData.formhash
                 requestPage = 1
                 _requestHasNext.value = pageData.hasNext
                 _requestState.value = UiState.Success(pageData.requests)
-            } catch (e: Exception) {
-                _requestState.value = UiState.Error(e.message ?: "加载失败")
+                saveRequestsToCache(uid)
             }
-        }
+            .onFailure { e ->
+                if (_requestState.value is UiState.Success) {
+                    _actionMessage.value = "新数据获取失败"
+                } else {
+                    _requestState.value = UiState.Error(e.message ?: "加载失败")
+                }
+            }
     }
 
     fun loadMoreRequests() {
         if (_requestLoadingMore.value || !_requestHasNext.value) return
+        if (_requestState.value !is UiState.Success) return
         _requestLoadingMore.value = true
-        val nextPage = requestPage + 1
         viewModelScope.launch {
-            try {
-                val pageData = friendsRepo.friendRequests(nextPage)
-                val current = (_requestState.value as? UiState.Success)?.data.orEmpty()
-                _requestState.value = UiState.Success((current + pageData.requests).distinctBy { it.uid })
-                requestPage = nextPage
-                _requestHasNext.value = pageData.hasNext
-            } catch (_: Exception) {
-            } finally {
-                _requestLoadingMore.value = false
-            }
+            val next = requestPage + 1
+            runCatching { friendsRepo.friendRequests(next) }
+                .onSuccess { pageData ->
+                    val current = (_requestState.value as? UiState.Success)?.data.orEmpty()
+                    val known = current.mapTo(HashSet()) { it.uid }
+                    val fresh = pageData.requests.filter { known.add(it.uid) }
+                    _requestState.value = UiState.Success(current + fresh)
+                    requestPage = next
+                    _requestHasNext.value = pageData.hasNext && fresh.isNotEmpty()
+                    saveRequestsToCache(sessionStore.uid.first())
+                }
+                .onFailure { _requestHasNext.value = false }
+            _requestLoadingMore.value = false
         }
     }
 
@@ -209,6 +301,7 @@ class MyFriendsViewModel(
                     AppToast.show(it.ifBlank { successText })
                     val current = (_requestState.value as? UiState.Success)?.data.orEmpty()
                     _requestState.value = UiState.Success(current.filterNot { it.uid == item.uid })
+                    saveRequestsToCache(sessionStore.uid.first())
                 }
                 .onFailure { e -> AppToast.show(e.message ?: "操作失败") }
             _requestPending.value = ""
@@ -225,15 +318,14 @@ class MyFriendsViewModel(
             result
                 .onSuccess {
                     AppToast.show(it)
-                    val current = (_state.value as? UiState.Success)?.data.orEmpty()
-                    _state.value = UiState.Success(current.filterNot { it.uid == user.uid })
+                    dropUserEverywhere(user.uid)
                 }
                 .onFailure { e -> AppToast.show(e.message ?: "删除失败") }
             _friendPending.value = ""
         }
     }
 
-    /** 移出黑名单：成功后把该行从黑名单列表里摘掉。 */
+    /** 移出黑名单：成功后把该行从各 tab 里摘掉。 */
     fun unblacklistUser(user: FriendUserItem) {
         if (_friendPending.value.isNotEmpty()) return
         _friendPending.value = user.uid
@@ -243,18 +335,72 @@ class MyFriendsViewModel(
             result
                 .onSuccess {
                     AppToast.show(it)
-                    val current = (_state.value as? UiState.Success)?.data.orEmpty()
-                    _state.value = UiState.Success(current.filterNot { it.uid == user.uid })
+                    dropUserEverywhere(user.uid)
                 }
                 .onFailure { e -> AppToast.show(e.message ?: "移出黑名单失败") }
             _friendPending.value = ""
         }
     }
 
+    /** 同一用户可能同时出现在多个 tab：各 tab 一起摘掉，缓存也一起更新。 */
+    private suspend fun dropUserEverywhere(uid: String) {
+        val affected = _tabStates.value.keys.filter { view -> listOf(view).any { it.uid == uid } }
+        val snapshot = affected.associateWith { listOf(it) }
+        affected.forEach { view ->
+            update(view) {
+                it.copy(state = UiState.Success(snapshot[view].orEmpty().filterNot { user -> user.uid == uid }))
+            }
+        }
+        val currentUid = sessionStore.uid.first()
+        affected.forEach { view -> saveToCache(currentUid, view) }
+    }
+
+    private fun listOf(view: String): List<FriendUserItem> =
+        (_tabStates.value[view]?.state as? UiState.Success)?.data ?: emptyList()
+
+    private fun update(view: String, transform: (FriendsTabState) -> FriendsTabState) {
+        val current = _tabStates.value[view] ?: FriendsTabState()
+        _tabStates.value = _tabStates.value + (view to transform(current))
+    }
+
+    /** 列表缓存 = 当前已加载的用户流（含翻页追加的部分）与其页码。 */
+    private suspend fun saveToCache(uid: String, view: String) {
+        val tab = _tabStates.value[view] ?: return
+        val users = (tab.state as? UiState.Success)?.data ?: return
+        contentCache.write(
+            key = CacheKeys.myFriends(uid, view),
+            ttlMillis = CacheKeys.LIST_TTL,
+            value = FriendUserPage(users = users, page = tab.page, hasNext = tab.hasNext),
+            encode = { cacheJson.encodeToString(FriendUserPage.serializer(), it) },
+        )
+    }
+
+    /**
+     * 好友请求缓存：formhash 一次性有效，落盘时置空。
+     * 命中缓存后同意/忽略由仓库自行抓新鲜凭据。
+     */
+    private suspend fun saveRequestsToCache(uid: String) {
+        val requests = (_requestState.value as? UiState.Success)?.data ?: return
+        contentCache.write(
+            key = CacheKeys.friendRequests(uid),
+            ttlMillis = CacheKeys.LIST_TTL,
+            value = FriendRequestPage(requests = requests, page = requestPage, hasNext = _requestHasNext.value),
+            encode = { cacheJson.encodeToString(FriendRequestPage.serializer(), it.copy(formhash = null)) },
+        )
+    }
+
     companion object {
         const val VIEW_REQUEST = "request"
     }
 }
+
+private val MY_FRIENDS_TABS = listOf(
+    "全部好友" to "",
+    "最近来访" to "visitor",
+    "我看过谁" to "trace",
+    "黑名单" to "blacklist",
+    "好友请求" to MyFriendsViewModel.VIEW_REQUEST,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -263,26 +409,29 @@ fun MyFriendsScreen(
     onUserClick: (String) -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    val viewModel: MyFriendsViewModel = appViewModel { MyFriendsViewModel(it.repository, FriendsRepo(it.httpClient)) }
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf(
-        "全部好友" to "",
-        "最近来访" to "visitor",
-        "我看过谁" to "trace",
-        "黑名单" to "blacklist",
-        "好友请求" to MyFriendsViewModel.VIEW_REQUEST,
-    )
-    val currentView = tabs[selectedTab].second
-
-    val uiState by viewModel.state.collectAsStateWithLifecycle()
-    val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
-    val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
+    val viewModel: MyFriendsViewModel = appViewModel {
+        MyFriendsViewModel(it.repository, FriendsRepo(it.httpClient), it.contentCache, it.sessionStore)
+    }
+    val tabs = MY_FRIENDS_TABS
+    val tabStates by viewModel.tabStates.collectAsStateWithLifecycle()
     val friendPending by viewModel.friendPending.collectAsStateWithLifecycle()
     val requestState by viewModel.requestState.collectAsStateWithLifecycle()
     val requestHasNext by viewModel.requestHasNext.collectAsStateWithLifecycle()
     val requestLoadingMore by viewModel.requestLoadingMore.collectAsStateWithLifecycle()
     val requestPending by viewModel.requestPending.collectAsStateWithLifecycle()
-    val listState = rememberLazyListState()
+    val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
+
+    val pagerState = rememberPagerState(initialPage = 0) { tabs.size }
+    // 每页一个列表状态并提升到页面作用域：切 tab 不丢滚动位置，也不重建已翻页的数据
+    val listStates = tabs.map { rememberLazyListState() }
+    val scope = rememberCoroutineScope()
+
+    // 加载类提示改走全局轻提示
+    LaunchedEffect(actionMessage) {
+        val message = actionMessage ?: return@LaunchedEffect
+        AppToast.show(message)
+        viewModel.consumeActionMessage()
+    }
 
     Scaffold(
         containerColor = colors.background,
@@ -312,30 +461,27 @@ fun MyFriendsScreen(
                 )
                 val accent = accentTextColor()
                 ScrollableTabRow(
-                    selectedTabIndex = selectedTab,
+                    selectedTabIndex = pagerState.currentPage,
                     containerColor = colors.topBar,
                     contentColor = accent,
                     edgePadding = 16.dp,
                     indicator = { tabPositions ->
                         TabRowDefaults.SecondaryIndicator(
-                            Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                            Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
                             color = accent,
                         )
                     },
                 ) {
-                    tabs.forEachIndexed { index, (title, view) ->
+                    tabs.forEachIndexed { index, (title, _) ->
                         Tab(
-                            selected = selectedTab == index,
-                            onClick = {
-                                selectedTab = index
-                                viewModel.switchTab(view)
-                            },
+                            selected = pagerState.currentPage == index,
+                            onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
                             text = {
                                 Text(
                                     title,
-                                    fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
+                                    fontWeight = if (pagerState.currentPage == index) FontWeight.Bold else FontWeight.Normal,
                                     fontSize = 15.sp,
-                                    color = if (selectedTab == index) accent else colors.textSecondary,
+                                    color = if (pagerState.currentPage == index) accent else colors.textSecondary,
                                 )
                             },
                         )
@@ -344,73 +490,103 @@ fun MyFriendsScreen(
             }
         },
     ) { padding ->
-        if (currentView == MyFriendsViewModel.VIEW_REQUEST) {
-            when (val current = requestState) {
-                is UiState.Loading -> LoadingBox(Modifier.padding(padding))
-                is UiState.Error -> ErrorBox(current.message, { viewModel.loadRequests() }, Modifier.padding(padding))
-                is UiState.Success -> {
-                    val requests = current.data
-                    if (requests.isEmpty()) {
-                        EmptyBox("暂无好友请求", Modifier.padding(padding))
-                    } else {
-                        FriendRequestList(
-                            requests = requests,
-                            pending = requestPending,
-                            loadingMore = requestLoadingMore,
-                            hasNext = requestHasNext,
-                            listState = listState,
-                            padding = padding,
-                            onApprove = { viewModel.approveRequest(it) },
-                            onIgnore = { viewModel.ignoreRequest(it) },
-                            onLoadMore = { viewModel.loadMoreRequests() },
-                        )
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize().padding(padding),
+            // 两侧各少预组一页：默认会把左右邻居也建出来，等于进页面就多打一个请求
+            beyondViewportPageCount = 0,
+        ) { page ->
+            val view = tabs[page].second
+            if (view == MyFriendsViewModel.VIEW_REQUEST) {
+                // 进入 composition 才拉数据；loadRequests 内部对已加载过的直接返回
+                LaunchedEffect(view) { viewModel.loadRequests() }
+                FriendRequestList(
+                    requestState = requestState,
+                    pending = requestPending,
+                    loadingMore = requestLoadingMore,
+                    hasNext = requestHasNext,
+                    listState = listStates[page],
+                    onRetry = { viewModel.retryRequests() },
+                    onApprove = { viewModel.approveRequest(it) },
+                    onIgnore = { viewModel.ignoreRequest(it) },
+                    onLoadMore = { viewModel.loadMoreRequests() },
+                )
+            } else {
+                // 进入 composition 才拉数据；load 内部对已加载过的 tab 直接返回
+                LaunchedEffect(view) { viewModel.load(view) }
+                val tab = tabStates[view] ?: FriendsTabState()
+                FriendsTab(
+                    tab = tab,
+                    view = view,
+                    listState = listStates[page],
+                    emptyText = "暂无${tabs[page].first}信息",
+                    pendingUid = friendPending,
+                    onRetry = { viewModel.retry(view) },
+                    onLoadMore = { viewModel.loadMore(view) },
+                    onUserClick = onUserClick,
+                    onDelete = { viewModel.removeFriend(it) },
+                    onUnblock = { viewModel.unblacklistUser(it) },
+                )
+            }
+        }
+    }
+}
+
+/** 单个 tab 的用户流：缓存优先上屏、滑到底部自动翻页。 */
+@Composable
+private fun FriendsTab(
+    tab: FriendsTabState,
+    view: String,
+    listState: LazyListState,
+    emptyText: String,
+    pendingUid: String,
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+    onUserClick: (String) -> Unit,
+    onDelete: (FriendUserItem) -> Unit,
+    onUnblock: (FriendUserItem) -> Unit,
+) {
+    when (val current = tab.state) {
+        is UiState.Loading -> LoadingBox()
+        is UiState.Error -> ErrorBox(current.message, onRetry)
+        is UiState.Success -> {
+            val users = current.data
+            if (users.isEmpty()) {
+                EmptyBox(emptyText)
+            } else {
+                val shouldLoadMore by remember {
+                    derivedStateOf {
+                        val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                        val total = listState.layoutInfo.totalItemsCount
+                        total > 0 && last >= total - 3
                     }
                 }
-            }
-        } else {
-            when (val current = uiState) {
-                is UiState.Loading -> LoadingBox(Modifier.padding(padding))
-                is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.padding(padding))
-                is UiState.Success -> {
-                    val users = current.data
-                    if (users.isEmpty()) {
-                        EmptyBox("暂无${tabs[selectedTab].first}信息", Modifier.padding(padding))
-                    } else {
-                        val shouldLoadMore by remember {
-                            derivedStateOf {
-                                val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                                val total = listState.layoutInfo.totalItemsCount
-                                total > 0 && last >= total - 3
-                            }
-                        }
-                        LaunchedEffect(shouldLoadMore, hasNext) {
-                            if (shouldLoadMore && hasNext) viewModel.loadMore()
-                        }
-                        LazyColumn(
-                            state = listState,
-                            contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
-                            modifier = Modifier.fillMaxSize().padding(padding),
-                        ) {
-                            items(users, key = { it.uid }) { user ->
-                                FriendUserCard(
-                                    user = user,
-                                    removing = friendPending == user.uid,
-                                    showDelete = currentView.isEmpty(),
-                                    showUnblock = currentView == "blacklist",
-                                    onClick = { onUserClick(user.uid) },
-                                    onDelete = { viewModel.removeFriend(user) },
-                                    onUnblock = { viewModel.unblacklistUser(user) },
-                                )
-                            }
-                            if (loadingMore) {
-                                item(key = "loading-more") {
-                                    Box(
-                                        Modifier.fillMaxWidth().padding(16.dp),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        CircularProgressIndicator(Modifier.size(22.dp))
-                                    }
-                                }
+                LaunchedEffect(shouldLoadMore, tab.hasNext) {
+                    if (shouldLoadMore && tab.hasNext) onLoadMore()
+                }
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(users, key = { it.uid }) { user ->
+                        FriendUserCard(
+                            user = user,
+                            removing = pendingUid == user.uid,
+                            showDelete = view.isEmpty(),
+                            showUnblock = view == "blacklist",
+                            onClick = { onUserClick(user.uid) },
+                            onDelete = { onDelete(user) },
+                            onUnblock = { onUnblock(user) },
+                        )
+                    }
+                    if (tab.loadingMore) {
+                        item(key = "loading-more") {
+                            Box(
+                                Modifier.fillMaxWidth().padding(16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(Modifier.size(22.dp))
                             }
                         }
                     }
@@ -423,46 +599,57 @@ fun MyFriendsScreen(
 /** 好友请求列表：行内「同意 / 忽略」。 */
 @Composable
 private fun FriendRequestList(
-    requests: List<FriendRequestItem>,
+    requestState: UiState<List<FriendRequestItem>>,
     pending: String,
     loadingMore: Boolean,
     hasNext: Boolean,
-    listState: androidx.compose.foundation.lazy.LazyListState,
-    padding: PaddingValues,
+    listState: LazyListState,
+    onRetry: () -> Unit,
     onApprove: (FriendRequestItem) -> Unit,
     onIgnore: (FriendRequestItem) -> Unit,
     onLoadMore: () -> Unit,
 ) {
-    val shouldLoadMore by remember {
-        derivedStateOf {
-            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            val total = listState.layoutInfo.totalItemsCount
-            total > 0 && last >= total - 3
-        }
-    }
-    LaunchedEffect(shouldLoadMore, hasNext) {
-        if (shouldLoadMore && hasNext) onLoadMore()
-    }
-    LazyColumn(
-        state = listState,
-        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
-        modifier = Modifier.fillMaxSize().padding(padding),
-    ) {
-        items(requests, key = { it.uid }) { item ->
-            FriendRequestCard(
-                item = item,
-                pending = pending == item.uid,
-                onApprove = { onApprove(item) },
-                onIgnore = { onIgnore(item) },
-            )
-        }
-        if (loadingMore) {
-            item(key = "loading-more") {
-                Box(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    contentAlignment = Alignment.Center,
+    when (val current = requestState) {
+        is UiState.Loading -> LoadingBox()
+        is UiState.Error -> ErrorBox(current.message, onRetry)
+        is UiState.Success -> {
+            val requests = current.data
+            if (requests.isEmpty()) {
+                EmptyBox("暂无好友请求")
+            } else {
+                val shouldLoadMore by remember {
+                    derivedStateOf {
+                        val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                        val total = listState.layoutInfo.totalItemsCount
+                        total > 0 && last >= total - 3
+                    }
+                }
+                LaunchedEffect(shouldLoadMore, hasNext) {
+                    if (shouldLoadMore && hasNext) onLoadMore()
+                }
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+                    modifier = Modifier.fillMaxSize(),
                 ) {
-                    CircularProgressIndicator(Modifier.size(22.dp))
+                    items(requests, key = { it.uid }) { item ->
+                        FriendRequestCard(
+                            item = item,
+                            pending = pending == item.uid,
+                            onApprove = { onApprove(item) },
+                            onIgnore = { onIgnore(item) },
+                        )
+                    }
+                    if (loadingMore) {
+                        item(key = "loading-more") {
+                            Box(
+                                Modifier.fillMaxWidth().padding(16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(Modifier.size(22.dp))
+                            }
+                        }
+                    }
                 }
             }
         }
