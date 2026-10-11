@@ -397,6 +397,8 @@ fun PostEditScreen(
                         }
 
                         ComposerToolButton(R.drawable.ic_add, "插入内容") {
+                            // 内联插入条占着工具栏下方这块位置，先收起它插入面板才露得出来
+                            activeInsertKind = null
                             if (panel == PostComposerPanel.Smiley) {
                                 keyboardHandoff = true
                             }
@@ -435,7 +437,12 @@ fun PostEditScreen(
                             titleInput = inlineTitleInput,
                             onUrlChange = { inlineUrlInput = it },
                             onTitleChange = { inlineTitleInput = it },
-                            onDismiss = { activeInsertKind = null },
+                            onDismiss = {
+                                activeInsertKind = null
+                                // 内联条的输入框此刻持有焦点，直接移除它会被当成失焦而收起键盘
+                                messageFocusRequester.requestFocus()
+                                keyboard?.show()
+                            },
                             onConfirm = {
                                 val tag = when (currentInsert) {
                                     InsertKind.Bold -> "[b]${inlineUrlInput.trim()}[/b]"
