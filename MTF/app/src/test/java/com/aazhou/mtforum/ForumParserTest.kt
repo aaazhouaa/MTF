@@ -1131,61 +1131,73 @@ class ForumParserTest {
     }
 
     @Test
-    fun `parseFollowers extracts fans correctly`() {
-        val html = """
-            <div class="comiis_userlist01 cl">
-                <li class="b_t" id="comiis_friendbox_133035">
-                    <p class="ytit f_d">
-                        <a href="https://bbs.binmt.cc/home.php?mod=spacecp&amp;ac=follow&amp;op=add&amp;hash=1011f6f2&amp;fuid=133035" id="a_followmod_133035" uid="133035" class="user_gz"><font>关注</font></a>
-                    </p>
-                    <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=133035&amp;do=profile" class="list01_limg bg_e">
-                        <img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=133035&amp;size=middle">
-                    </a>
-                    <p class="tit">
-                        <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=133035&amp;do=profile">2046531578</a>
-                    </p>
-                    <p class="txt">
-                        <a href="https://bbs.binmt.cc/home.php?mod=follow&amp;do=follower&amp;uid=133035"><font class="f_d"><code class="f_a" id="followernum_133035">1</code> 粉丝</font></a>
-                        <a href="https://bbs.binmt.cc/home.php?mod=follow&amp;do=following&amp;uid=133035"><font class="f_d"><code class="f_a">19</code> 关注</font></a>
-                    </p>
-                </li>
-            </div>
-        """.trimIndent()
-        val followers = ForumParser.parseFollowers(html)
-        assertEquals(1, followers.size)
-        val f = followers[0]
-        assertEquals("133035", f.uid)
-        assertEquals("2046531578", f.username)
-        assertEquals("1", f.fansCount)
-        assertEquals("19", f.followCount)
-        assertEquals("https://avatar.mt2.cn/uc_server/avatar.php?uid=133035&size=middle", f.avatarUrl)
-    }
-
-    @Test
-    fun `parsePrivateMessages extracts conversation items`() {
-        val html = """
+    fun `parsePmMessages extracts conversation items from inajax receipt`() {
+        // 站点真实回执形状：XML 外壳 + CDATA 里同时装着两个 Tab 的导航与列表
+        val response = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <root><![CDATA[<div style="height:40px;"><div class="comiis_scrollTop_box"><div class="comiis_topnv bg_f b_b">
+            <ul class="comiis_flex">
+            <li class="flex f_0"><em class="bg_0"></em><a href="https://bbs.binmt.cc/home.php?mod=space&amp;do=pm&amp;filter=privatepm" comiis_ajax=".comiis_pms_box">私人消息</a></li>
+            <li class="flex"><a href="https://bbs.binmt.cc/home.php?mod=space&amp;do=pm&amp;filter=announcepm">公共消息</a></li>
+            </ul>
+            </div></div></div><div class="comiis_pms_box">
             <div class="comiis_pmlist mt10 bg_f b_t cl">
-                <ul>
-                    <li>
-                        <a href="home.php?mod=space&amp;do=pm&amp;subop=view&amp;touid=99999&amp;mobile=2">
-                            <span class="kmnum">2</span>
-                            <img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=99999&amp;size=middle">
-                            <h2><span>昨天 12:30</span>小明同学</h2>
-                            <p>你好，请问有逆向插件的最新版吗？</p>
-                        </a>
-                    </li>
-                </ul>
+            <ul>
+            <li>
+            <a href="home.php?mod=space&amp;do=pm&amp;subop=view&amp;touid=99999&amp;mobile=2">
+            <span class="kmnum">2</span>
+            <img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=99999&amp;size=middle">
+            <h2><span>昨天 12:30</span>小明同学</h2>
+            <p>你好，请问有逆向插件的最新版吗？</p>
+            </a>
+            </li>
+            </ul>
             </div>
+            </div>]]></root>
         """.trimIndent()
-        val pms = ForumParser.parsePrivateMessages(html)
-        assertEquals(1, pms.size)
-        val pm = pms[0]
+        val page = ForumParser.parsePmMessages(response)
+        assertEquals(false, page.loggedOut)
+        // Tab 导航也是带 do=pm 链接的 li，不能被当成会话行
+        assertEquals(1, page.messages.size)
+        val pm = page.messages[0]
         assertEquals("99999", pm.touid)
         assertEquals("小明同学", pm.username)
         assertEquals("昨天 12:30", pm.timeText)
         assertEquals("你好，请问有逆向插件的最新版吗？", pm.summary)
         assertEquals(true, pm.unread)
         assertEquals("https://avatar.mt2.cn/uc_server/avatar.php?uid=99999&size=middle", pm.avatarUrl)
+    }
+
+    @Test
+    fun `parsePmMessages reports logged out when receipt redirects to login`() {
+        val response = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <root><![CDATA[<script>window.location.href = 'member.php?mod=logging&action=login';</script>
+            ]]></root>
+        """.trimIndent()
+        val page = ForumParser.parsePmMessages(response)
+        assertEquals(true, page.loggedOut)
+        assertEquals(0, page.messages.size)
+    }
+
+    @Test
+    fun `parsePmMessages returns empty list when no messages`() {
+        // 没有私信时站点仍回 tab 导航 + 空 ul，公共消息则换成 comiis_notip 提示
+        val response = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <root><![CDATA[<div class="comiis_topnv bg_f b_b">
+            <ul class="comiis_flex">
+            <li class="flex f_0"><em class="bg_0"></em><a href="https://bbs.binmt.cc/home.php?mod=space&amp;do=pm&amp;filter=privatepm">私人消息</a></li>
+            </ul>
+            </div><div class="comiis_pms_box">
+            <div class="comiis_notip cl">
+            <i class="comiis_font f_e cl">&#xe613</i>                <span class="f_d">暂无系统消息</span>
+            </div>
+            </div>]]></root>
+        """.trimIndent()
+        val page = ForumParser.parsePmMessages(response)
+        assertEquals(false, page.loggedOut)
+        assertEquals(0, page.messages.size)
     }
 
     @Test

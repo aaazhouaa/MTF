@@ -62,7 +62,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
-import com.aazhou.mtforum.data.model.FollowerUser
 import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticeCategory
 import com.aazhou.mtforum.data.model.PrivateMessage
@@ -231,12 +230,11 @@ fun NoticeScreen(
                         val content = current.data
                         if (content.isEmpty()) {
                             val emptyText = when (currentCategory) {
-                                NoticeCategory.PM -> "暂无私信消息"
-                                NoticeCategory.FOLLOWER -> "暂无粉丝关注"
+                                NoticeCategory.PRIVATE_PM -> "暂无私信消息"
+                                NoticeCategory.ANNOUNCE_PM -> "暂无公共消息"
                                 NoticeCategory.MY_POST -> "暂无帖子提醒"
                                 NoticeCategory.INTERACTIVE -> "暂无互动提醒"
                                 NoticeCategory.SYSTEM -> "暂无系统提醒"
-                                NoticeCategory.APP -> "暂无应用提醒"
                             }
                             EmptyBox(emptyText, Modifier.fillMaxSize())
                         } else {
@@ -266,13 +264,6 @@ fun NoticeScreen(
                                                 onChatClick = onChatClick,
                                             )
                                         }
-                                        is NoticeContentState.Followers -> {
-                                            FollowerListView(
-                                                listState = listState,
-                                                items = target.items,
-                                                onUserClick = onUserClick,
-                                            )
-                                        }
                                     }
                                 }
                             }
@@ -296,7 +287,7 @@ fun NoticeScreen(
 }
 
 /**
- * 顶部固定分类区：2 行 3 列网格，紧凑精致，与软件设计统一。
+ * 顶部固定分类区：按行铺开，紧凑精致，与软件设计统一。
  */
 @Composable
 private fun NoticeCategoryGrid(
@@ -320,26 +311,26 @@ private fun NoticeCategoryGrid(
                 .padding(vertical = 10.dp, horizontal = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // 第一行：我的消息、我的粉丝、我的帖子
+            // 第一行：私人消息、公共消息、我的帖子
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
                 CategoryItem(
-                    category = NoticeCategory.PM,
+                    category = NoticeCategory.PRIVATE_PM,
                     iconRes = R.drawable.ic_notice_pm,
                     iconBgColor = Color(0xFF53BCF5),
-                    isSelected = selected == NoticeCategory.PM,
+                    isSelected = selected == NoticeCategory.PRIVATE_PM,
                     modifier = Modifier.weight(1f),
-                    onClick = { onSelect(NoticeCategory.PM) },
+                    onClick = { onSelect(NoticeCategory.PRIVATE_PM) },
                 )
                 CategoryItem(
-                    category = NoticeCategory.FOLLOWER,
-                    iconRes = R.drawable.ic_notice_follower,
-                    iconBgColor = Color(0xFFF37D7D),
-                    isSelected = selected == NoticeCategory.FOLLOWER,
+                    category = NoticeCategory.ANNOUNCE_PM,
+                    iconRes = R.drawable.ic_notice_announce,
+                    iconBgColor = Color(0xFF8C7AE6),
+                    isSelected = selected == NoticeCategory.ANNOUNCE_PM,
                     modifier = Modifier.weight(1f),
-                    onClick = { onSelect(NoticeCategory.FOLLOWER) },
+                    onClick = { onSelect(NoticeCategory.ANNOUNCE_PM) },
                 )
                 CategoryItem(
                     category = NoticeCategory.MY_POST,
@@ -351,7 +342,7 @@ private fun NoticeCategoryGrid(
                 )
             }
 
-            // 第二行：坛友互动、系统提醒、应用提醒
+            // 第二行：坛友互动、系统提醒
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -371,14 +362,6 @@ private fun NoticeCategoryGrid(
                     isSelected = selected == NoticeCategory.SYSTEM,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.SYSTEM) },
-                )
-                CategoryItem(
-                    category = NoticeCategory.APP,
-                    iconRes = R.drawable.ic_notice_app,
-                    iconBgColor = Color(0xFF91B9EB),
-                    isSelected = selected == NoticeCategory.APP,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onSelect(NoticeCategory.APP) },
                 )
             }
         }
@@ -443,7 +426,7 @@ private fun CategoryItem(
     }
 }
 
-/** 提醒列表（我的帖子 / 坛友互动 / 系统提醒 / 应用提醒）。 */
+/** 提醒列表（我的帖子 / 坛友互动 / 系统提醒）。 */
 @Composable
 private fun NoticeListView(
     listState: androidx.compose.foundation.lazy.LazyListState,
@@ -590,69 +573,6 @@ private fun PrivateMessageListView(
                         strokeWidth = size.height,
                     )
                 }
-            }
-        }
-    }
-}
-
-/** 粉丝列表。 */
-@Composable
-private fun FollowerListView(
-    listState: androidx.compose.foundation.lazy.LazyListState,
-    items: List<FollowerUser>,
-    onUserClick: (String) -> Unit,
-) {
-    val colors = LocalMtfColors.current
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 4.dp, bottom = bottomBarContentPadding()),
-    ) {
-        items(items) { follower ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onUserClick(follower.uid) }
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-            ) {
-                AsyncImage(
-                    model = smallImageRequest(follower.avatarUrl),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(colors.quoteBackground)
-                        .dimImageInDark(),
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = follower.username,
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
-                        fontWeight = FontWeight.SemiBold,
-                        color = bodyTextColor(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    val fansStr = follower.fansCount?.let { "$it 粉丝" }.orEmpty()
-                    val followStr = follower.followCount?.let { "$it 关注" }.orEmpty()
-                    val stats = listOf(fansStr, followStr).filter { it.isNotBlank() }.joinToString("  ")
-                    if (stats.isNotBlank()) {
-                        Text(
-                            text = stats,
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                            color = colors.textSecondary,
-                            modifier = Modifier.padding(top = 3.dp),
-                        )
-                    }
-                }
-                Icon(
-                    painter = painterResource(R.drawable.ic_arrow_right),
-                    contentDescription = null,
-                    tint = colors.textHint,
-                    modifier = Modifier.size(16.dp),
-                )
             }
         }
     }

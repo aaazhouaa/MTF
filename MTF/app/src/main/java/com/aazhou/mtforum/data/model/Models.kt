@@ -313,17 +313,28 @@ data class AtUser(
     val subtitle: String = "",
 )
 
-/** 消息提醒顶部的六个分类（对应网页端「消息提醒」入口）。 */
-enum class NoticeCategory(val title: String, val viewKey: String? = null) {
-    PM("我的消息", null),
-    FOLLOWER("我的粉丝", null),
+/** 消息提醒页顶部的分类（对应网页端「消息提醒」入口）。 */
+enum class NoticeCategory(
+    val title: String,
+    /** 消息提醒的内容视图（view 参数）；私信两类不走消息提醒接口，为 null。 */
+    val viewKey: String? = null,
+    /** 私信/公共消息的 filter 参数：站点把这两类列表放在 inajax 回执里，整页 HTML 取不到。 */
+    val pmFilter: String? = null,
+) {
+    PRIVATE_PM("私人消息", pmFilter = "privatepm"),
+    ANNOUNCE_PM("公共消息", pmFilter = "announcepm"),
     MY_POST("我的帖子", "mypost"),
     INTERACTIVE("坛友互动", "interactive"),
     SYSTEM("系统提醒", "system"),
-    APP("应用提醒", "app");
 }
 
-/** 单条私信会话（网页端「我的消息」）。 */
+/** 私信/公共消息列表页；[loggedOut] 为 true 表示接口把请求换成了登录跳转。 */
+data class PmPage(
+    val loggedOut: Boolean = false,
+    val messages: List<PrivateMessage> = emptyList(),
+)
+
+/** 单条私信会话（私人消息 / 公共消息共用的行结构）。 */
 @Serializable
 data class PrivateMessage(
     val plid: String? = null,
@@ -352,16 +363,6 @@ data class ChatConversation(
     val targetName: String? = null,
     val messages: List<ChatMessage> = emptyList(),
     val formhash: String? = null,
-)
-
-/** 粉丝项（网页端「我的粉丝」）。 */
-@Serializable
-data class FollowerUser(
-    val uid: String,
-    val username: String,
-    val avatarUrl: String? = null,
-    val fansCount: String? = null,
-    val followCount: String? = null,
 )
 
 /** 关注/粉丝列表项。 */

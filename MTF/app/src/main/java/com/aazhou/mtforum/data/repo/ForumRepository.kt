@@ -13,9 +13,9 @@ import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
 import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticePage
+import com.aazhou.mtforum.data.model.PmPage
 import com.aazhou.mtforum.data.model.PrivateMessage
 import com.aazhou.mtforum.data.model.ChatConversation
-import com.aazhou.mtforum.data.model.FollowerUser
 import com.aazhou.mtforum.data.model.ReplyResult
 import com.aazhou.mtforum.data.model.SearchResult
 import com.aazhou.mtforum.data.model.ThreadPage
@@ -53,7 +53,7 @@ private val REPORT_ERROR_PATTERN = Regex("举报理由|action=login|请先登录
 private val DELETE_STILL_FORM_PATTERN = Regex("action=edit|editsubmit")
 
 /** 消息提醒的内容类别（默认页只是类别菜单，没有提醒内容）。 */
-private val NOTICE_VIEWS = listOf("mypost", "interactive", "system", "app")
+private val NOTICE_VIEWS = listOf("mypost", "interactive", "system")
 
 /** 打赏成功标识。 */
 private val REWARD_SUCCESS_PATTERN =
@@ -419,22 +419,21 @@ class ForumRepository(
         NoticePage(notices = parsed.notices.distinctBy { it.id }, totalPages = parsed.totalPages)
     }
 
-    /** 我的消息（私信列表）。 */
-    suspend fun privateMessages(): List<PrivateMessage> = withContext(Dispatchers.IO) {
-        val html = http.get(http.url("home.php?mod=space&do=pm&mobile=2"))
-        ForumParser.parsePrivateMessages(html)
+    /**
+     * 私人消息 / 公共消息列表（网页端「我的消息」的两个 Tab）。
+     *
+     * 站点把列表放在 Tab 的 inajax 回执里：整页 HTML 的列表容器是空的，直接取页
+     * 永远拿到 0 条，故按 filter 打这个接口。[loggedOut] 由解析器从登录跳转回执认出。
+     */
+    suspend fun pmMessages(filter: String): PmPage = withContext(Dispatchers.IO) {
+        val body = http.get(http.url("home.php?mod=space&do=pm&filter=$filter&inajax=1"))
+        ForumParser.parsePmMessages(body)
     }
 
     /** 与特定用户的私信会话详情（聊天记录）。 */
     suspend fun chatConversation(touid: String): ChatConversation = withContext(Dispatchers.IO) {
         val html = http.get(http.url("home.php?mod=space&do=pm&subop=view&touid=$touid&mobile=2"))
         ForumParser.parseChatConversation(html, touid)
-    }
-
-    /** 我的粉丝列表。 */
-    suspend fun followers(): List<FollowerUser> = withContext(Dispatchers.IO) {
-        val html = http.get(http.url("home.php?mod=follow&do=follower&mobile=2"))
-        ForumParser.parseFollowers(html)
     }
 
     /**

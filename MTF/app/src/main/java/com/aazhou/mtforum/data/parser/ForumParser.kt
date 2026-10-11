@@ -10,10 +10,10 @@ import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
 import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticePage
+import com.aazhou.mtforum.data.model.PmPage
 import com.aazhou.mtforum.data.model.PrivateMessage
 import com.aazhou.mtforum.data.model.ChatMessage
 import com.aazhou.mtforum.data.model.ChatConversation
-import com.aazhou.mtforum.data.model.FollowerUser
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.model.PostQuote
 import com.aazhou.mtforum.data.model.ReplyResult
@@ -1109,44 +1109,53 @@ object ForumParser {
     }
 
     /**
-     * 解析私信会话列表（home.php?mod=space&do=pm&mobile=2）。
+     * 解析私人消息 / 公共消息列表（home.php?mod=space&do=pm&filter=privatepm|announcepm&inajax=1）。
+     *
+     * 站点把列表放在 Tab 的 inajax 回执里：正文是 XML 外壳，列表 HTML 包在 CDATA 中，
+     * 与两个 Tab 的导航混在同一段，故先剥 CDATA 再只认 comiis_pmlist 里的行——Tab 自身
+     * 也是带 do=pm 链接的 li，按「li:has(a[href*=do=pm])」兜底会把「私人消息」
+     * 「公共消息」两条导航当成会话。未登录时回执只有一段登录跳转脚本，按 loggedOut 还原。
      */
-    fun parsePrivateMessages(html: String): List<PrivateMessage> {
-        val document = doc(html)
-        val items = document.select("div.comiis_pmlist li, div.pm_list li").ifEmpty {
-            document.select("li:has(a[href*=\"do=pm\"])")
+    fun parsePmMessages(response: String): PmPage {
+        val payload = RE_CDATA.find(response)?.groupValues?.get(1) ?: response
+        if (payload.contains("mod=logging") || payload.contains("action=login")) {
+            return PmPage(loggedOut = true)
         }
-        return items.mapNotNull { li ->
-            val link = li.selectFirst("a[href*=\"do=pm\"]") ?: li.selectFirst("a")
-            val href = link?.attr("href").orEmpty()
-            val touid = Regex("""[?&]touid=(\d+)""").find(href)?.groupValues?.get(1)
-                ?: Regex("""[?&]uid=(\d+)""").find(href)?.groupValues?.get(1)
-            val plid = Regex("""[?&]plid=(\d+)""").find(href)?.groupValues?.get(1)
+        val document = doc(payload)
+        val items = document.select("div.comiis_pmlist li, div.pm_list li")
+        return PmPage(
+            messages = items.mapNotNull { li ->
+                val link = li.selectFirst("a[href*=\"do=pm\"]") ?: li.selectFirst("a")
+                val href = link?.attr("href").orEmpty()
+                val touid = Regex("""[?&]touid=(\d+)""").find(href)?.groupValues?.get(1)
+                    ?: Regex("""[?&]uid=(\d+)""").find(href)?.groupValues?.get(1)
+                val plid = Regex("""[?&]plid=(\d+)""").find(href)?.groupValues?.get(1)
 
-            val h2 = li.selectFirst("h2")
-            val timeText = h2?.selectFirst("span")?.text()?.trim()
-                ?: li.selectFirst("span.date, span.time")?.text()?.trim()
+                val h2 = li.selectFirst("h2")
+                val timeText = h2?.selectFirst("span")?.text()?.trim()
+                    ?: li.selectFirst("span.date, span.time")?.text()?.trim()
 
-            // 用户名取 h2 剔除时间 span 后的文本
-            val username = h2?.clone()?.apply { select("span").remove() }?.text()?.trim()
-                ?.ifBlank { null }
-                ?: link?.selectFirst(".name, .username")?.text()?.trim()
-                ?: "系统消息"
+                // 用户名取 h2 剔除时间 span 后的文本
+                val username = h2?.clone()?.apply { select("span").remove() }?.text()?.trim()
+                    ?.ifBlank { null }
+                    ?: link?.selectFirst(".name, .username")?.text()?.trim()
+                    ?: "系统消息"
 
-            val summary = li.selectFirst("p")?.text()?.trim().orEmpty()
-            val avatarUrl = li.selectFirst("img")?.absUrl("src")?.takeIf { it.isNotBlank() }
-            val unread = li.selectFirst(".kmnum, .kmnums, .new") != null
+                val summary = li.selectFirst("p")?.text()?.trim().orEmpty()
+                val avatarUrl = li.selectFirst("img")?.absUrl("src")?.takeIf { it.isNotBlank() }
+                val unread = li.selectFirst(".kmnum, .kmnums, .new") != null
 
-            PrivateMessage(
-                plid = plid,
-                touid = touid,
-                username = username,
-                avatarUrl = avatarUrl,
-                summary = summary,
-                timeText = timeText,
-                unread = unread,
-            )
-        }
+                PrivateMessage(
+                    plid = plid,
+                    touid = touid,
+                    username = username,
+                    avatarUrl = avatarUrl,
+                    summary = summary,
+                    timeText = timeText,
+                    unread = unread,
+                )
+            },
+        )
     }
 
     /**
@@ -1198,39 +1207,6 @@ object ForumParser {
             messages = messages,
             formhash = formhash,
         )
-    }
-
-    /**
-     * 解析我的粉丝列表（home.php?mod=follow&do=follower&mobile=2）。
-     */
-    fun parseFollowers(html: String): List<FollowerUser> {
-        val document = doc(html)
-        val items = document.select("div.comiis_userlist01 > li, li[id^=\"comiis_friendbox_\"]")
-        return items.mapNotNull { li ->
-            val link = li.selectFirst("p.tit a[href*=\"do=profile\"]")
-                ?: li.selectFirst("a[href*=\"do=profile\"]")
-                ?: return@mapNotNull null
-            val href = link.attr("href")
-            val uid = Regex("""[?&]uid=(\d+)""").find(href)?.groupValues?.get(1)
-                ?: Regex("""comiis_friendbox_(\d+)""").find(li.attr("id"))?.groupValues?.get(1)
-                ?: return@mapNotNull null
-            val name = link.text().trim()
-            if (name.isEmpty()) return@mapNotNull null
-
-            val avatarUrl = li.selectFirst("a.list01_limg img, img")?.absUrl("src")?.takeIf { it.isNotBlank() }
-            val txt = li.selectFirst("p.txt")?.text().orEmpty()
-            val fansCount = Regex("""(\d+)\s*粉丝""").find(txt)?.groupValues?.get(1)
-                ?: li.selectFirst("code[id^=\"followernum_\"]")?.text()?.trim()
-            val followCount = Regex("""(\d+)\s*关注""").find(txt)?.groupValues?.get(1)
-
-            FollowerUser(
-                uid = uid,
-                username = name,
-                avatarUrl = avatarUrl,
-                fansCount = fansCount,
-                followCount = followCount,
-            )
-        }
     }
 
     private fun extractTid(document: Document, html: String): String {

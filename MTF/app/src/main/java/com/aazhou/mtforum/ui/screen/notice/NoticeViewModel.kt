@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aazhou.mtforum.data.cache.CacheKeys
 import com.aazhou.mtforum.data.cache.ContentCache
-import com.aazhou.mtforum.data.model.FollowerUser
 import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticeCategory
 import com.aazhou.mtforum.data.model.PrivateMessage
@@ -19,7 +18,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.Calendar
 
-/** 页面支持的三种内容承载形式。 */
+/** 页面支持的两种内容承载形式。 */
 sealed interface NoticeContentState {
     data class Notices(
         val items: List<Notice>,
@@ -28,12 +27,10 @@ sealed interface NoticeContentState {
         val hasNext: Boolean = false,
     ) : NoticeContentState
     data class PrivateMessages(val items: List<PrivateMessage>) : NoticeContentState
-    data class Followers(val items: List<FollowerUser>) : NoticeContentState
 
     fun isEmpty(): Boolean = when (this) {
         is Notices -> items.isEmpty()
         is PrivateMessages -> items.isEmpty()
-        is Followers -> items.isEmpty()
     }
 }
 
@@ -128,20 +125,18 @@ class NoticeViewModel(
     private suspend fun reloadNetwork(cat: NoticeCategory) {
         try {
             when (cat) {
-                NoticeCategory.PM -> {
-                    val pms = repository.privateMessages()
-                    val content = NoticeContentState.PrivateMessages(pms)
-                    updateContent(cat, content)
-                }
-                NoticeCategory.FOLLOWER -> {
-                    val followers = repository.followers()
-                    val content = NoticeContentState.Followers(followers)
-                    updateContent(cat, content)
+                NoticeCategory.PRIVATE_PM, NoticeCategory.ANNOUNCE_PM -> {
+                    val filter = cat.pmFilter ?: return
+                    val page = repository.pmMessages(filter)
+                    if (page.loggedOut) {
+                        _state.value = UiState.Error("请先登录后查看消息")
+                        return
+                    }
+                    updateContent(cat, NoticeContentState.PrivateMessages(page.messages))
                 }
                 NoticeCategory.MY_POST,
                 NoticeCategory.INTERACTIVE,
-                NoticeCategory.SYSTEM,
-                NoticeCategory.APP -> {
+                NoticeCategory.SYSTEM -> {
                     val view = cat.viewKey ?: "mypost"
                     val page = repository.noticesByView(view)
                     if (page.loggedOut) {
@@ -206,20 +201,14 @@ class NoticeViewModel(
 
     private suspend fun readDiskCache(cat: NoticeCategory): NoticeContentState? {
         return when (cat) {
-            NoticeCategory.PM -> {
+            NoticeCategory.PRIVATE_PM, NoticeCategory.ANNOUNCE_PM -> {
                 contentCache.read(CacheKeys.notice(cat.name), CacheKeys.LIST_TTL, allowExpired = true) {
                     NoticeContentState.PrivateMessages(cacheJson.decodeFromString(it))
                 }
             }
-            NoticeCategory.FOLLOWER -> {
-                contentCache.read(CacheKeys.notice(cat.name), CacheKeys.LIST_TTL, allowExpired = true) {
-                    NoticeContentState.Followers(cacheJson.decodeFromString(it))
-                }
-            }
             NoticeCategory.MY_POST,
             NoticeCategory.INTERACTIVE,
-            NoticeCategory.SYSTEM,
-            NoticeCategory.APP -> {
+            NoticeCategory.SYSTEM -> {
                 contentCache.read(CacheKeys.notice(cat.name), CacheKeys.LIST_TTL, allowExpired = true) {
                     val cached = cacheJson.decodeFromString<CachedNotices>(it)
                     NoticeContentState.Notices(cached.notices, cached.page, cached.hasNext)
@@ -239,14 +228,6 @@ class NoticeViewModel(
                 )
             }
             is NoticeContentState.PrivateMessages -> {
-                contentCache.write(
-                    key = CacheKeys.notice(cat.name),
-                    ttlMillis = CacheKeys.LIST_TTL,
-                    value = content.items,
-                    encode = { cacheJson.encodeToString(it) },
-                )
-            }
-            is NoticeContentState.Followers -> {
                 contentCache.write(
                     key = CacheKeys.notice(cat.name),
                     ttlMillis = CacheKeys.LIST_TTL,
