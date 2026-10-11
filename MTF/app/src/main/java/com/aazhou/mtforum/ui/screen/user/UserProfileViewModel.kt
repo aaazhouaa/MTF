@@ -2,6 +2,8 @@ package com.aazhou.mtforum.ui.screen.user
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aazhou.mtforum.data.cache.CacheKeys
+import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.ForumRepository
@@ -17,12 +19,15 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 class UserProfileViewModel(
     val uid: String,
     private val repository: ForumRepository,
     private val sessionStore: SessionStore,
     private val actionStore: ActionStore,
+    private val contentCache: ContentCache,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState<UserProfile>>(UiState.Loading)
@@ -30,6 +35,16 @@ class UserProfileViewModel(
 
     private val _isOperating = MutableStateFlow(false)
     val isOperating: StateFlow<Boolean> = _isOperating.asStateFlow()
+
+    /** 一次性提示（如「新数据获取失败」）；界面展示后调 [consumeActionMessage] 清掉。 */
+    private val _actionMessage = MutableStateFlow<String?>(null)
+    val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
+
+    fun consumeActionMessage() {
+        _actionMessage.value = null
+    }
+
+    private val cacheJson = Json { ignoreUnknownKeys = true }
 
     /** 当前登录者的 UID。 */
     val myUid: StateFlow<String> = sessionStore.uid
@@ -58,23 +73,67 @@ class UserProfileViewModel(
         load()
     }
 
+    /**
+     * 进入页面即有缓存先摆出来（不走全屏转圈），网络回来原地替换。
+     *
+     * 拉黑/关注等写操作只改本地覆盖状态，不再整页重拉：那会把界面打成全屏转圈，
+     * 观感就是「页面重新加载了一次」。
+     */
     fun load() {
-        _state.value = UiState.Loading
         viewModelScope.launch {
-            _state.value = try {
+            // 过期也照摆：内容旧一点也好过对着转圈等网络，刷新失败时下面保留旧内容只提示
+            val cached = readCache()
+            if (cached != null && _state.value !is UiState.Success) {
+                _state.value = UiState.Success(cached)
+            }
+            if (_state.value !is UiState.Success) {
+                _state.value = UiState.Loading
+            }
+            try {
                 val profile = repository.userProfile(uid)
                 refreshBlocked()
-                val localFollow = actionStore.following(uid)
-                if (localFollow != null) {
-                    _followingOverride.value = localFollow
-                } else if (profile.isFollowing != null) {
-                    _followingOverride.value = profile.isFollowing
-                }
-                UiState.Success(profile)
+                applyFollowState(profile)
+                _state.value = UiState.Success(profile)
+                saveToCache(profile)
             } catch (e: Exception) {
-                UiState.Error(e.message ?: "加载失败")
+                // 有缓存就留着旧内容，只提示这次没拿到新的
+                if (_state.value !is UiState.Success) {
+                    _state.value = UiState.Error(e.message ?: "加载失败")
+                } else {
+                    _actionMessage.value = "新数据获取失败"
+                }
             }
         }
+    }
+
+    /** 关注态：本地记录优先，其次页面解析结果。 */
+    private suspend fun applyFollowState(profile: UserProfile) {
+        val localFollow = actionStore.following(uid)
+        if (localFollow != null) {
+            _followingOverride.value = localFollow
+        } else if (profile.isFollowing != null) {
+            _followingOverride.value = profile.isFollowing
+        }
+    }
+
+    private suspend fun readCache(): UserProfile? =
+        contentCache.read(
+            CacheKeys.userProfile(uid),
+            CacheKeys.LIST_TTL,
+            allowExpired = true,
+        ) {
+            cacheJson.decodeFromString<CachedProfile>(it)
+        }?.toUserProfile()
+
+    /** 未登录态不写缓存：避免把空资料落成下一段的旧数据。 */
+    private suspend fun saveToCache(profile: UserProfile) {
+        if (!profile.isLoggedIn) return
+        contentCache.write(
+            key = CacheKeys.userProfile(uid),
+            ttlMillis = CacheKeys.LIST_TTL,
+            value = CachedProfile.from(profile),
+            encode = { cacheJson.encodeToString(CachedProfile.serializer(), it) },
+        )
     }
 
     /** 切换关注状态。 */
@@ -171,8 +230,8 @@ class UserProfileViewModel(
         }
     }
 
-    /** 移出黑名单。 */
-    fun unblockUser(onDone: () -> Unit) {
+    /** 移出黑名单：只翻本地状态，不重新加载页面。 */
+    fun unblockUser() {
         if (_isOperating.value) return
         viewModelScope.launch {
             _isOperating.value = true
@@ -181,7 +240,6 @@ class UserProfileViewModel(
                 res.onSuccess { msg ->
                     _blockedOverride.value = false
                     AppToast.show(msg)
-                    onDone()
                 }.onFailure { e ->
                     AppToast.show(e.message ?: "移出黑名单失败")
                 }
@@ -196,5 +254,57 @@ class UserProfileViewModel(
         if (_blockedOverride.value != null) return
         runCatching { repository.myFriends(view = "blacklist", page = 1) }
             .onSuccess { page -> _blockedOverride.value = page.users.any { it.uid == uid } }
+    }
+}
+
+/** 个人主页缓存内容：只存页面资料字段，formhash / 关注态每次取新鲜的。 */
+@Serializable
+private data class CachedProfile(
+    val uid: String? = null,
+    val name: String? = null,
+    val avatarUrl: String? = null,
+    val level: String? = null,
+    val groupName: String? = null,
+    val threads: Int? = null,
+    val posts: Int? = null,
+    val friends: Int? = null,
+    val following: Int? = null,
+    val followers: Int? = null,
+    val credits: Int? = null,
+    val gold: Int? = null,
+    val onlineTime: String? = null,
+) {
+    fun toUserProfile(): UserProfile = UserProfile(
+        uid = uid,
+        name = name,
+        avatarUrl = avatarUrl,
+        level = level,
+        groupName = groupName,
+        threads = threads,
+        posts = posts,
+        friends = friends,
+        following = following,
+        followers = followers,
+        credits = credits,
+        gold = gold,
+        onlineTime = onlineTime,
+    )
+
+    companion object {
+        fun from(profile: UserProfile): CachedProfile = CachedProfile(
+            uid = profile.uid,
+            name = profile.name,
+            avatarUrl = profile.avatarUrl,
+            level = profile.level,
+            groupName = profile.groupName,
+            threads = profile.threads,
+            posts = profile.posts,
+            friends = profile.friends,
+            following = profile.following,
+            followers = profile.followers,
+            credits = profile.credits,
+            gold = profile.gold,
+            onlineTime = profile.onlineTime,
+        )
     }
 }

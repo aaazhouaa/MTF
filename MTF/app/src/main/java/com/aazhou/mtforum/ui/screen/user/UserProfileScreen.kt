@@ -36,6 +36,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +60,7 @@ import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.ImagePreview
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
@@ -83,13 +85,14 @@ fun UserProfileScreen(
 ) {
     val colors = LocalMtfColors.current
     val viewModel: UserProfileViewModel = appViewModel {
-        UserProfileViewModel(uid, it.repository, it.sessionStore, it.actionStore)
+        UserProfileViewModel(uid, it.repository, it.sessionStore, it.actionStore, it.contentCache)
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val isSelf by viewModel.isSelf.collectAsStateWithLifecycle()
     val isFollowing by viewModel.isFollowing.collectAsStateWithLifecycle()
     val isBlocked by viewModel.isBlocked.collectAsStateWithLifecycle()
     val isOperating by viewModel.isOperating.collectAsStateWithLifecycle()
+    val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
 
     var showAddFriendDialog by remember { mutableStateOf(false) }
     var showBlockDialog by remember { mutableStateOf(false) }
@@ -97,6 +100,12 @@ fun UserProfileScreen(
 
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(actionMessage) {
+        val message = actionMessage ?: return@LaunchedEffect
+        AppToast.show(message)
+        viewModel.consumeActionMessage()
+    }
 
     Scaffold(
         containerColor = colors.background,
@@ -165,7 +174,8 @@ fun UserProfileScreen(
                         },
                         onBlock = {
                             if (isBlocked) {
-                                viewModel.unblockUser { viewModel.load() }
+                                // 移除黑名单只翻本地状态：再整页重拉会打成全屏转圈
+                                viewModel.unblockUser()
                             } else {
                                 showBlockDialog = true
                             }
