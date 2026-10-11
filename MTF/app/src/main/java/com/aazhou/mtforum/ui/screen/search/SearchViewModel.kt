@@ -114,7 +114,10 @@ class SearchViewModel(
             runCatching { repository.search(keyword, page + 1) }
                 .onSuccess { next ->
                     page += 1
-                    val merged = SearchResult(current.threads + next.threads, next.hasNext)
+                    // 现读当前列表：缓存刚上屏、首屏请求还在飞时翻页就会并发打进来，
+                    // 用请求前的旧快照拼会把首屏新结果整块盖掉
+                    val latest = (_state.value as? UiState.Success)?.data ?: current
+                    val merged = SearchResult(latest.threads + next.threads, next.hasNext)
                     _state.value = UiState.Success(merged)
                     saveToCache(merged)
                 }

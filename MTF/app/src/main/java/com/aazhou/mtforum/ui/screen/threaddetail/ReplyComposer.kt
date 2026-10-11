@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -109,6 +110,7 @@ import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.parser.Smiley
 import com.aazhou.mtforum.data.parser.SmileyPack
 import com.aazhou.mtforum.ui.common.AppToast
+import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -130,6 +132,9 @@ import kotlin.math.min
  * 同一套 backdrop，帖子内容仍从面板下透出。工具栏插入的都是站点认识的标记，与网页端编辑器
  * 一致：表情 `[呵呵]`、贴图 `[attachimg]id[/attachimg]`、朋友 `@用户名 `、话题 `#话题#`。
  */
+/** 本次已传上去的图：缩略图直接用选中的 Uri，删除时只从正文摘标记、不动站点附件。 */
+private data class UploadedImage(val aid: String, val uri: Uri)
+
 @Composable
 internal fun ReplyComposer(
     value: TextFieldValue,
@@ -161,6 +166,9 @@ internal fun ReplyComposer(
     val scope = rememberCoroutineScope()
     var panel by remember { mutableStateOf(ComposerPanel.None) }
     var uploading by remember { mutableStateOf(false) }
+    // 本次会话已传上去的图：缩略图条可点开全屏查看，也能删掉不要的那张
+    var uploaded by remember { mutableStateOf<List<UploadedImage>>(emptyList()) }
+    var previewUploaded by remember { mutableStateOf(-1) }
 
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(MAX_UPLOAD_IMAGES),
@@ -170,13 +178,18 @@ internal fun ReplyComposer(
         scope.launch {
             var done = 0
             var failed = 0
+            // 攒齐再一次插入：value 是组合时捕获的旧值，逐张各插一次会都基于同一份文本，
+            // 后一张把前一张覆盖掉，最后只剩最后一张
+            val tags = StringBuilder()
+            val succeeded = mutableListOf<UploadedImage>()
             try {
                 for (uri in uris) {
                     try {
                         val file = prepareUploadFile(context, uri)
                         val aid = onUploadImage(file)
                         if (aid != null) {
-                            onValueChange(value.insertAtSelection("[attachimg]$aid[/attachimg]"))
+                            tags.append("[attachimg]").append(aid).append("[/attachimg]")
+                            succeeded += UploadedImage(aid = aid, uri = uri)
                             done++
                         } else {
                             failed++
@@ -187,6 +200,10 @@ internal fun ReplyComposer(
                         // 单张失败不打断整批：剩下的图照传，末尾一并告知
                         failed++
                     }
+                }
+                if (succeeded.isNotEmpty()) {
+                    onValueChange(value.insertAtSelection(tags.toString()))
+                    uploaded = uploaded + succeeded
                 }
                 when {
                     failed == 0 -> Unit
@@ -540,6 +557,58 @@ internal fun ReplyComposer(
                 }
             }
 
+            // 已传图片缩略条：点图全屏查看，点「删除」把该图的标记从正文里摘掉
+            if (uploaded.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "已上传图片 (${uploaded.size})",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.textSecondary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(uploaded, key = { _, it -> it.aid }) { index, item ->
+                        Box(
+                            Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(colors.background)
+                                .border(0.6.dp, colors.divider, RoundedCornerShape(8.dp)),
+                        ) {
+                            AsyncImage(
+                                model = item.uri,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clickable { previewUploaded = index },
+                            )
+                            Box(
+                                Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .clickable {
+                                        uploaded = uploaded.filterNot { it.aid == item.aid }
+                                        onValueChange(
+                                            value.withoutAttachTag(item.aid),
+                                        )
+                                    }
+                                    .padding(vertical = 1.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    "删除",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // @候选条：光标正落在 @关键字 里时才出现，贴在工具栏上方。表情/插入面板开着
             // 时说明没在打字，这时候浮一层候选只会挡住面板
             val atToken = if (value.selection.collapsed) {
@@ -684,6 +753,15 @@ internal fun ReplyComposer(
                 }
             }
         }
+    }
+
+    // 已传图片的全屏查看：本地 Uri 直显，删除入口不放在这里（避免误触）
+    if (previewUploaded in uploaded.indices) {
+        ImagePreview(
+            urls = uploaded.map { it.uri },
+            initialIndex = previewUploaded,
+            onDismiss = { previewUploaded = -1 },
+        )
     }
 }
 
@@ -976,6 +1054,15 @@ internal fun TextFieldValue.insertAtSelection(
     val merged = this.text.substring(0, start) + text + this.text.substring(end)
     val cursor = start + cursorOffsetInInserted.coerceIn(0, text.length)
     return copy(text = merged, selection = TextRange(cursor))
+}
+
+/** 从正文里摘掉某个 aid 的 `[attachimg]` 标记：删已传的图时用，站点附件本身不动。 */
+internal fun TextFieldValue.withoutAttachTag(aid: String): TextFieldValue {
+    val tag = "[attachimg]$aid[/attachimg]"
+    val at = text.indexOf(tag)
+    if (at < 0) return this
+    val merged = text.removeRange(at, at + tag.length)
+    return copy(text = merged, selection = TextRange(at.coerceIn(0, merged.length)))
 }
 
 /**

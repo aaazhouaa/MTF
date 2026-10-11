@@ -188,10 +188,14 @@ class NoticeViewModel(
                         _hasNext.value = false
                         return@onSuccess
                     }
-                    val merged = (current.items + page.notices).distinctBy { it.id }
+                    // 现读当前列表：翻页可能在首屏请求还在飞时就被触发，用请求前的旧快照
+                    // 拼会把首屏刚到手的新数据整块盖掉（新提醒在第 1 页，于是看不到）
+                    val latest = (_state.value as? UiState.Success)?.data as? NoticeContentState.Notices
+                        ?: current
+                    val merged = (latest.items + page.notices).distinctBy { it.id }
                     // 一条新提醒都没有：站点把页码夹回了已给过的内容，或这一类已经见底。
                     // 此时必须收手，否则每滑到底都会再去要一遍同一页
-                    val added = merged.size - current.items.size
+                    val added = merged.size - latest.items.size
                     val updated = NoticeContentState.Notices(
                         items = merged.sortedByDescending { noticeRecency(it) },
                         page = next,

@@ -363,6 +363,8 @@ data class ChatConversation(
     val targetName: String? = null,
     val messages: List<ChatMessage> = emptyList(),
     val formhash: String? = null,
+    /** 对方是否在线；站点只在标题里给「(在线)」时才知道，未提及为 null。 */
+    val targetOnline: Boolean? = null,
 )
 
 /** 关注/粉丝列表项。 */

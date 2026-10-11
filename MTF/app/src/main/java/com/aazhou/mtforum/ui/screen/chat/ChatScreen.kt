@@ -105,6 +105,8 @@ fun ChatScreen(
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val displayName by viewModel.targetName.collectAsStateWithLifecycle()
+    // 对方在线状态随会话数据来：站点只在标题行给「(在线)」时才知道，未登录/解析不到为 null
+    val targetOnline = (state as? UiState.Success)?.data?.targetOnline
     val isSending by viewModel.isSending.collectAsStateWithLifecycle()
     val isUploading by viewModel.isUploading.collectAsStateWithLifecycle()
     val myAvatar by viewModel.myAvatarUrl.collectAsStateWithLifecycle()
@@ -238,14 +240,25 @@ fun ChatScreen(
                     }
                 },
                 title = {
-                    Text(
-                        displayName,
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
-                        fontWeight = FontWeight.Bold,
-                        color = bodyTextColor(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            displayName,
+                            style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
+                            fontWeight = FontWeight.Bold,
+                            color = bodyTextColor(),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        // 站点在标题行给出「(在线)/(离线)」；未提及状态时不占位
+                        if (targetOnline != null) {
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                if (targetOnline) "在线" else "离线",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                color = if (targetOnline) Color(0xFF22C55E) else colors.textHint,
+                            )
+                        }
+                    }
                 },
                 actions = {
                     if (onUserClick != null) {

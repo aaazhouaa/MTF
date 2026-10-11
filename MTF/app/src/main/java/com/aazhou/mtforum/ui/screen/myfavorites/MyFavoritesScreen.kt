@@ -32,6 +32,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -72,6 +73,7 @@ import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.bodyTextColor
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -109,6 +111,13 @@ class MyFavoritesViewModel(
     fun consumeActionMessage() {
         _actionMessage.value = null
     }
+
+    /** 下拉刷新中的 tab：与 [tabStates] 独立，刷新期间保留旧列表不清屏。 */
+    private val _refreshing = MutableStateFlow<Set<String>>(emptySet())
+    val refreshing: StateFlow<Set<String>> = _refreshing.asStateFlow()
+
+    /** 各 tab 追加下一页的 Job：刷新时取消，避免旧页又拼回新拉的第 1 页后面。 */
+    private val loadMoreJobs = mutableMapOf<String, Job>()
 
     private val cacheJson = Json { ignoreUnknownKeys = true }
 
@@ -148,6 +157,23 @@ class MyFavoritesViewModel(
         viewModelScope.launch { reload(type, sessionStore.uid.first()) }
     }
 
+    /**
+     * 下拉刷新：回到第 1 页，已追加的页一并作废。
+     *
+     * 不复用 [load]：那会先把磁盘缓存摆回来再请求，刷新的意义就没了。
+     */
+    fun refresh(type: String) {
+        if (type in _refreshing.value) return
+        // 翻页 Job 取消后不会自己复位 loadingMore，这里补上，否则该 tab 再也翻不了页
+        loadMoreJobs.remove(type)?.cancel()
+        if (_tabStates.value.containsKey(type)) update(type) { it.copy(loadingMore = false) }
+        _refreshing.value = _refreshing.value + type
+        viewModelScope.launch {
+            reload(type, sessionStore.uid.first())
+            _refreshing.value = _refreshing.value - type
+        }
+    }
+
     private suspend fun reload(type: String, uid: String) {
         runCatching { repository.myFavorites(type = type, page = 1) }
             .onSuccess { data ->
@@ -172,7 +198,7 @@ class MyFavoritesViewModel(
         if (current.loadingMore || !current.hasNext) return
         if (current.state !is UiState.Success) return
         update(type) { it.copy(loadingMore = true) }
-        viewModelScope.launch {
+        loadMoreJobs[type] = viewModelScope.launch {
             val next = current.page + 1
             runCatching { repository.myFavorites(type = type, page = next) }
                 .onSuccess { data ->
@@ -271,6 +297,7 @@ fun MyFavoritesScreen(
     }
     val tabs = MY_FAVORITES_TABS
     val tabStates by viewModel.tabStates.collectAsStateWithLifecycle()
+    val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val removingKey by viewModel.removing.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
 
@@ -354,9 +381,11 @@ fun MyFavoritesScreen(
             val tab = tabStates[type] ?: FavoritesTabState()
             FavoritesTab(
                 tab = tab,
+                refreshing = type in refreshing,
                 listState = listStates[page],
                 removingKey = removingKey,
                 onRetry = { viewModel.retry(type) },
+                onRefresh = { viewModel.refresh(type) },
                 onLoadMore = { viewModel.loadMore(type) },
                 onClick = { fav ->
                     if (fav.type == "forum") {
@@ -386,11 +415,14 @@ fun MyFavoritesScreen(
 
 /** 单个 tab 的收藏流：缓存优先上屏、滑到底部自动翻页。 */
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun FavoritesTab(
     tab: FavoritesTabState,
+    refreshing: Boolean,
     listState: LazyListState,
     removingKey: String,
     onRetry: () -> Unit,
+    onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onClick: (FavoriteItem) -> Unit,
     onDelete: (FavoriteItem) -> Unit,
@@ -413,26 +445,32 @@ private fun FavoritesTab(
                 LaunchedEffect(shouldLoadMore, tab.hasNext) {
                     if (shouldLoadMore && tab.hasNext) onLoadMore()
                 }
-                LazyColumn(
-                    state = listState,
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+                PullToRefreshBox(
+                    isRefreshing = refreshing,
+                    onRefresh = onRefresh,
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(items, key = { if (it.favid.isNotEmpty()) it.favid else it.id }) { fav ->
-                        FavoriteCard(
-                            item = fav,
-                            removing = removingKey == fav.favid.ifEmpty { fav.id },
-                            onClick = { onClick(fav) },
-                            onDelete = { onDelete(fav) },
-                        )
-                    }
-                    if (tab.loadingMore) {
-                        item(key = "loading-more") {
-                            Box(
-                                Modifier.fillMaxWidth().padding(16.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                CircularProgressIndicator(Modifier.size(22.dp))
+                    LazyColumn(
+                        state = listState,
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(items, key = { if (it.favid.isNotEmpty()) it.favid else it.id }) { fav ->
+                            FavoriteCard(
+                                item = fav,
+                                removing = removingKey == fav.favid.ifEmpty { fav.id },
+                                onClick = { onClick(fav) },
+                                onDelete = { onDelete(fav) },
+                            )
+                        }
+                        if (tab.loadingMore) {
+                            item(key = "loading-more") {
+                                Box(
+                                    Modifier.fillMaxWidth().padding(16.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    CircularProgressIndicator(Modifier.size(22.dp))
+                                }
                             }
                         }
                     }

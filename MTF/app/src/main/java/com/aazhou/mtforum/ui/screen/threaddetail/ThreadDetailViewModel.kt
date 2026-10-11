@@ -804,10 +804,15 @@ class ThreadDetailViewModel(
                 return@launch
             }
             _actionMessage.value = if (stick) "已置顶该回复" else "已取消置顶"
+            // 置顶会改变楼层所在页：把已拉过的每条序列的第 1 页与最后一页都重拉一遍合入池子，
+            // 否则该楼还停在原位置、上屏看不到变化
             for (seq in viewProgress.keys.toList()) {
-                val fresh = fetchPageOrNull(seq, 1) ?: continue
-                mergeIntoPool(seq, 1, fresh)
-                recordProgress(seq, 1, fresh.totalPages)
+                val last = maxOf(progressOf(seq).totalPages, progressOf(seq).maxPage).coerceAtLeast(1)
+                for (pageNo in if (last > 1) listOf(1, last) else listOf(1)) {
+                    val fresh = fetchPageOrNull(seq, pageNo) ?: continue
+                    mergeIntoPool(seq, pageNo, fresh)
+                    recordProgress(seq, pageNo, fresh.totalPages)
+                }
             }
             publish()
         }

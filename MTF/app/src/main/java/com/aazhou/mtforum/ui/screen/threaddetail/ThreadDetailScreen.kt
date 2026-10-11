@@ -79,6 +79,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -598,6 +599,7 @@ fun ThreadDetailScreen(
                             val replies = data.posts.filter { it !== op }
                             if (foldExpanded) replies else replies.filter { it.pid !in waterPids }
                         }
+                        Box(Modifier.fillMaxSize()) {
                         PullToRefreshBox(
                             isRefreshing = isRefreshing,
                             onRefresh = { viewModel.refresh() },
@@ -719,6 +721,62 @@ fun ThreadDetailScreen(
                                 }
                             }
                         }
+                        }
+                            // 「全部评论」栏滚过视口顶端后，这一份副本贴在顶栏下沿不再随正文走；
+                            // 下滑时原栏回到视口里，副本淡出退场。做成 Box 覆盖层而不是
+                            // LazyColumn 的 item：item 一进一出会改变后续 item 的下标，
+                            // 滚动位置会跳
+                            val pinAlpha by remember {
+                                derivedStateOf {
+                                    val info = listState.layoutInfo
+                                    val idx = info.visibleItemsInfo
+                                        .indexOfFirst { it.key == "comment-header" }
+                                    // 原栏完全滚出视口顶端才开始显形，一格之内淡入到不透明
+                                    if (idx < 0) {
+                                        1f
+                                    } else {
+                                        val item = info.visibleItemsInfo[idx]
+                                        // 原栏往上走出视口的过程就是淡入过程，走完即不透明
+                                        // size 是这一格的像素高，不是 IntSize
+                                        (1f - (-item.offset.toFloat() / item.size.coerceAtLeast(1).toFloat()))
+                                            .coerceIn(0f, 1f)
+                                    }
+                                }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .fillMaxWidth()
+                                    .height(commentHeaderPinHeight)
+                                    .background(colors.topBar)
+                                    .alpha(pinAlpha),
+                            ) {
+                                CommentHeader(
+                                    total = data.totalReplies,
+                                    folded = foldedCount,
+                                    foldExpanded = foldExpanded,
+                                    opOnly = opOnly,
+                                    orderType = orderType,
+                                    onToggleFold = { viewModel.toggleFoldExpanded() },
+                                    onOpOnly = {
+                                        viewModel.setReplyFilter(true, orderType, anchorNow())
+                                    },
+                                    onOrder = {
+                                        viewModel.setReplyFilter(
+                                            opOnly = false,
+                                            orderType = it,
+                                            anchor = ScrollAnchor(
+                                                index = if (op != null) 1 else 0,
+                                                offset = 0,
+                                            ),
+                                        )
+                                    },
+                                )
+                                HorizontalDivider(
+                                    color = colors.divider,
+                                    modifier = Modifier.align(Alignment.BottomStart),
+                                )
+                            }
                         }
                     }
                 }
@@ -920,9 +978,8 @@ fun ThreadDetailScreen(
 
     actionTarget?.let { target ->
         val isOwn = myUid.isNotBlank() && myUid == target.authorUid
-        // 置顶入口只给「自己的帖子里、自己的评论」：站点同样只对楼主开放，且管的是
-        // 自己发出去的那几条，别借楼主身份把别人的评论也管了
-        val canStick = isOwn && myUid.isNotBlank() && myUid == page?.opUid
+        // 置顶是楼主对帖内评论的管理权限，站点只给楼主这个入口
+        val canStick = myUid.isNotBlank() && myUid == page?.opUid
         MtfContentDialog(
             title = "${target.authorName.ifBlank { "匿名" }} · 评论操作",
             onDismissRequest = { actionTarget = null },
@@ -970,6 +1027,9 @@ fun ThreadDetailScreen(
         }
     }
 }
+
+/** 钉顶的「全部评论」栏高度：与原栏同规格，避免贴上顶栏时高度跳变。 */
+private val commentHeaderPinHeight = 44.dp
 
 /** 未登录点击互动入口时的提示文案。 */
 private const val LOGIN_HINT_REPLY = "你不登录咋回复???"

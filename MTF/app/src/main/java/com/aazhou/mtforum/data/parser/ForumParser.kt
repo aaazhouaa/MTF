@@ -1197,9 +1197,12 @@ object ForumParser {
             ?.takeIf { it.isNotBlank() }
             ?: parseFormhash(html)
 
-        val targetName = document.selectFirst(".header .name, .category .name, header span:not(.none)")
-            ?.text()?.trim()
-
+        // 站点把对方在线状态写进标题行的 font 里：「昵称 (在线)」/「昵称 (离线)」。
+        // 整段 text 会把括号也带进昵称，故先摘掉再判状态
+        val headName = document.selectFirst(".header .name, .category .name, header span:not(.none)")
+        val targetName = headName?.ownText()?.trim()?.ifBlank { null }
+            ?: headName?.text()?.trim()?.removeSuffix("(在线)")?.removeSuffix("(离线)")?.trim()
+        val targetOnline = headName?.text()?.contains("(在线)")
         val nodes = document.select(".msgbox > div[class*='msg'], .friend_msg, .self_msg, .msgbox li, .comiis_pmlist li")
             .ifEmpty {
                 document.select("div.dialog_green, div.dialog_white")
@@ -1236,6 +1239,7 @@ object ForumParser {
             targetName = targetName,
             messages = messages,
             formhash = formhash,
+            targetOnline = targetOnline,
         )
     }
 
