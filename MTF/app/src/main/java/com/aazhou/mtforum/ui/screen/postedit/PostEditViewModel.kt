@@ -3,9 +3,12 @@ package com.aazhou.mtforum.ui.screen.postedit
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aazhou.mtforum.data.model.EditPostPageData
 import com.aazhou.mtforum.data.model.NewThreadPageData
+import com.aazhou.mtforum.data.model.PostDraft
 import com.aazhou.mtforum.data.model.ThreadType
 import com.aazhou.mtforum.data.parser.SmileyPack
+import com.aazhou.mtforum.data.repo.DraftStore
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.SmileyStore
 import com.aazhou.mtforum.ui.screen.threaddetail.insertAtSelection
@@ -28,10 +31,23 @@ class PostEditViewModel(
     val forumName: String,
     private val repository: ForumRepository,
     private val smileyStore: SmileyStore,
+    /** 编辑自己的帖子/评论时带上站点 tid/pid；为空表示发新帖。 */
+    private val editTid: String? = null,
+    private val editPid: String? = null,
+    private val draftStore: DraftStore? = null,
 ) : ViewModel() {
+
+    /** 是否在编辑站上已有内容（编辑态不落草稿：离开即放弃本次修改）。 */
+    val editing: Boolean = !editTid.isNullOrBlank() && !editPid.isNullOrBlank()
 
     private val _initData = MutableStateFlow<NewThreadPageData?>(null)
     val initData: StateFlow<NewThreadPageData?> = _initData.asStateFlow()
+
+    private val _editData = MutableStateFlow<EditPostPageData?>(null)
+    val editData: StateFlow<EditPostPageData?> = _editData.asStateFlow()
+
+    /** 编辑态回填的主题分类 id：分类列表随编辑页才回来，先记下等它就绪。 */
+    private var pendingTypeId: String? = null
 
     private val _loadingInit = MutableStateFlow(true)
     val loadingInit: StateFlow<Boolean> = _loadingInit.asStateFlow()
@@ -65,8 +81,60 @@ class PostEditViewModel(
     val canPost: Boolean get() = repository.isLoggedIn()
 
     init {
-        loadInitData()
+        if (editing) {
+            loadEditData()
+        } else {
+            applyDraft()
+            loadInitData()
+        }
         loadSmileysAndAtUsers()
+    }
+
+    /** 编辑态：拉编辑页，把站点表单里的原标题/原文填进输入框。 */
+    private fun loadEditData() {
+        viewModelScope.launch {
+            _loadingInit.value = true
+            try {
+                val data = repository.fetchEditPostInit(editTid!!, editPid!!)
+                _editData.value = data
+                _subject.value = data.subject.orEmpty()
+                _message.value = TextFieldValue(data.message)
+                if (data.permissionDenied != null) {
+                    _state.value = PostState.Error(data.permissionDenied)
+                }
+            } catch (e: Exception) {
+                _state.value = PostState.Error(e.message ?: "加载编辑数据失败")
+            } finally {
+                _loadingInit.value = false
+            }
+        }
+    }
+
+    /** 进发帖页先把该版块的旧草稿垫上：标题、正文、主题分类都按离开时的样子还原。 */
+    private fun applyDraft() {
+        val draft = draftStore?.items?.value?.firstOrNull { it.fid == fid } ?: return
+        _subject.value = draft.subject
+        _message.value = TextFieldValue(draft.message)
+        pendingTypeId = draft.typeId
+    }
+
+    /**
+     * 此刻值得存进草稿箱的内容；没输入有效内容（编辑态、标题正文皆空）返回 null。
+     * 判据是「有内容」而非「可发布」：只填了标题或只贴了段正文都算，用户回头还得接着写。
+     */
+    fun currentDraft(): PostDraft? {
+        if (editing) return null
+        val subject = _subject.value.trim()
+        val message = _message.value.text
+        if (subject.isBlank() && message.isBlank()) return null
+        return PostDraft(
+            fid = fid,
+            forumName = forumName,
+            subject = subject,
+            message = message,
+            typeId = _selectedType.value?.id ?: pendingTypeId,
+            savedAt = System.currentTimeMillis(),
+        )
     }
 
     private fun loadInitData() {
@@ -76,7 +144,11 @@ class PostEditViewModel(
                 val data = repository.fetchNewThreadInit(fid)
                 _initData.value = data
                 if (data.types.isNotEmpty() && _selectedType.value == null) {
-                    _selectedType.value = data.types.first()
+                    // 草稿里记的分类可能已被站点撤下，那时退回第一个可选分类
+                    _selectedType.value = pendingTypeId
+                        ?.let { id -> data.types.firstOrNull { it.id == id } }
+                        ?: data.types.first()
+                    pendingTypeId = null
                 }
                 if (data.permissionDenied != null) {
                     _state.value = PostState.Error(data.permissionDenied)
@@ -127,9 +199,9 @@ class PostEditViewModel(
     }
 
     suspend fun uploadImageFile(file: File): String? {
-        val pageData = _initData.value
-        val uid = pageData?.uploadUid
-        val hash = pageData?.uploadHash
+        // 发新帖的凭据随发帖页来，编辑态的随编辑页来（两个页面的内联上传配置同款）
+        val uid = _initData.value?.uploadUid ?: _editData.value?.uploadUid
+        val hash = _initData.value?.uploadHash ?: _editData.value?.uploadHash
         if (uid.isNullOrBlank() || hash.isNullOrBlank()) {
             _state.value = PostState.Error("图片上传凭据未就绪，请稍后重试")
             return null
@@ -168,12 +240,16 @@ class PostEditViewModel(
         }
         val sub = _subject.value.trim()
         val msg = _message.value.text.trim()
-        if (sub.isBlank()) {
-            _state.value = PostState.Error("请输入帖子标题")
-            return
-        }
         if (msg.isBlank()) {
             _state.value = PostState.Error("请输入帖子内容")
+            return
+        }
+        if (editing) {
+            submitEdit(sub, msg)
+            return
+        }
+        if (sub.isBlank()) {
+            _state.value = PostState.Error("请输入帖子标题")
             return
         }
         val init = _initData.value
@@ -204,6 +280,41 @@ class PostEditViewModel(
                 }
             } catch (e: Exception) {
                 _state.value = PostState.Error(e.message ?: "发帖失败")
+            }
+        }
+    }
+
+    /** 提交编辑：首帖连标题一起交，评论只交正文。 */
+    private fun submitEdit(subject: String, message: String) {
+        val edit = _editData.value
+        val formhash = edit?.formhash
+        if (formhash.isNullOrBlank()) {
+            _state.value = PostState.Error("无法获取编辑令牌，请稍后重试")
+            return
+        }
+        // 站点只在首帖表单里给标题输入框，编辑态据此区分「改主题」与「改评论」
+        val isFirstPost = !edit.subject.isNullOrBlank()
+        if (isFirstPost && subject.isBlank()) {
+            _state.value = PostState.Error("请输入帖子标题")
+            return
+        }
+        _state.value = PostState.Sending
+        viewModelScope.launch {
+            try {
+                val result = repository.editPost(
+                    tid = editTid!!,
+                    pid = editPid!!,
+                    formhash = formhash,
+                    message = normalizeAtMentions(_message.value.text, _atUsers.value),
+                    subject = if (isFirstPost) subject else null,
+                )
+                _state.value = if (result.success) {
+                    PostState.Success
+                } else {
+                    PostState.Error(result.message ?: "编辑未生效，请稍后重试")
+                }
+            } catch (e: Exception) {
+                _state.value = PostState.Error(e.message ?: "编辑失败")
             }
         }
     }

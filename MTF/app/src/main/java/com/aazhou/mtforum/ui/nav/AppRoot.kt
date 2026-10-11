@@ -62,12 +62,15 @@ object Routes {
     const val USER = "user/{uid}"
     const val CHAT = "chat/{uid}?name={name}"
     const val POST = "post/{fid}/{name}"
+    /** 编辑自己的帖子/评论：站点 tid/pid 决定改主题（带标题）还是改评论。 */
+    const val EDIT_POST = "edit_post/{tid}/{pid}/{fid}/{name}"
     const val NOTICE = "notice"
     const val DOWNLOADS = "downloads"
     const val DOWNLOADED_THREAD = "downloaded/{tid}"
     const val LOGS = "logs"
     const val LOG_DETAIL = "log/{id}"
     const val MY_POSTS = "my_posts"
+    const val DRAFTS = "drafts"
     const val MY_FAVORITES = "my_favorites"
     const val MY_FRIENDS = "my_friends"
     const val FOLLOW_LIST = "follow_list?type={type}"
@@ -83,7 +86,10 @@ object Routes {
     fun user(uid: String) = "user/$uid"
     fun chat(uid: String, name: String? = null) =
         if (name.isNullOrBlank()) "chat/$uid" else "chat/$uid?name=${Uri.encode(name)}"
-    fun post(fid: String, name: String) = "post/$fid/${Uri.encode(name)}"
+    fun post(fid: String, name: String) =
+        "post/$fid/${Uri.encode(name.ifBlank { "版块" })}"
+    fun editPost(tid: String, pid: String, fid: String, name: String) =
+        "edit_post/$tid/$pid/$fid/${Uri.encode(name.ifBlank { "版块" })}"
     fun downloadedThread(tid: String) = "downloaded/$tid"
     fun logDetail(id: Long) = "log/$id"
 }
@@ -191,6 +197,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 ProfileScreen(
                     onLogin = { navController.navigate(Routes.LOGIN) },
                     onDownloads = { navController.navigate(Routes.DOWNLOADS) },
+                    onDrafts = { navController.navigate(Routes.DRAFTS) },
                     onMyPosts = {
                         if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_POSTS)
                         else navController.navigate(Routes.LOGIN)
@@ -315,6 +322,30 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     // 消息提醒跳进来时带上要定位的楼层
                     anchorPid = entry.arguments?.getString("pid")?.takeIf { it.isNotBlank() },
+                    // 楼主是自己：进整页编辑（标题 + 正文）
+                    onEditThread = { tid, pid, fid, name ->
+                        navController.navigate(Routes.editPost(tid, pid, fid, name))
+                    },
+                )
+            }
+
+            composable(
+                Routes.EDIT_POST,
+                arguments = listOf(
+                    navArgument("tid") { type = NavType.StringType },
+                    navArgument("pid") { type = NavType.StringType },
+                    navArgument("fid") { type = NavType.StringType },
+                    navArgument("name") { type = NavType.StringType },
+                ),
+            ) { entry ->
+                PostEditScreen(
+                    fid = entry.arguments?.getString("fid").orEmpty(),
+                    forumName = entry.arguments?.getString("name").orEmpty(),
+                    editTid = entry.arguments?.getString("tid").orEmpty(),
+                    editPid = entry.arguments?.getString("pid").orEmpty(),
+                    onBack = { navController.popBackStack() },
+                    // 保存后回到帖子页：内容已在提交时更新，重进即最新
+                    onPosted = { navController.popBackStack() },
                 )
             }
 
@@ -369,6 +400,14 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onBack = { navController.popBackStack() },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                )
+            }
+
+            composable(Routes.DRAFTS) {
+                com.aazhou.mtforum.ui.screen.drafts.DraftsScreen(
+                    onBack = { navController.popBackStack() },
+                    // 继续写这一篇：进该版块发帖页，草稿由发帖页自行回填
+                    onOpenDraft = { fid, name -> navController.navigate(Routes.post(fid, name)) },
                 )
             }
 

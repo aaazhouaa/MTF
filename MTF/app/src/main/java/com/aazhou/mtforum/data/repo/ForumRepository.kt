@@ -4,6 +4,8 @@ import com.aazhou.mtforum.data.model.ForumGroup
 import com.aazhou.mtforum.data.model.AtUser
 import com.aazhou.mtforum.data.model.CheckInResult
 import com.aazhou.mtforum.data.model.CheckInStatus
+import com.aazhou.mtforum.data.model.EditPostPageData
+import com.aazhou.mtforum.data.model.EditPostResult
 import com.aazhou.mtforum.data.model.ForumPage
 import com.aazhou.mtforum.data.model.HomeData
 import com.aazhou.mtforum.data.model.LikeResult
@@ -48,7 +50,7 @@ private val REPORT_ERROR_PATTERN = Regex("举报理由|action=login|请先登录
 
 /** 删除未生效：返回的仍是编辑表单（含 editsubmit）或跳登录页。
  * 不能拿 name="message" 判定——删除成功后重定向到的帖子页也带快速回复框。 */
-private val DELETE_STILL_FORM_PATTERN = Regex("editsubmit|action=login")
+private val DELETE_STILL_FORM_PATTERN = Regex("action=edit|editsubmit")
 
 /** 消息提醒的内容类别（默认页只是类别菜单，没有提醒内容）。 */
 private val NOTICE_VIEWS = listOf("mypost", "interactive", "system", "app")
@@ -529,6 +531,47 @@ class ForumRepository(
         body.isNotBlank() && !REPORT_ERROR_PATTERN.containsMatchIn(body)
     }
 
+    /**
+     * 编辑页初始数据：[pid] 为首帖时改标题与正文，为评论时只改正文。
+     *
+     * 与删除同一个入口（站点用 action=edit 的表单承载编辑与删除），故取回的是
+     * 表单里的 BBCode 原文与一次性令牌。
+     */
+    suspend fun fetchEditPostInit(tid: String, pid: String): EditPostPageData = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("forum.php?mod=post&action=edit&tid=$tid&pid=$pid&mobile=2"))
+        ForumParser.parseEditPostInit(html)
+    }
+
+    /**
+     * 提交编辑；[subject] 仅首帖编辑时传（站点只在首帖表单里给标题输入框）。
+     *
+     * 提交参数与删除同源：Discuz 以 editsubmit 判定表单提交，写成别的名字会被当成
+     * 又打开了一次编辑页。
+     */
+    suspend fun editPost(
+        tid: String,
+        pid: String,
+        formhash: String,
+        message: String,
+        subject: String? = null,
+    ): EditPostResult = withContext(Dispatchers.IO) {
+        val url = http.url("forum.php?mod=post&action=edit&extra=&tid=$tid&pid=$pid&page=1&editsubmit=yes&mobile=2")
+        val params = mutableMapOf(
+            "formhash" to formhash,
+            "message" to message,
+            "editsubmit" to "yes",
+            "tid" to tid,
+            "pid" to pid,
+        )
+        if (!subject.isNullOrBlank()) params["subject"] = subject
+        val body = http.post(
+            url,
+            params,
+            referer = "https://bbs.binmt.cc/forum.php?mod=post&action=edit&tid=$tid&pid=$pid&mobile=2",
+        )
+        ForumParser.parseEditPostResult(body, tid)
+    }
+
     /** 删除自己的回复（pid 为该楼 pid）；返回是否真正删除。 */
     suspend fun deletePost(tid: String, pid: String, formhash: String): Boolean = withContext(Dispatchers.IO) {        val formUrl = http.url("forum.php?mod=post&action=edit&tid=$tid&pid=$pid&mobile=2")
         val page = http.get(formUrl)
@@ -547,6 +590,8 @@ class ForumRepository(
         val url = http.url("forum.php?mod=post&action=edit&extra=&tid=$tid&pid=$pid&page=1&delete=1&mobile=2")
         val body = http.post(url, params)
         // 未真正删除时编辑页仍返回完整表单，以此区分「已删除」与「服务端拒删却 200」
+        // 判据只认表单本身：帖子页里到处是 action=login（登录入口），拿它当表单标记会把
+        // 删成功的回执误判成「还在表单里」
         body.isNotBlank() && !DELETE_STILL_FORM_PATTERN.containsMatchIn(body)
     }
 

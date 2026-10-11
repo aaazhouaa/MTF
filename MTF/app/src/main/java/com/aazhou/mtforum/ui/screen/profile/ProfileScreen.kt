@@ -61,6 +61,7 @@ import com.aazhou.mtforum.ui.theme.dimImageInDark
 fun ProfileScreen(
     onLogin: () -> Unit,
     onDownloads: () -> Unit,
+    onDrafts: () -> Unit = {},
     onMyPosts: () -> Unit = {},
     onMyFavorites: () -> Unit = {},
     onMyFriends: () -> Unit = {},
@@ -120,15 +121,19 @@ fun ProfileScreen(
 
         Spacer(Modifier.height(6.dp))
 
-        // 功能入口卡片：横向排布「我的帖子」、「我的收藏」、「我的好友」、「离线缓存」
+        // 功能入口卡片：横向排布「我的帖子」、「我的收藏」、「我的好友」、「草稿箱」、「离线缓存」
         val downloadCount by context.container().downloadStore.items
+            .collectAsStateWithLifecycle(initialValue = emptyList())
+        val draftCount by context.container().draftStore.items
             .collectAsStateWithLifecycle(initialValue = emptyList())
         ActionsCard(
             onMyPosts = { if (loggedIn) onMyPosts() else requireLogin() },
             onMyFavorites = { if (loggedIn) onMyFavorites() else requireLogin() },
             onMyFriends = { if (loggedIn) onMyFriends() else requireLogin() },
             onDownloads = onDownloads,
+            onDrafts = onDrafts,
             downloadsCount = downloadCount.size,
+            draftsCount = draftCount.size,
         )
     }
 
@@ -380,14 +385,16 @@ private fun StatItem(
     }
 }
 
-/** 卡片 2：功能入口横向排列（我的帖子、我的收藏、我的好友、离线缓存）。 */
+/** 卡片 2：功能入口横向排列（我的帖子、我的收藏、我的好友、草稿箱、离线缓存）。 */
 @Composable
 private fun ActionsCard(
     onMyPosts: () -> Unit,
     onMyFavorites: () -> Unit,
     onMyFriends: () -> Unit,
     onDownloads: () -> Unit,
+    onDrafts: () -> Unit,
     downloadsCount: Int,
+    draftsCount: Int,
 ) {
     ProfileCard(contentPadding = 14.dp) {
         Row(
@@ -413,6 +420,14 @@ private fun ActionsCard(
                 title = "我的好友",
                 backgroundColor = Color(0xFFFB7185),
                 onClick = onMyFriends,
+                modifier = Modifier.weight(1f),
+            )
+            ActionEntranceButton(
+                icon = painterResource(R.drawable.ic_post_edit),
+                title = "草稿箱",
+                backgroundColor = Color(0xFF8B5CF6),
+                badgeCount = draftsCount,
+                onClick = onDrafts,
                 modifier = Modifier.weight(1f),
             )
             ActionEntranceButton(

@@ -70,6 +70,18 @@ class ThreadDetailViewModel(
     private val _replyState = MutableStateFlow<ReplyState>(ReplyState.Idle)
     val replyState: StateFlow<ReplyState> = _replyState.asStateFlow()
 
+    /**
+     * 编辑自己的楼层（帖子或评论）。
+     *
+     * 原文不在客户端手上（[Post.contentHtml] 是渲染后的 HTML，反推不出 BBCode），
+     * 故编辑分两步：[beginEdit] 先把站点编辑表单取回，[submitEdit] 再提交。
+     */
+    private val _editTarget = MutableStateFlow<Post?>(null)
+    val editTarget: StateFlow<Post?> = _editTarget.asStateFlow()
+
+    private val _editForm = MutableStateFlow<EditFormState>(EditFormState.Idle)
+    val editForm: StateFlow<EditFormState> = _editForm.asStateFlow()
+
     /** 已折叠楼中楼的楼层 pid。 */
     private val _collapsed = MutableStateFlow<Set<String>>(emptySet())
     val collapsed: StateFlow<Set<String>> = _collapsed.asStateFlow()
@@ -828,12 +840,25 @@ class ThreadDetailViewModel(
     }
 
     /**
+     * 编辑成功后把改后的正文取回来。
+     *
+     * 站点不单独回传改后的内容，只有重拉的页面里有；被编辑的楼层常在后几页（自己的
+     * 回复多半在末尾），故先按 pid 解析它所在页再拉那一页，解析不出才退回第 1 页。
+     */
+    private fun refreshEditedFloor(pid: String) {
+        viewModelScope.launch {
+            val page = runCatching { repository.noticeReplyPage(tid, pid) }.getOrNull()
+            if (page != null && page > 1) load(page) else refreshFirstPage()
+        }
+    }
+
+    /**
      * 回复成功后的局部刷新：重新拉第 1 页并入楼层池。
      *
      * 楼层按 pid 去重，已加载的后续页一条不丢；新回复排在末页，总评论数一变
      * 就不再算收齐，自动链接着把最后一页（含刚发的那条）拉回来。
      */
-    fun refreshAfterReply() {
+    fun refreshFirstPage() {
         if (_state.value !is UiState.Success && pool.isEmpty()) {
             load(1)
             return
@@ -932,7 +957,7 @@ class ThreadDetailViewModel(
             }.getOrDefault(false)
             if (ok) {
                 // 直接从楼层池移除该楼层并重算树/灌水；
-                // 不能调 refreshAfterReply：它会重新拉第 1 页，把已删楼层按 pid 再加回来。
+                // 不能调 refreshFirstPage：它会重新拉第 1 页，把已删楼层按 pid 再加回来。
                 pool.remove(pid)
                 publish(resetCollapsed = false, startChain = false)
             }
@@ -1040,6 +1065,80 @@ class ThreadDetailViewModel(
         atNames += names.filter { it.isNotBlank() }
     }
 
+    /**
+     * 打开某楼的编辑：拉站点编辑表单，把表单里的 BBCode 原文交给界面填进输入面板。
+     * 首帖与评论走同一个站点入口，差别只在表单里有没有标题输入框。
+     */
+    fun beginEdit(post: Post) {
+        if (!repository.isLoggedIn()) {
+            _actionMessage.value = "请先登录"
+            return
+        }
+        _editTarget.value = post
+        _editForm.value = EditFormState.Loading
+        viewModelScope.launch {
+            try {
+                val data = repository.fetchEditPostInit(tid, post.pid)
+                _editForm.value = when {
+                    data.permissionDenied != null -> EditFormState.Error(data.permissionDenied)
+                    else -> EditFormState.Ready(post.pid, data.message)
+                }
+            } catch (e: Exception) {
+                _editForm.value = EditFormState.Error(friendlyError(e, "加载编辑内容失败"))
+            }
+        }
+    }
+
+    /** 表单态已被界面取用（面板已打开、原文已填入），复位以免重复触发。 */
+    fun consumeEditForm() {
+        _editForm.value = EditFormState.Idle
+    }
+
+    /** 放弃编辑：连目标一起清掉，界面据此收起输入面板。 */
+    fun cancelEdit() {
+        _editForm.value = EditFormState.Idle
+        _editTarget.value = null
+    }
+
+    /** 提交编辑；成功后把改后的那一楼取回来上屏。 */
+    fun submitEdit(message: String) {        val current = _state.value
+        if (current !is UiState.Success) {
+            _editForm.value = EditFormState.Error("页面未就绪")
+            return
+        }
+        val formhash = current.data.formhash
+        val target = _editTarget.value
+        if (target == null || formhash.isNullOrBlank()) {
+            _editForm.value = EditFormState.Error("缺少编辑令牌，请重新进入帖子")
+            return
+        }
+        // 站点只认「@用户名 + ASCII 空白」，提交前按已知名单补回分隔空白（同回复）
+        val text = normalizeAtMentions(message, atNames)
+        _editForm.value = EditFormState.Loading
+        viewModelScope.launch {
+            try {
+                val result = repository.editPost(
+                    tid = tid,
+                    pid = target.pid,
+                    formhash = formhash,
+                    message = text,
+                    // 站点只在首帖表单里给标题，评论编辑不提交 subject
+                    subject = if (target.isFirstPost) subject else null,
+                )
+                if (result.success) {
+                    _editForm.value = EditFormState.Idle
+                    _editTarget.value = null
+                    _actionMessage.value = result.message ?: "已保存"
+                    refreshEditedFloor(target.pid)
+                } else {
+                    _editForm.value = EditFormState.Error(result.message ?: "编辑未生效，请稍后重试")
+                }
+            } catch (e: Exception) {
+                _editForm.value = EditFormState.Error(friendlyError(e, "编辑失败"))
+            }
+        }
+    }
+
     fun reply(message: String) {
         val current = _state.value
         if (current !is UiState.Success) {
@@ -1094,6 +1193,14 @@ class ThreadDetailViewModel(
         data object Sending : ReplyState
         data object Success : ReplyState
         data class Error(val message: String) : ReplyState
+    }
+
+    /** 编辑表单态：[Loading] 期间界面显示提交中，[Ready] 带着站点取回的原文。 */
+    sealed interface EditFormState {
+        data object Idle : EditFormState
+        data object Loading : EditFormState
+        data class Ready(val pid: String, val text: String) : EditFormState
+        data class Error(val message: String) : EditFormState
     }
 
     /** 列表底部状态：Idle 不显示，Loading 转圈，End 到底。 */

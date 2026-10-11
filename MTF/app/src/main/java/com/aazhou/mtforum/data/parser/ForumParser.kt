@@ -25,6 +25,8 @@ import com.aazhou.mtforum.data.model.ThreadPage
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.data.model.NewThreadPageData
 import com.aazhou.mtforum.data.model.NewThreadResult
+import com.aazhou.mtforum.data.model.EditPostPageData
+import com.aazhou.mtforum.data.model.EditPostResult
 import com.aazhou.mtforum.data.model.ThreadType
 import com.aazhou.mtforum.data.model.FavoriteItem
 import com.aazhou.mtforum.data.model.FavoritePage
@@ -97,6 +99,27 @@ object ForumParser {
 
     /** 「本帖最后由 X 于 2026-10-5 12:39 编辑」里的时间，用于「时间 编辑」小字。 */
     private val RE_EDIT_TIME = Regex("\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}\\s+\\d{1,2}:\\d{2}(?::\\d{2})?")
+
+    /** 编辑成功标识：站点提示语与 inajax 回执（函数定义形参不是字符串，匹配不上）。 */
+    private val RE_EDIT_SUCCESS = Regex("succeedhandle_[A-Za-z0-9_]*\\s*\\(\\s*['\"]|编辑成功|更新成功|已经更新|post_edit_succeed")
+
+    /**
+     * errorhandle_xxx('站点提示原文')：站点回执里的提示。
+     *
+     * 帖子页自带的快速回复回调也叫这名（function errorhandle_fastposts(message, param)），
+     * 但那是函数定义、形参不是字符串，匹配不上，不会把模板函数名当成提示念给用户。
+     */
+    private val RE_EDIT_TIP = Regex("errorhandle_[A-Za-z0-9_]*\\s*\\(\\s*['\"]([^'\"]{1,80})['\"]")
+
+    /**
+     * 编辑表单被原样退回的标记：表单 action 带 action=edit，且页面上有提交按钮名 editsubmit。
+     *
+     * 两个标记必须同时成立：帖子页里自己楼层的「编辑」链接也带 action=edit，而站点提交成功
+     * 时是 301 跳回帖子页、回执就是那一页，只认 action=edit 会把成功判成「表单还在」；
+     * editsubmit 只出现在表单的 action 与提交按钮上，帖子页没有。
+     */
+    private val RE_EDIT_FORM_ACTION = Regex("action=edit")
+    private val RE_EDIT_SUBMIT = Regex("editsubmit")
 
     /** 「回复可见」锁定提示文案（站点模板：XX，如果您要查看本帖隐藏内容请回复）。 */
     private val RE_HIDDEN_PROMPT = Regex("查看本帖隐藏内容|回复可见|隐藏内容|回复后.{0,6}查看")
@@ -1424,18 +1447,7 @@ object ForumParser {
         val uploadHash = RE_UPLOAD_HASH.find(html)?.groupValues?.get(1)
 
         val document = doc(html)
-        val types = mutableListOf<ThreadType>()
-        val select = document.selectFirst("select[name=typeid], select#typeid")
-        if (select != null) {
-            for (opt in select.select("option")) {
-                val value = opt.attr("value").trim()
-                val text = opt.text().trim()
-                if (value.isNotEmpty() && value != "0" && text.isNotEmpty() && text != "请选择") {
-                    types.add(ThreadType(id = value, name = text))
-                }
-            }
-        }
-
+        val types = threadTypes(document)
         val permissionDenied = if (html.contains("抱歉，您没有权限在该版块发帖") || html.contains("您目前没有权限发帖")) {
             "抱歉，您没有权限在该版块发帖"
         } else if (html.contains("抱歉，您尚未登录，没有权限发帖")) {
@@ -1452,6 +1464,77 @@ object ForumParser {
             types = types,
             permissionDenied = permissionDenied,
         )
+    }
+
+    /** 发帖页与编辑页共用的主题分类下拉（值 0 与「请选择」是占位项，不是分类）。 */
+    private fun threadTypes(document: Document): List<ThreadType> {
+        val select = document.selectFirst("select[name=typeid], select#typeid") ?: return emptyList()
+        return select.select("option").mapNotNull { opt ->
+            val value = opt.attr("value").trim()
+            val text = opt.text().trim()
+            if (value.isNotEmpty() && value != "0" && text.isNotEmpty() && text != "请选择") {
+                ThreadType(id = value, name = text)
+            } else {
+                null
+            }
+        }
+    }
+
+    /**
+     * 编辑页初始数据：待编辑的 BBCode 原文 + 表单令牌 + 上传凭据与主题分类。
+     *
+     * 站点编辑表单的 textarea 里就是数据库中的 BBCode 原文，取 [Element.wholeText] 而非
+     * text()：后者会把连续空白与换行折叠成单空格，多段正文会黏成一行。
+     */
+    fun parseEditPostInit(html: String): EditPostPageData {
+        val document = doc(html)
+        val subject = document.selectFirst("input#subject, input[name=subject]")?.attr("value")
+        val permissionDenied = when {
+            document.selectFirst("form#loginform") != null || html.contains("action=login") -> "请先登录后再编辑"
+            html.contains("没有权限") -> "没有编辑这条内容的权限"
+            else -> null
+        }
+        return EditPostPageData(
+            formhash = parseFormhash(html).orEmpty(),
+            subject = subject,
+            message = editMessageText(document),
+            uploadUid = RE_UPLOAD_UID.find(html)?.groupValues?.get(1),
+            uploadHash = RE_UPLOAD_HASH.find(html)?.groupValues?.get(1),
+            types = threadTypes(document),
+            permissionDenied = permissionDenied,
+        )
+    }
+
+    /** 编辑表单里的原文：首选 message 文本域，退化到页面第一个文本域或同名隐藏域。 */
+    private fun editMessageText(document: Document): String {
+        val textarea = document.selectFirst("textarea[name=message], textarea#message")
+            ?: document.selectFirst("textarea")
+        val raw = textarea?.wholeText().orEmpty()
+        if (raw.isNotBlank()) return raw
+        return document.selectFirst("input[name=message]")?.attr("value").orEmpty()
+    }
+
+    /**
+     * 编辑提交结果判定。
+     *
+     * 编辑提交不走 inajax：站点处理完 301 回帖子页，被拒时把编辑表单原样退回。判据只认这
+     * 两点，不认 succeedhandle_/errorhandle_ 字样本身——帖子页自带的快速回复回调就叫这俩
+     * 名字（function errorhandle_fastposts(message, param)），拿它们当回执会把成功的提交
+     * 判成失败，再把整页文本当提示念给用户。
+     */
+    fun parseEditPostResult(body: String, tid: String): EditPostResult {
+        val stillForm =
+            RE_EDIT_FORM_ACTION.containsMatchIn(body) && RE_EDIT_SUBMIT.containsMatchIn(body)
+        val landedOnThread = tid.isNotBlank() && (
+            body.contains("thread-$tid") ||
+                body.contains("viewthread&tid=$tid") ||
+                body.contains("viewthread&amp;tid=$tid")
+            )
+        if (!stillForm && (landedOnThread || RE_EDIT_SUCCESS.containsMatchIn(body))) {
+            return EditPostResult(success = true)
+        }
+        val tip = RE_EDIT_TIP.find(body)?.groupValues?.getOrNull(1)?.trim()
+        return EditPostResult(success = false, message = tip ?: "编辑未生效，请稍后重试")
     }
 
     /**

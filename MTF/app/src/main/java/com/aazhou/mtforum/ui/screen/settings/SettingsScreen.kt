@@ -94,7 +94,8 @@ fun SettingsScreen(
             val json = container.contentCache.sizeBytes()
             val images = context.imageLoader.diskCache?.size ?: 0L
             val smileys = container.smileyStore.approximateBytes()
-            json + images + smileys
+            val drafts = container.draftStore.sizeBytes()
+            json + images + smileys + drafts
         }
     }
 
@@ -279,7 +280,7 @@ fun SettingsScreen(
     if (clearCacheOpen) {
         MtfConfirmDialog(
             title = "清理缓存",
-            message = "将清除本地缓存的帖子内容与已下载的图片，以及表情数据与最近使用记录，下次浏览需要重新加载。",
+            message = "将清除本地缓存的帖子内容与已下载的图片、表情数据与最近使用记录，以及发帖草稿箱，下次浏览需要重新加载。",
             confirmText = "确认清理",
             cancelText = "取消",
             onDismissRequest = { clearCacheOpen = false },
@@ -287,6 +288,7 @@ fun SettingsScreen(
                 clearCacheOpen = false
                 scope.launch {
                     container.contentCache.clear()
+                    container.draftStore.clear()
                     container.smileyStore.clear()
                     val loader = context.imageLoader
                     withContext(Dispatchers.IO) {

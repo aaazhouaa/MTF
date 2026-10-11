@@ -455,5 +455,44 @@ data class NewThreadResult(
     val message: String? = null,
 )
 
+/**
+ * 编辑页初始数据（自己的帖子/评论「编辑」入口拉取）。
+ *
+ * 站点编辑表单的 textarea 里是数据库中的 BBCode 原文，客户端只能整份取回再交给
+ * 输入框，不能由渲染后的 HTML 反推。[subject] 仅首帖编辑时站点才给（改标题）。
+ */
+data class EditPostPageData(
+    val formhash: String,
+    val subject: String? = null,
+    val message: String = "",
+    val uploadUid: String? = null,
+    val uploadHash: String? = null,
+    val types: List<ThreadType> = emptyList(),
+    val permissionDenied: String? = null,
+)
+
+/** 编辑提交结果：[message] 为站点提示原文（成功时通常为空）。 */
+data class EditPostResult(
+    val success: Boolean,
+    val message: String? = null,
+)
+
+/**
+ * 发帖页的一份本地草稿（离开发帖页时自动保存）。
+ *
+ * 一个版块只留一份：再次进入该版块发帖页即回填这份，离开时按最新内容覆盖，
+ * 不会为同一处输入堆积多条。[message] 保留 BBCode 原文（含已上传附件的
+ * [attachimg] 标记）。
+ */
+@Serializable
+data class PostDraft(
+    val fid: String,
+    val forumName: String = "",
+    val subject: String = "",
+    val message: String = "",
+    val typeId: String? = null,
+    val savedAt: Long = 0L,
+)
+
 
 

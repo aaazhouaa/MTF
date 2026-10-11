@@ -44,6 +44,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -85,6 +86,7 @@ import com.aazhou.mtforum.data.model.ThreadType
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.screen.threaddetail.AtSuggestionStrip
 import com.aazhou.mtforum.ui.screen.threaddetail.AtUserPickerPage
 import com.aazhou.mtforum.ui.screen.threaddetail.ComposerSubBarHeight
@@ -120,19 +122,24 @@ fun PostEditScreen(
     forumName: String,
     onBack: () -> Unit,
     onPosted: () -> Unit,
+    /** 编辑自己的帖子/评论时带上站点 tid/pid；为空表示发新帖。 */
+    editTid: String? = null,
+    editPid: String? = null,
 ) {
     val viewModel: PostEditViewModel = appViewModel {
-        PostEditViewModel(fid, forumName, it.repository, it.smileyStore)
+        PostEditViewModel(fid, forumName, it.repository, it.smileyStore, editTid, editPid, it.draftStore)
     }
 
     val colors = LocalMtfColors.current
     val context = LocalContext.current
+    val draftStore = context.container().draftStore
     val density = LocalDensity.current
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
 
     val initData by viewModel.initData.collectAsStateWithLifecycle()
+    val editData by viewModel.editData.collectAsStateWithLifecycle()
     val loadingInit by viewModel.loadingInit.collectAsStateWithLifecycle()
     val selectedType by viewModel.selectedType.collectAsStateWithLifecycle()
     val subject by viewModel.subject.collectAsStateWithLifecycle()
@@ -143,6 +150,29 @@ fun PostEditScreen(
     val atUsers by viewModel.atUsers.collectAsStateWithLifecycle()
     val recentCodes by viewModel.recentCodes.collectAsStateWithLifecycle(initialValue = emptyList())
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // 站点只在首帖表单里给标题输入框：编辑评论时一并收起标题行
+    val editing = viewModel.editing
+    val showSubject = !editing || editData?.subject != null
+    val permissionDenied = initData?.permissionDenied ?: editData?.permissionDenied
+    val threadTypes = initData?.types ?: editData?.types.orEmpty()
+    // 发布成功的那一次不能再落草稿：离开发帖页时内容还在输入框里，不拦一道会把刚发出去的帖子又存成草稿
+    var published by remember { mutableStateOf(false) }
+
+    // 离开即存档：不管从返回键、系统返回还是发布成功退出，走的都是组合销毁这一条路
+    DisposableEffect(viewModel) {
+        onDispose {
+            // 编辑态不碰草稿箱：改的是站上已有内容，更不能顺手删掉该版块的草稿
+            if (editing) return@onDispose
+            val draft = viewModel.currentDraft()
+            when {
+                published -> draftStore.remove(listOf(fid))
+                draft != null -> draftStore.save(draft)
+                // 内容被清空了：这一版块的旧草稿跟着作废，别留一份空箱占位
+                else -> draftStore.remove(listOf(fid))
+            }
+        }
+    }
 
     var panel by remember { mutableStateOf(PostComposerPanel.None) }
     var activeInsertKind by remember { mutableStateOf<InsertKind?>(null) }
@@ -203,7 +233,8 @@ fun PostEditScreen(
     LaunchedEffect(state) {
         when (val s = state) {
             is PostEditViewModel.PostState.Success -> {
-                AppToast.show("发布成功")
+                published = true
+                AppToast.show(if (editing) "已保存" else "发布成功")
                 viewModel.consume()
                 onPosted()
             }
@@ -321,7 +352,9 @@ fun PostEditScreen(
             topBar = {
                 PostEditTopBar(
                     forumName = forumName,
-                    canSubmit = subject.isNotBlank() && message.text.isNotBlank() && initData?.permissionDenied == null,
+                    editing = editing,
+                    canSubmit = message.text.isNotBlank() && permissionDenied == null &&
+                        (!showSubject || subject.isNotBlank()),
                     isSending = state is PostEditViewModel.PostState.Sending,
                     onBack = onBack,
                     onSubmit = { viewModel.submit() },
@@ -545,7 +578,7 @@ fun PostEditScreen(
                     .padding(paddingValues),
             ) {
                 // 权限限制提示
-                val permissionWarning = initData?.permissionDenied
+                val permissionWarning = permissionDenied
                 if (permissionWarning != null) {
                     Box(
                         modifier = Modifier
@@ -566,7 +599,7 @@ fun PostEditScreen(
                 }
 
                 // 主题分类选择 Chip
-                val types = initData?.types.orEmpty()
+                val types = threadTypes
                 if (types.isNotEmpty()) {
                     Row(
                         modifier = Modifier
@@ -619,45 +652,47 @@ fun PostEditScreen(
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        // 标题输入框
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            BasicTextField(
-                                value = subject,
-                                onValueChange = { viewModel.onSubjectChange(it) },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                                textStyle = TextStyle(
-                                    color = colors.textPrimary,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold,
-                                ),
-                                cursorBrush = SolidColor(primaryColor),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .focusRequester(subjectFocusRequester)
-                                    .onFocusChanged { if (it.isFocused) switchToKeyboard(focusMessage = false) },
-                                decorationBox = { innerTextField ->
-                                    if (subject.isEmpty()) {
-                                        Text(
-                                            "输入帖子标题…",
-                                            style = TextStyle(
-                                                color = colors.textHint,
-                                                fontSize = 17.sp,
-                                                fontWeight = FontWeight.Bold,
-                                            ),
-                                        )
-                                    }
-                                    innerTextField()
-                                },
-                            )
-                            Text(
-                                text = "${subject.length}/80",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (subject.length > 70) MaterialTheme.colorScheme.error else colors.textHint,
-                            )
+                        // 标题输入框（编辑评论时站点不给标题，这一行一并收起）
+                        if (showSubject) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                BasicTextField(
+                                    value = subject,
+                                    onValueChange = { viewModel.onSubjectChange(it) },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                    textStyle = TextStyle(
+                                        color = colors.textPrimary,
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    ),
+                                    cursorBrush = SolidColor(primaryColor),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .focusRequester(subjectFocusRequester)
+                                        .onFocusChanged { if (it.isFocused) switchToKeyboard(focusMessage = false) },
+                                    decorationBox = { innerTextField ->
+                                        if (subject.isEmpty()) {
+                                            Text(
+                                                "输入帖子标题…",
+                                                style = TextStyle(
+                                                    color = colors.textHint,
+                                                    fontSize = 17.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                ),
+                                            )
+                                        }
+                                        innerTextField()
+                                    },
+                                )
+                                Text(
+                                    text = "${subject.length}/80",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (subject.length > 70) MaterialTheme.colorScheme.error else colors.textHint,
+                                )
+                            }
                         }
 
                         // 分割细线
@@ -858,6 +893,7 @@ private fun PostEditTopBar(
     forumName: String,
     canSubmit: Boolean,
     isSending: Boolean,
+    editing: Boolean = false,
     onBack: () -> Unit,
     onSubmit: () -> Unit,
 ) {
@@ -885,7 +921,7 @@ private fun PostEditTopBar(
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "发布新帖",
+                text = if (editing) "编辑" else "发布新帖",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = colors.textPrimary,
@@ -919,7 +955,7 @@ private fun PostEditTopBar(
                 )
             } else {
                 Text(
-                    text = "发布",
+                    text = if (editing) "保存" else "发布",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = if (canSubmit) Color.White else colors.textHint,

@@ -134,6 +134,8 @@ internal fun ReplyComposer(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
     target: Post?,
+    /** 编辑自己的楼层：面板只改这一楼的正文，发布按钮变成「保存」。 */
+    editing: Boolean = false,
     sending: Boolean,
     smileyPacks: List<SmileyPack>,
     recentCodes: List<String>,
@@ -395,7 +397,7 @@ internal fun ReplyComposer(
                 ) {
                     if (value.text.isEmpty()) {
                         Text(
-                            if (target != null) "回复@${target.authorName}" else "写评论",
+                            if (editing) "编辑这条内容" else if (target != null) "回复@${target.authorName}" else "写评论",
                             style = MaterialTheme.typography.bodyMedium,
                             color = colors.textHint,
                             modifier = Modifier.padding(top = 8.dp),
@@ -508,7 +510,7 @@ internal fun ReplyComposer(
                     val publishReady = value.text.isNotBlank()
                     val primaryColor = MaterialTheme.colorScheme.primary
                     Text(
-                        "发布",
+                        if (editing) "保存" else "发布",
                         style = MaterialTheme.typography.labelLarge,
                         color = if (publishReady) Color.White else colors.textHint,
                         textAlign = TextAlign.Center,

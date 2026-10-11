@@ -10,6 +10,7 @@ import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.DownloadStore
+import com.aazhou.mtforum.data.repo.DraftStore
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.LogSettingsStore
 import com.aazhou.mtforum.data.repo.NoticeChecker
@@ -68,6 +69,9 @@ class AppContainer(application: Application) {
 
     /** 本地内容缓存：一个 key 一个 JSON 文件，置于 cacheDir（临时性质，系统空间紧张可回收）。 */
     val contentCache = ContentCache(java.io.File(application.cacheDir, "mtf_content"))
+
+    /** 发帖草稿箱：同在 cacheDir 下，「清除缓存」即清掉；不自动清理，只由用户手动删除。 */
+    val draftStore = DraftStore(java.io.File(application.cacheDir, "mtf_drafts"))
 
     /** 本地日志库（filesDir/logs，内部存储，不占缓存）与记录等级的持久化。 */
     val logStore = LogStore(java.io.File(application.filesDir, "logs/mtf_log.jsonl"))

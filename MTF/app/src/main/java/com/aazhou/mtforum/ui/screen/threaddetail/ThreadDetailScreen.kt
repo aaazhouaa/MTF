@@ -64,6 +64,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -98,6 +99,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.imageLoader
@@ -158,6 +161,8 @@ fun ThreadDetailScreen(
     onThreadClick: (String) -> Unit,
     /** 从消息提醒跳进来时要定位的楼层 pid（普通进帖为 null）。 */
     anchorPid: String? = null,
+    /** 编辑自己的首帖：跳到整页编辑（带标题）。参数为 tid/pid/fid/版块名。 */
+    onEditThread: (String, String, String, String) -> Unit = { _, _, _, _ -> },
 ) {
     val context = LocalContext.current
     val colors = LocalMtfColors.current
@@ -205,6 +210,11 @@ fun ThreadDetailScreen(
     var highlightPid by remember { mutableStateOf<String?>(null) }
 
     var composerVisible by remember { mutableStateOf(false) }
+    // 正在编辑的楼层（自己的帖子/评论）：编辑面板以此为准，提交成功后由 ViewModel 清空
+    val editTarget by viewModel.editTarget.collectAsStateWithLifecycle()
+    val editForm by viewModel.editForm.collectAsStateWithLifecycle()
+    // 编辑面板里的正文：站点原文由 ViewModel 取回后填入，之后由用户改
+    var editText by remember { mutableStateOf(TextFieldValue("")) }
     // 最近用过的表情码：落在本地，反复开关输入面板、重启应用都不丢
     val recentCodes by container.smileyStore.recent.collectAsStateWithLifecycle(initialValue = emptyList())
     var smileyPacks by remember { mutableStateOf<List<SmileyPack>>(emptyList()) }
@@ -264,6 +274,8 @@ fun ThreadDetailScreen(
         focusManager.clearFocus()
         keyboardController?.hide()
         composerVisible = false
+        // 编辑态下收起即放弃这次修改：站点侧一个字都不会改
+        if (editTarget != null) viewModel.cancelEdit()
     }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -301,13 +313,40 @@ fun ThreadDetailScreen(
                 AppToast.show("回复成功")
                 viewModel.consumeReplyState()
                 // 只重拉第 1 页并合并，保留已加载的后续页，不整页回退
-                viewModel.refreshAfterReply()
+                viewModel.refreshFirstPage()
             }
             is ThreadDetailViewModel.ReplyState.Error -> {
                 AppToast.show(r.message)
                 viewModel.consumeReplyState()
             }
             else -> Unit
+        }
+    }
+    // 编辑面板：站点原文取回就打开面板并填入；失败只提示，面板不用开
+    LaunchedEffect(editForm) {
+        when (val f = editForm) {
+            is ThreadDetailViewModel.EditFormState.Ready -> {
+                editText = TextFieldValue(f.text)
+                // 只消费一次：不复位的话面板每次重组都会又被这一态拉起
+                viewModel.consumeEditForm()
+                keyboardShown = false
+                composerVisible = true
+            }
+            is ThreadDetailViewModel.EditFormState.Error -> {
+                AppToast.show(f.message)
+                viewModel.consumeEditForm()
+            }
+            else -> Unit
+        }
+    }
+    // 从「编辑本帖」的整页回来：站点上的正文已经变了，重拉一次让新内容与「编辑」标记上屏。
+    // 标志要用 rememberSaveable：编辑页压在上层时本页会离开组合，remember 的值会被重置，
+    // 回来时再也看不出「刚刚改过」
+    var threadEdited by rememberSaveable { mutableStateOf(false) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (threadEdited) {
+            threadEdited = false
+            viewModel.refreshFirstPage()
         }
     }
     LaunchedEffect(followState) {
@@ -483,6 +522,9 @@ fun ThreadDetailScreen(
                     // 胶囊只取决于「知道楼主是谁」：formhash 是一次性令牌，缓存上屏时它要等
                     // 补拉的第 1 页才回来，拿它当可见条件会让头像昵称都出来了、关注慢一拍
                     followEnabled = page?.opUid != null,
+                    // 楼主是自己才给「编辑本帖」：站点只允许改自己的内容。
+                    // 帖子带标题，编辑走整页（标题 + 正文 + 分类），与评论的底部面板不同
+                    canEditThread = myUid.isNotBlank() && myUid == op?.authorUid,
                     showMore = true,
                     downloadBusy = downloadBusy,
                     onBack = onBack,
@@ -490,6 +532,15 @@ fun ThreadDetailScreen(
                     onReport = reportThread,
                     onReward = rewardThread,
                     onDownload = onDownload,
+                    onEditThread = {
+                        val fid = page?.fid
+                        if (op != null && !fid.isNullOrBlank()) {
+                            threadEdited = true
+                            onEditThread(tid, op.pid, fid, page?.forumName.orEmpty())
+                        } else {
+                            AppToast.show("帖子信息还没加载好，稍后再试")
+                        }
+                    },
                     onUserClick = onUserClick,
                     onDoubleTap = { scope.launch { listState.scrollToTop() } },
                 )
@@ -787,11 +838,16 @@ fun ThreadDetailScreen(
                 animationSpec = tween(durationMillis = ComposerSlideMillis, easing = FastOutSlowInEasing),
             ) { it } + fadeOut(animationSpec = tween(durationMillis = ComposerSlideMillis)),
         ) {
+            val editingPost = editTarget
             ReplyComposer(
-                value = drafts[replyTarget?.pid] ?: TextFieldValue(""),
-                onValueChange = { drafts[replyTarget?.pid] = it },
-                target = replyTarget,
-                sending = replyState is ThreadDetailViewModel.ReplyState.Sending,
+                value = if (editingPost != null) editText else drafts[replyTarget?.pid] ?: TextFieldValue(""),
+                onValueChange = { next ->
+                    if (editingPost != null) editText = next else drafts[replyTarget?.pid] = next
+                },
+                target = if (editingPost != null) null else replyTarget,
+                editing = editingPost != null,
+                sending = replyState is ThreadDetailViewModel.ReplyState.Sending ||
+                    editForm is ThreadDetailViewModel.EditFormState.Loading,
                 smileyPacks = smileyPacks,
                 recentCodes = recentCodes,
                 onSmileyUsed = { code -> scope.launch { container.smileyStore.addRecent(code) } },
@@ -804,10 +860,15 @@ fun ThreadDetailScreen(
                 onOpenAtPicker = { atPickerVisible = true },
                 focusRequest = composerFocusRequest,
                 onSend = {
-                    val draft = drafts[replyTarget?.pid]
-                    if (requireLogin(LOGIN_HINT_REPLY) && draft != null && draft.text.isNotBlank()) {
-                        sendingDraftKey = replyTarget?.pid
-                        viewModel.reply(draft.text)
+                    val current = editTarget
+                    if (current != null) {
+                        if (editText.text.isNotBlank()) viewModel.submitEdit(editText.text)
+                    } else {
+                        val draft = drafts[replyTarget?.pid]
+                        if (requireLogin(LOGIN_HINT_REPLY) && draft != null && draft.text.isNotBlank()) {
+                            sendingDraftKey = replyTarget?.pid
+                            viewModel.reply(draft.text)
+                        }
                     }
                 },
                 onDismiss = dismissComposer,
@@ -953,6 +1014,10 @@ fun ThreadDetailScreen(
                 }
             }
             if (isOwn) {
+                MenuAction("编辑") {
+                    actionTarget = null
+                    viewModel.beginEdit(target)
+                }
                 MenuAction("删除") {
                     actionTarget = null
                     deleteTarget = target
@@ -1245,6 +1310,8 @@ internal fun ThreadDetailTopBar(
     post: Post?,
     following: Boolean,
     followEnabled: Boolean,
+    /** 楼主是当前登录用户：给「编辑本帖」入口。 */
+    canEditThread: Boolean = false,
     showMore: Boolean,
     downloadBusy: Boolean,
     onBack: () -> Unit,
@@ -1252,6 +1319,7 @@ internal fun ThreadDetailTopBar(
     onReport: () -> Unit,
     onReward: () -> Unit,
     onDownload: () -> Unit,
+    onEditThread: () -> Unit = {},
     onUserClick: (String) -> Unit,
     onDoubleTap: () -> Unit,
 ) {
@@ -1344,21 +1412,25 @@ internal fun ThreadDetailTopBar(
             Spacer(Modifier.width(8.dp))
             MoreMenu(
                 downloadBusy = downloadBusy,
+                canEditThread = canEditThread,
                 onReport = onReport,
                 onReward = onReward,
                 onDownload = onDownload,
+                onEditThread = onEditThread,
             )
         }
     }
 }
 
-/** 「更多」竖展菜单：打赏 / 举报 / 下载，精致圆角与图标排版。 */
+/** 「更多」竖展菜单：编辑 / 打赏 / 举报 / 下载，精致圆角与图标排版。 */
 @Composable
 private fun MoreMenu(
     downloadBusy: Boolean,
+    canEditThread: Boolean = false,
     onReport: () -> Unit,
     onReward: () -> Unit,
     onDownload: () -> Unit,
+    onEditThread: () -> Unit = {},
 ) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
@@ -1397,6 +1469,24 @@ private fun MoreMenu(
                 fontWeight = FontWeight.Medium,
             )
             val itemPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+            if (canEditThread) {
+                DropdownMenuItem(
+                    text = { Text("编辑本帖", style = itemStyle, color = bodyTextColor()) },
+                    contentPadding = itemPadding,
+                    leadingIcon = {
+                        Icon(
+                            painter = painterResource(com.aazhou.mtforum.R.drawable.ic_post_edit),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    onClick = {
+                        open = false
+                        onEditThread()
+                    },
+                )
+            }
             DropdownMenuItem(
                 text = { Text("打赏", style = itemStyle, color = bodyTextColor()) },
                 contentPadding = itemPadding,
