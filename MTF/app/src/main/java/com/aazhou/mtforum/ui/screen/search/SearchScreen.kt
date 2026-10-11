@@ -268,11 +268,16 @@ fun SearchScreen(
                     Spacer(Modifier.width(10.dp))
 
                     // 搜索按钮
-                    val buttonBackground = MaterialTheme.colorScheme.primary
+                    val primary = MaterialTheme.colorScheme.primary
+                    val dark = LocalIsDarkTheme.current
                     // 主题预设的夜间色偏亮（薄荷青/珊瑚橙等），白字对比不足；
-                    // 按背景亮度取前景色，浅色主题仍是白字，外观不变
-                    val buttonForeground =
-                        if (buttonBackground.luminance() > 0.5f) Color(0xFF111827) else Color.White
+                    // 按背景亮度取前景色，浅色模式仍是白字，外观不变
+                    val foreground =
+                        if (primary.luminance() > 0.5f) Color(0xFF111827) else Color.White
+                    // 深色下按钮整体压到 50% 不透明度，与深色背景更融；浅色下背景压到 69%
+                    val buttonForeground = if (dark) foreground.copy(alpha = 0.5f) else foreground
+                    val buttonBackground =
+                        if (dark) primary.copy(alpha = 0.5f) else primary.copy(alpha = 0.69f)
                     Box(
                         modifier = Modifier
                             .height(36.dp)
