@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.ui.common
 
 import androidx.activity.compose.BackHandler
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -30,12 +31,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
@@ -77,6 +82,14 @@ fun ImagePreview(
     var busy by remember { mutableStateOf(false) }
     var confirmDownload by remember { mutableStateOf(false) }
 
+    // 上下滑动翻页：与左右翻页互斥，一次滑动只认一个方向
+    val onVerticalSwipe: (Int) -> Unit = { direction ->
+        val next = (pagerState.currentPage + direction).coerceIn(0, urls.lastIndex)
+        if (next != pagerState.currentPage) {
+            scope.launch { pagerState.animateScrollToPage(next) }
+        }
+    }
+
     BackHandler(enabled = !confirmDownload, onBack = onDismiss)
 
     // 预览必须盖住玻璃底栏：底栏与 NavHost 同在 AppRoot 的 Box 里、且绘制在 NavHost 之后，
@@ -96,15 +109,23 @@ fun ImagePreview(
     ) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                ZoomableImage(
-                    model = urls[page],
-                    active = pagerState.currentPage == page,
-                    onTap = onDismiss,
-                    onLongPress = {
-                        // 只有远程图片（String 地址）拉得到字节；本地文件没有可下载的地址
-                        if (urls[pagerState.currentPage] is String) confirmDownload = true
-                    },
-                )
+                // 方向锁夹在 Pager 与图片之间：图片自己消费事件时（双指缩放、放大后拖动）直接退出；
+                // 否则按主方向锁定，垂直锁定后吃掉水平位移，左右翻页不再跟着响应
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) { swipeDirectionLock(onVerticalSwipe) },
+                ) {
+                    ZoomableImage(
+                        model = urls[page],
+                        active = pagerState.currentPage == page,
+                        onTap = onDismiss,
+                        onLongPress = {
+                            // 只有远程图片（String 地址）拉得到字节；本地文件没有可下载的地址
+                            if (urls[pagerState.currentPage] is String) confirmDownload = true
+                        },
+                    )
+                }
             }
 
             if (urls.size > 1) {
@@ -267,6 +288,69 @@ private fun ZoomableImage(
         }
     }
 }
+
+/**
+ * 预览滑动方向锁：一次手势只认一个方向，避免上下翻页与左右翻页互相带着走。
+ *
+ * 图片自己消费了事件（双指缩放、放大后拖动）时本层直接退出，手势交还图片。
+ * 主方向位移要明显大于另一方向（1.5 倍）且超过 [DirectionSlop] 才锁定：
+ * 锁水平则什么都不做，位移原样交给外层 Pager 左右翻页；锁垂直则把水平位移吃掉，
+ * Pager 拿不到未消费的水平位移便不会翻页。松手时垂直位移超过屏高 22% 或甩动速度
+ * 超过阈值才真正翻页，轻拖不翻。
+ */
+private suspend fun PointerInputScope.swipeDirectionLock(onVerticalSwipe: (Int) -> Unit) {
+    val slop = DirectionSlop.toPx()
+    val distanceThreshold = size.height * 0.22f
+    val velocityThreshold = SwipeVelocity.toPx()
+    val tracker = VelocityTracker()
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        tracker.resetTracking()
+        var axis = 0
+        var total = Offset.Zero
+        while (true) {
+            val event = awaitPointerEvent()
+            if (event.changes.none { it.pressed }) {
+                val velocity = tracker.calculateVelocity().y
+                val far = kotlin.math.abs(total.y) > distanceThreshold
+                val fast = kotlin.math.abs(velocity) > velocityThreshold
+                if (axis == 2 && (far || fast)) {
+                    // 上滑看上一张、下滑看下一张
+                    onVerticalSwipe(if (total.y > 0f) 1 else -1)
+                }
+                break
+            }
+            // 未锁定时图片一旦消费事件（缩放/放大拖动），本次手势退出，不再判定方向
+            if (axis == 0 && event.changes.any { it.isConsumed }) break
+            var delta = Offset.Zero
+            event.changes.forEach { change ->
+                if (change.pressed && !change.isConsumed) {
+                    delta += change.position - change.previousPosition
+                }
+            }
+            total += delta
+            when {
+                axis == 0 && kotlin.math.abs(total.y) > slop &&
+                    kotlin.math.abs(total.y) > kotlin.math.abs(total.x) * 1.5f -> {
+                    axis = 2
+                    event.changes.forEach { it.consume() }
+                }
+                axis == 0 && kotlin.math.abs(total.x) > slop &&
+                    kotlin.math.abs(total.x) > kotlin.math.abs(total.y) * 1.5f -> axis = 1
+                axis == 2 -> event.changes.forEach { it.consume() }
+            }
+            event.changes.forEach { change ->
+                if (change.pressed) tracker.addPosition(change.uptimeMillis, change.position)
+            }
+        }
+    }
+}
+
+/** 方向锁判定阈值：小于这个位移不认方向，抖动不触发翻页。 */
+private val DirectionSlop = 32.dp
+
+/** 垂直甩动翻页的速度阈值。 */
+private val SwipeVelocity = 900.dp
 
 /**
  * 判断触点是否落在图片经 ContentScale.Fit 居中绘制、再叠加缩放/位移后的实际区域内。
