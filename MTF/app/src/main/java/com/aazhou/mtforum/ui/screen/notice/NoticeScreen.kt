@@ -65,6 +65,7 @@ import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticeCategory
 import com.aazhou.mtforum.data.model.PrivateMessage
+import com.aazhou.mtforum.data.repo.NoticeRepo
 import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
@@ -89,13 +90,18 @@ import kotlinx.coroutines.launch
 @Composable
 fun NoticeScreen(
     onBack: () -> Unit,
-    onThreadClick: (tid: String, pid: String?) -> Unit,
+    onThreadClick: (tid: String) -> Unit,
     onUserClick: (String) -> Unit,
     onChatClick: ((uid: String, name: String) -> Unit)? = null,
 ) {
     val colors = LocalMtfColors.current
     val viewModel: NoticeViewModel = appViewModel {
-        NoticeViewModel(it.repository, it.contentCache, onRead = { ids -> it.markNoticesRead(ids) })
+        NoticeViewModel(
+            it.repository,
+            NoticeRepo(it.httpClient),
+            it.contentCache,
+            onRead = { ids -> it.markNoticesRead(ids) },
+        )
     }
     val currentCategory by viewModel.category.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -432,7 +438,7 @@ private fun NoticeListView(
     listState: androidx.compose.foundation.lazy.LazyListState,
     notices: List<Notice>,
     onUserClick: (String) -> Unit,
-    onThreadClick: (tid: String, pid: String?) -> Unit,
+    onThreadClick: (tid: String) -> Unit,
     hasNext: Boolean,
     loadingMore: Boolean,
     onLoadMore: () -> Unit,
@@ -458,7 +464,7 @@ private fun NoticeListView(
                 notice = notice,
                 onUserClick = onUserClick,
                 onClick = {
-                    notice.tid?.let { tid -> onThreadClick(tid, notice.pid) }
+                    notice.tid?.let { tid -> onThreadClick(tid) }
                 },
             )
         }

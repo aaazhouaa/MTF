@@ -1,6 +1,8 @@
 package com.aazhou.mtforum.data.parser
 
 import com.aazhou.mtforum.data.model.Forum
+import com.aazhou.mtforum.data.model.FriendRequestItem
+import com.aazhou.mtforum.data.model.FriendRequestPage
 import com.aazhou.mtforum.data.model.ForumGroup
 import com.aazhou.mtforum.data.model.ForumPage
 import com.aazhou.mtforum.data.model.AtUser
@@ -54,6 +56,9 @@ object ForumParser {
     private val RE_FORMHASH_INPUT = Regex("formhash[\"']?\\s+value=[\"']([0-9a-fA-F]+)")
     private val RE_FORMHASH_JS = Regex("formhash\\s*=\\s*['\"]([0-9a-fA-F]+)['\"]")
     private val RE_LOGINHASH = Regex("loginhash=([A-Za-z0-9]+)")
+
+    /** URL 参数形态的 formhash：&formhash=xxx。 */
+    private val RE_FORMHASH_PARAM = Regex("formhash=([0-9A-Za-z]{8,})")
     // 贴图上传凭据：comiis 模板把 uid/hash 写进帖子页内联的上传配置里
     private val RE_UPLOAD_UID = Regex("uploadformdata:\\{uid:\"(\\d+)\"")
     private val RE_UPLOAD_HASH = Regex("uploadformdata:\\{uid:\"\\d+\",\\s*hash:\"([0-9a-fA-F]+)\"")
@@ -603,6 +608,20 @@ object ForumParser {
         RE_FORMHASH_INPUT.find(html)?.groupValues?.get(1)
             ?: RE_FORMHASH_JS.find(html)?.groupValues?.get(1)
 
+    /**
+     * 任意形态的 formhash。
+     *
+     * 收藏页、签到页、好友请求页没有表单输入框，令牌只以 URL 参数形态出现在页面里
+     * （退出链接、签到按钮等的 &formhash=xxx），[parseFormhash] 取不到，故兜底扫全文。
+     */
+    fun parseFormhashAny(html: String): String? {
+        if (html.isBlank()) return null
+        Jsoup.parse(html).selectFirst("input[name=formhash]")?.attr("value")
+            ?.takeIf { it.isNotBlank() }?.let { return it }
+        return parseFormhash(html)
+            ?: RE_FORMHASH_PARAM.find(html)?.groupValues?.get(1)
+    }
+
     /** 登录页的 loginhash。 */
     fun extractLoginHash(html: String): String? =
         RE_LOGINHASH.find(html)?.groupValues?.get(1)
@@ -755,6 +774,12 @@ object ForumParser {
 
     /** 从 Discuz AJAX 响应中提取提示消息（如「成功收听」「好友请求已发送」「黑名单添加成功」等）。 */
     fun parseAjaxMessage(response: String): String? {
+        // 整页与 WAF 挑战页不是回执：写操作失败时站点会跳转到别的页面，从整页里抓到的
+        // 「消息」只是页面中任意一段文字（常见的是当前用户名），不能当操作结果
+        val head = response.trimStart()
+        if (head.startsWith("<html", ignoreCase = true) || head.startsWith("<!DOCTYPE", ignoreCase = true)) {
+            return null
+        }
         val pMatch = Regex("""<p>([\s\S]*?)(?:<script|</p>)""").find(response)?.groupValues?.get(1)?.trim()
         if (!pMatch.isNullOrBlank()) {
             val text = doc(pMatch).text().trim()
@@ -854,9 +879,6 @@ object ForumParser {
     /** 提醒行里指向主题的链接：移动模板用 redirect&goto=findpost&ptid=TID，旧式用 thread-TID。 */
     private val RE_NOTICE_TID = Regex("""(?:ptid|tid)=(\d+)""")
 
-    /** 提醒行里指向具体楼层的链接：goto=findpost&pid=PID。 */
-    private val RE_NOTICE_PID = Regex("""[?&]pid=(\d+)""")
-
     /** 分页器里指向某一页的链接：do=notice&view=X&page=N。 */
     private val RE_NOTICE_PAGE = Regex("""[?&]page=(\d+)""")
 
@@ -866,11 +888,6 @@ object ForumParser {
     /** 帖子地址里的页码：`viewthread&tid=X&page=N` 或 `thread-X-N-1.html`。 */
     private val RE_THREAD_PAGE = Regex("""[?&]page=(\d+)|thread-\d+-(\d+)-""")
 
-    /** 从（跟随重定向后的）帖子地址里取页码；取不到按第 1 页处理。 */
-    fun pageFromThreadUrl(url: String): Int {
-        val m = RE_THREAD_PAGE.find(url) ?: return 1
-        return (m.groupValues[1].ifEmpty { m.groupValues[2] }).toIntOrNull()?.coerceAtLeast(1) ?: 1
-    }
 
     /**
      * 「我的」→「消息提醒」的某个类别页（home.php?mod=space&do=notice&view=…）。
@@ -955,10 +972,6 @@ object ForumParser {
                     ?: RE_TID.find(href)?.groupValues?.get(1)
             }
             .firstOrNull()
-        val pid = li.select("a[href]").asSequence()
-            .map { it.attr("href") }
-            .mapNotNull { href -> RE_NOTICE_PID.find(href)?.groupValues?.get(1) }
-            .firstOrNull()
         // 帖子标题超长时截断：提醒行只有一行多点，长标题会把正文挤没了
         val titleLink = body?.select("a[href]")?.firstOrNull {
             RE_NOTICE_TID.containsMatchIn(it.attr("href"))
@@ -970,7 +983,7 @@ object ForumParser {
         // 站点给每条提醒一个稳定 id（屏蔽链接的 a_note_NNNN）；列表 key 用它，
         // 新消息插到前面时后面的行不会因为下标平移而整批重建
         val noteId = li.selectFirst("a[id^=a_note_]")?.id()?.removePrefix("a_note_")
-        val id = noteId ?: pid ?: tid ?: "notice-$index"
+        val id = noteId ?: tid ?: "notice-$index"
         // 互动类提醒的头像链接：a.notice_img 包着头像，href 带 uid=；系统类提醒没有它，两项自然为 null
         val avatarLink = li.selectFirst("a.notice_img")
         val avatarUrl = avatarLink?.selectFirst("img")?.attr("src")?.trim()?.takeIf { it.isNotBlank() }
@@ -980,7 +993,6 @@ object ForumParser {
             text = text,
             timeText = time,
             tid = tid,
-            pid = pid,
             avatarUrl = avatarUrl,
             uid = uid,
         )
@@ -1343,7 +1355,7 @@ object ForumParser {
     fun parseFavorites(html: String, page: Int): FavoritePage {
         val document = doc(html)
         val items = mutableListOf<FavoriteItem>()
-        val listElements = document.select("ul.comiis_favoritelist li, .comiis_p12 li, ul#favorite_ul li, div.comiis_body li, li[id^=fav_]")
+        val listElements = document.select("ul.comiis_favoritelist li, .comiis_p12 li, ul#favorite_ul li, div.comiis_body li, li[id^=fav_], li.mysclist_li")
         for (el in listElements) {
             val deleteA = el.selectFirst("a[href*=op=delete]") ?: el.selectFirst("a[href*=favid=]")
             val favid = deleteA?.let { Regex("""favid=(\d+)""").find(it.attr("href"))?.groupValues?.get(1) }
@@ -1377,28 +1389,70 @@ object ForumParser {
         )
     }
 
+    /**
+     * 取一行里的用户名链接。
+     *
+     * 站点头像链接（a.list01_limg）排在用户名（p.tit）之前，href 同样带 uid 与
+     * do=profile，把两者放进同一组选择器会按文档顺序先选到头像，其 text 为空，
+     * 整行就会被当作无效数据跳过。
+     */
+    private fun profileLink(li: Element): Element? =
+        li.selectFirst("p.tit a[href*=do=profile]")
+            ?: li.selectFirst("a.top_user")
+            ?: li.select("a[href*=do=profile]").firstOrNull { it.text().isNotBlank() }
+
     /** 解析「我的好友」。 */
     fun parseFriends(html: String, page: Int): FriendUserPage {
         val document = doc(html)
         val items = mutableListOf<FriendUserItem>()
         val listElements = document.select("div.comiis_userlist01 > li, ul.comiis_friend_list > li, li[id^=comiis_friendbox_], li[id^=friend_], .comiis_p12 li")
         for (li in listElements) {
-            val link = li.selectFirst("p.tit a[href*=profile], a.top_user, a[href*=mod=space&uid=]")
-                ?: li.selectFirst("a[href*=do=profile]")
-                ?: continue
+            val link = profileLink(li) ?: continue
             val href = link.attr("href")
             val uid = RE_UID.find(href)?.groupValues?.get(1)
                 ?: Regex("""comiis_friendbox_(\d+)""").find(li.attr("id"))?.groupValues?.get(1)
                 ?: continue
             val name = link.text().trim().ifEmpty { continue }
             val avatarUrl = li.selectFirst("img")?.absUrl("src")?.takeIf { it.isNotBlank() }
-            val desc = li.selectFirst("p.txt, span.f_d")?.text()?.trim()
+            // 描述只取等级/时间那几行小字：黑名单页的 p.txt 里是「解除黑名单」操作链接，
+            // 整段文本照抄会把按钮文字显示成描述
+            val desc = li.selectFirst("p.txt")?.select("font")
+                ?.joinToString(" ") { it.text().trim() }?.trim()?.takeIf { it.isNotEmpty() }
+                ?: li.selectFirst("span.f_d")?.text()?.trim()?.takeIf { it.isNotEmpty() }
             items.add(FriendUserItem(uid = uid, username = name, avatarUrl = avatarUrl, description = desc))
         }
         return FriendUserPage(
             users = items.distinctBy { it.uid },
             page = page,
             hasNext = hasNextPage(document),
+        )
+    }
+
+    /** 解析「好友请求」列表（spacecp&ac=friend&op=request）。 */
+    fun parseFriendRequests(html: String, page: Int): FriendRequestPage {
+        val document = doc(html)
+        val rows = document.select(
+            "div.comiis_userlist01 > li, li.b_t, ul.comiis_friend_list > li, .comiis_p12 li",
+        ).ifEmpty {
+            // 容器类名与模板不一致时，退回「行内有用户资料链接」这一形态本身
+            document.select("li:has(a[href*=\"do=profile\"])")
+        }
+        val items = rows.mapNotNull { li ->
+            val link = li.selectFirst("p.tit a[href*=profile]")
+                ?: li.selectFirst("a[href*=do=profile]")
+                ?: return@mapNotNull null
+            val uid = RE_UID.find(link.attr("href"))?.groupValues?.get(1) ?: return@mapNotNull null
+            val name = link.text().trim().ifBlank { return@mapNotNull null }
+            val avatar = li.selectFirst("a.list01_limg img, img[src*=avatar]")?.absUrl("src")
+                ?.takeIf { it.isNotBlank() }
+            val desc = li.selectFirst("p.txt")?.text()?.trim()?.takeIf { it.isNotEmpty() }
+            FriendRequestItem(uid = uid, username = name, avatarUrl = avatar, description = desc)
+        }.distinctBy { it.uid }
+        return FriendRequestPage(
+            requests = items,
+            page = page,
+            hasNext = hasNextPage(document),
+            formhash = parseFormhashAny(html),
         )
     }
 

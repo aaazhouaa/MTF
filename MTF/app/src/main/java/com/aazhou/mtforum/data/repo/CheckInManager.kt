@@ -29,6 +29,9 @@ class CheckInManager(
     private val currentUser: StateFlow<UserProfile?>,
     private val scope: CoroutineScope,
 ) {
+    /** k_misign 签到抓取：签到页 formhash 的形态与通用页面不同，单独走这里。 */
+    private val checkInRepo = CheckInRepo(httpClient)
+
     private val mutex = Mutex()
 
     private val _hasSigned = MutableStateFlow(false)
@@ -70,7 +73,7 @@ class CheckInManager(
             }
             if (!mutex.tryLock()) return@launch
             try {
-                val status = repository.checkInStatus()
+                val status = checkInRepo.status()
                 if (status.hasSigned) {
                     _hasSigned.value = true
                     sessionStore.saveCheckInDate(uid, today)
@@ -110,7 +113,7 @@ class CheckInManager(
             try {
                 val today = todayDateString()
                 // 步骤 1：先拉取签到页面获取状态与 formhash
-                val status = repository.checkInStatus()
+                val status = checkInRepo.status()
                 if (status.hasSigned) {
                     _hasSigned.value = true
                     sessionStore.saveCheckInDate(uid, today)
@@ -127,7 +130,7 @@ class CheckInManager(
                 delay(500)
 
                 // 步骤 3：串行发送签到请求
-                val result = repository.submitCheckIn(formhash)
+                val result = checkInRepo.sign(formhash)
                 if (result.success) {
                     _hasSigned.value = true
                     sessionStore.saveCheckInDate(uid, today)

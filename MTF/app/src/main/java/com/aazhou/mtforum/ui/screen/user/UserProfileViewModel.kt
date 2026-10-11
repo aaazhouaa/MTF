@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -39,6 +40,12 @@ class UserProfileViewModel(
         myUid.isNotBlank() && myUid == targetUid
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    /** 拉黑状态：进入页面时以站点黑名单列表为准，操作后本地覆盖。 */
+    private val _blockedOverride = MutableStateFlow<Boolean?>(null)
+    val isBlocked: StateFlow<Boolean> = _blockedOverride
+        .map { it ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     /** 本地覆盖的关注状态（若有），与页面返回的状态融合。 */
     private val _followingOverride = MutableStateFlow<Boolean?>(null)
     val isFollowing: StateFlow<Boolean> = combine(_state, _followingOverride) { profileState, override ->
@@ -56,6 +63,7 @@ class UserProfileViewModel(
         viewModelScope.launch {
             _state.value = try {
                 val profile = repository.userProfile(uid)
+                refreshBlocked()
                 val localFollow = actionStore.following(uid)
                 if (localFollow != null) {
                     _followingOverride.value = localFollow
@@ -151,6 +159,7 @@ class UserProfileViewModel(
             try {
                 val res = repository.addUserBlacklist(username, formhash)
                 res.onSuccess { msg ->
+                    _blockedOverride.value = true
                     AppToast.show(msg)
                     onDone()
                 }.onFailure { e ->
@@ -160,5 +169,32 @@ class UserProfileViewModel(
                 _isOperating.value = false
             }
         }
+    }
+
+    /** 移出黑名单。 */
+    fun unblockUser(onDone: () -> Unit) {
+        if (_isOperating.value) return
+        viewModelScope.launch {
+            _isOperating.value = true
+            try {
+                val res = repository.removeUserBlacklist(uid)
+                res.onSuccess { msg ->
+                    _blockedOverride.value = false
+                    AppToast.show(msg)
+                    onDone()
+                }.onFailure { e ->
+                    AppToast.show(e.message ?: "移出黑名单失败")
+                }
+            } finally {
+                _isOperating.value = false
+            }
+        }
+    }
+
+    /** 以站点黑名单列表为准刷新拉黑状态。 */
+    private suspend fun refreshBlocked() {
+        if (_blockedOverride.value != null) return
+        runCatching { repository.myFriends(view = "blacklist", page = 1) }
+            .onSuccess { page -> _blockedOverride.value = page.users.any { it.uid == uid } }
     }
 }

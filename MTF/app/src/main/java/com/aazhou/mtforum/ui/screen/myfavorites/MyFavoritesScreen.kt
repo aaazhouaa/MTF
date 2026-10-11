@@ -36,6 +36,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -52,11 +53,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.FavoriteItem
+import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
+import com.aazhou.mtforum.ui.common.MtfConfirmDialog
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
@@ -69,7 +72,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class MyFavoritesViewModel(private val repository: ForumRepository) : ViewModel() {
+class MyFavoritesViewModel(
+    private val repository: ForumRepository,
+    private val actionStore: ActionStore,
+) : ViewModel() {
     private val _type = MutableStateFlow("all")
     val type: StateFlow<String> = _type.asStateFlow()
 
@@ -81,6 +87,10 @@ class MyFavoritesViewModel(private val repository: ForumRepository) : ViewModel(
 
     private val _loadingMore = MutableStateFlow(false)
     val loadingMore: StateFlow<Boolean> = _loadingMore.asStateFlow()
+
+    /** 正在取消收藏的条目 key（favid，取不到时退到 id）：行内转圈并防连点。 */
+    private val _removing = MutableStateFlow("")
+    val removing: StateFlow<String> = _removing.asStateFlow()
 
     private var currentPage = 1
 
@@ -128,18 +138,29 @@ class MyFavoritesViewModel(private val repository: ForumRepository) : ViewModel(
 
     fun removeFavorite(item: FavoriteItem) {
         val currentList = (_state.value as? UiState.Success)?.data ?: return
-        _state.value = UiState.Success(currentList.filter { it.favid != item.favid || it.id != item.id })
+        val key = item.favid.ifEmpty { item.id }
+        if (_removing.value.isNotEmpty() || key.isEmpty()) return
+        _removing.value = key
+        _state.value = UiState.Success(currentList.filterNot { sameFavorite(it, item) })
         viewModelScope.launch {
-            val ok = if (item.favid.isNotEmpty()) repository.deleteFavorite(item.favid) else false
+            val ok = runCatching { repository.deleteFavorite(item.favid) }
+                .getOrElse { false }
             if (ok) {
                 AppToast.show("已取消收藏")
+                // 详情页的收藏态读本地记录，不同步会与「已取消」矛盾
+                if (item.type == "thread" && item.id.isNotBlank()) {
+                    actionStore.setFavorited(item.id, false)
+                }
             } else {
                 AppToast.show("取消收藏失败")
-                // 回滚
                 _state.value = UiState.Success(currentList)
             }
+            _removing.value = ""
         }
     }
+
+    private fun sameFavorite(a: FavoriteItem, b: FavoriteItem): Boolean =
+        (a.favid.isNotEmpty() && a.favid == b.favid) || (a.id.isNotEmpty() && a.id == b.id)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -150,14 +171,18 @@ fun MyFavoritesScreen(
     onForumClick: (String, String) -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    val viewModel: MyFavoritesViewModel = appViewModel { MyFavoritesViewModel(it.repository) }
+    val viewModel: MyFavoritesViewModel = appViewModel { MyFavoritesViewModel(it.repository, it.actionStore) }
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("全部" to "all", "帖子" to "thread", "版块" to "forum")
 
     val uiState by viewModel.state.collectAsStateWithLifecycle()
     val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
+    val removingKey by viewModel.removing.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+
+    // 取消收藏前弹窗确认，避免误触
+    var pendingRemove by remember { mutableStateOf<FavoriteItem?>(null) }
 
     Scaffold(
         containerColor = colors.background,
@@ -244,6 +269,7 @@ fun MyFavoritesScreen(
                         items(items, key = { if (it.favid.isNotEmpty()) it.favid else it.id }) { fav ->
                             FavoriteCard(
                                 item = fav,
+                                removing = removingKey == fav.favid.ifEmpty { fav.id },
                                 onClick = {
                                     if (fav.type == "forum") {
                                         onForumClick(fav.id, fav.title)
@@ -251,7 +277,7 @@ fun MyFavoritesScreen(
                                         onThreadClick(fav.id)
                                     }
                                 },
-                                onDelete = { viewModel.removeFavorite(fav) },
+                                onDelete = { pendingRemove = fav },
                             )
                         }
                         if (loadingMore) {
@@ -269,11 +295,25 @@ fun MyFavoritesScreen(
             }
         }
     }
+
+    pendingRemove?.let { target ->
+        MtfConfirmDialog(
+            title = "取消收藏",
+            message = "确定不再收藏「${target.title}」吗？",
+            confirmText = "取消收藏",
+            onDismissRequest = { pendingRemove = null },
+            onConfirm = {
+                viewModel.removeFavorite(target)
+                pendingRemove = null
+            },
+        )
+    }
 }
 
 @Composable
 private fun FavoriteCard(
     item: FavoriteItem,
+    removing: Boolean,
     onClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -341,13 +381,21 @@ private fun FavoriteCard(
                     )
                 }
             }
-            IconButton(onClick = onDelete) {
-                Icon(
-                    painterResource(R.drawable.ic_delete),
-                    contentDescription = "取消收藏",
-                    tint = colors.textHint,
-                    modifier = Modifier.size(18.dp),
-                )
+            IconButton(onClick = onDelete, enabled = !removing) {
+                if (removing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = colors.textHint,
+                    )
+                } else {
+                    Icon(
+                        painterResource(R.drawable.ic_delete),
+                        contentDescription = "取消收藏",
+                        tint = colors.textHint,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
     }

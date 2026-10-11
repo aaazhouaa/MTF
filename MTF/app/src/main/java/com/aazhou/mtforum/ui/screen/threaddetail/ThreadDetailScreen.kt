@@ -158,8 +158,6 @@ fun ThreadDetailScreen(
     onBack: () -> Unit,
     onUserClick: (String) -> Unit,
     onThreadClick: (String) -> Unit,
-    /** 从消息提醒跳进来时要定位的楼层 pid（普通进帖为 null）。 */
-    anchorPid: String? = null,
     /** 编辑自己的首帖：跳到整页编辑（带标题）。参数为 tid/pid/fid/版块名。 */
     onEditThread: (String, String, String, String) -> Unit = { _, _, _, _ -> },
 ) {
@@ -172,7 +170,6 @@ fun ThreadDetailScreen(
             it.repository,
             it.actionStore,
             it.sessionStore.uid,
-            anchorPid = anchorPid,
         )
     }
     val myUid by viewModel.myUid.collectAsStateWithLifecycle()
@@ -199,10 +196,6 @@ fun ThreadDetailScreen(
     val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     val foldExpanded by viewModel.foldExpanded.collectAsStateWithLifecycle()
-    // 从消息提醒跳进来时要定位的楼层
-    val anchorPid by viewModel.anchor.collectAsStateWithLifecycle()
-    // 定位完成后柔和闪烁两次的楼层（指出是哪一条评论）
-    var highlightPid by remember { mutableStateOf<String?>(null) }
 
     var composerVisible by remember { mutableStateOf(false) }
     // 正在编辑的楼层（自己的帖子/评论）：编辑面板以此为准，提交成功后由 ViewModel 清空
@@ -605,42 +598,6 @@ fun ThreadDetailScreen(
                             val replies = data.posts.filter { it !== op }
                             if (foldExpanded) replies else replies.filter { it.pid !in waterPids }
                         }
-                        // 从消息提醒跳进来：目标楼层（可能在很后面的页）被拉回来后滚到它所在的位置
-                        LaunchedEffect(anchorPid, visibleReplies, foldExpanded) {
-                            val pid = anchorPid ?: return@LaunchedEffect
-                            // 先把藏住它的灌水折叠展开（只看本次）
-                            viewModel.revealAnchorReply(pid)
-                            val index = visibleReplies.indexOfFirst { it.pid == pid }
-                            if (index < 0) {
-                                // 目标还没上屏：所在页没拉到，或刚展开的折叠还没重组完
-                                return@LaunchedEffect
-                            }
-                            // 列表头部固定两项：帖子头部 + 评论标题栏（头部缺省时少一项）
-                            val lazyIndex = index + (if (op != null) 1 else 0) + 1
-                            // 必须等目标下标真的进入布局再滚：此刻组合虽已换上新的楼层列表，
-                            // LazyColumn 可能还没测量它，直接滚会被夹到当前列表末尾——
-                            // 表现为「总是跳到最后一楼」。滚完再确认一次，没到位就重试。
-                            repeat(3) {
-                                withTimeoutOrNull(2500) {
-                                    snapshotFlow { listState.layoutInfo.totalItemsCount }
-                                        .first { count -> count > lazyIndex }
-                                }
-                                withFrameNanos { }
-                                listState.scrollToItem(lazyIndex)
-                                withFrameNanos { }
-                                if (listState.layoutInfo.visibleItemsInfo.any { it.key == pid }) {
-                                    // 闪烁落在目标本身
-                                    highlightPid = pid
-                                    viewModel.consumeAnchor()
-                                    // 闪烁只来一下：定位完就撤掉，楼层滚出屏幕再回来不会重复闪
-                                    delay(FLASH_HIGHLIGHT_MS)
-                                    highlightPid = null
-                                    return@LaunchedEffect
-                                }
-                            }
-                            viewModel.consumeAnchor()
-                        }
-
                         PullToRefreshBox(
                             isRefreshing = isRefreshing,
                             onRefresh = { viewModel.refresh() },
@@ -724,11 +681,8 @@ fun ThreadDetailScreen(
                                 }
                             }
                             items(visibleReplies, key = { it.pid }) { reply ->
-                                // 定位闪烁：目标是本条
-                                val highlighted = reply.pid == highlightPid
                                 ReplyBlock(
                                     reply = reply,
-                                    highlight = highlighted,
                                     onReply = {
                                         if (requireLogin(LOGIN_HINT_REPLY)) {
                                             viewModel.setReplyTarget(reply)
@@ -1789,8 +1743,6 @@ internal fun ReplyBlock(
     pageImages: List<String>,
     onLongPress: (Post) -> Unit,
     onThreadClick: (String) -> Unit,
-    /** 定位闪烁：从消息提醒跳到本条时柔和闪两下。 */
-    highlight: Boolean = false,
 ) {
     val colors = LocalMtfColors.current
     val context = LocalContext.current
@@ -1813,7 +1765,7 @@ internal fun ReplyBlock(
             )
             Spacer(Modifier.width(9.dp))
             // 闪烁只覆盖这条消息的内容（昵称 + 正文），不含头像与底栏
-            Column(Modifier.weight(1f).flashHighlight(highlight)) {
+            Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!reply.floorLabel.isNullOrBlank()) {
                         Text(
@@ -2105,36 +2057,6 @@ private fun BarAction(
             .padding(horizontal = 4.dp, vertical = 4.dp),
     ) {
         icon()
-    }
-}
-
-/** 闪烁圆角：与消息卡片的圆角区分开，只看得出是这一条的内容区。 */
-private val FLASH_CORNER = 8.dp
-
-/**
- * 定位提醒楼层时的柔和闪烁：底色用最底层的页面灰，淡入淡出两次。
- *
- * 灰色与页面底色接近，透明度压低后会淡到看不出来，故峰值给足（淡入淡出本身
- * 已经提供了「柔和」）；画在内容之下、带圆角，只覆盖内容列。
- */
-@Composable
-private fun Modifier.flashHighlight(active: Boolean): Modifier {
-    if (!active) return this
-    val progress = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        repeat(2) {
-            progress.animateTo(1f, tween(durationMillis = 240, easing = FastOutSlowInEasing))
-            progress.animateTo(0f, tween(durationMillis = 480, easing = FastOutSlowInEasing))
-        }
-    }
-    val shade = LocalMtfColors.current.background
-    return drawBehind {
-        // 圆角的 px 值在 DrawScope 里换算，才能拿到当前密度
-        drawRoundRect(
-            color = shade,
-            cornerRadius = CornerRadius(FLASH_CORNER.toPx()),
-            alpha = progress.value,
-        )
     }
 }
 

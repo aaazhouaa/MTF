@@ -8,6 +8,7 @@ import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticeCategory
 import com.aazhou.mtforum.data.model.PrivateMessage
 import com.aazhou.mtforum.data.repo.ForumRepository
+import com.aazhou.mtforum.data.repo.NoticeRepo
 import com.aazhou.mtforum.ui.common.UiState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,6 +37,7 @@ sealed interface NoticeContentState {
 
 class NoticeViewModel(
     private val repository: ForumRepository,
+    private val noticeRepo: NoticeRepo,
     private val contentCache: ContentCache,
     /** 把已加载的提醒记为已读，首页红点随之灭掉。 */
     private val onRead: (List<String>) -> Unit,
@@ -138,7 +140,7 @@ class NoticeViewModel(
                 NoticeCategory.INTERACTIVE,
                 NoticeCategory.SYSTEM -> {
                     val view = cat.viewKey ?: "mypost"
-                    val page = repository.noticesByView(view)
+                    val page = noticeRepo.notices(view)
                     if (page.loggedOut) {
                         _state.value = UiState.Error("请先登录后查看消息提醒")
                         return
@@ -180,17 +182,20 @@ class NoticeViewModel(
         _loadingMore.value = true
         loadMoreJob = viewModelScope.launch {
             val next = current.page + 1
-            runCatching { repository.noticesByView(_category.value.viewKey ?: "mypost", next) }
+            runCatching { noticeRepo.notices(_category.value.viewKey ?: "mypost", next) }
                 .onSuccess { page ->
                     if (page.loggedOut) {
                         _hasNext.value = false
                         return@onSuccess
                     }
+                    val merged = (current.items + page.notices).distinctBy { it.id }
+                    // 一条新提醒都没有：站点把页码夹回了已给过的内容，或这一类已经见底。
+                    // 此时必须收手，否则每滑到底都会再去要一遍同一页
+                    val added = merged.size - current.items.size
                     val updated = NoticeContentState.Notices(
-                        items = (current.items + page.notices).distinctBy { it.id }
-                            .sortedByDescending { noticeRecency(it) },
+                        items = merged.sortedByDescending { noticeRecency(it) },
                         page = next,
-                        hasNext = next < page.totalPages,
+                        hasNext = added > 0 && next < page.totalPages,
                     )
                     updateContent(_category.value, updated)
                 }

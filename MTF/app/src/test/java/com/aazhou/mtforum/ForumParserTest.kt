@@ -858,7 +858,6 @@ class ForumParserTest {
         assertEquals(2, notices.notices.size)
         val first = notices.notices[0]
         assertEquals("174032", first.tid)
-        assertEquals("11921862", first.pid)
         assertEquals("昨天 15:22", first.timeText)
         // 帖子标题超过 8 字截断成省略号，正文与「查看」都不受污染
         assertTrue(first.text.contains("rsuyeug 回复了您的帖子"))
@@ -888,8 +887,8 @@ class ForumParserTest {
         val notice = ForumParser.parseNotices(html).notices.single()
         assertTrue(notice.text.contains("短标题"))
         assertTrue(!notice.text.contains("…"))
-        // 没有 a_note_id 时退回 pid，保证 key 仍稳定
-        assertEquals("2", notice.id)
+        // 没有 a_note_id 时退回 tid，保证 key 仍稳定
+        assertEquals("1", notice.id)
     }
 
     @Test
@@ -950,20 +949,6 @@ class ForumParserTest {
             </body></html>
         """.trimIndent()
         assertEquals(1, ForumParser.parseNotices(noPager).totalPages)
-    }
-
-    @Test
-    fun threadPageParsedFromResolvedUrl() {
-        // redirect 中转地址 302 到带页码的帖子页，页码从这里取
-        assertEquals(
-            19,
-            ForumParser.pageFromThreadUrl(
-                "https://bbs.binmt.cc/forum.php?mod=viewthread&tid=174032&page=19&mobile=2#pid11921862",
-            ),
-        )
-        assertEquals(3, ForumParser.pageFromThreadUrl("https://bbs.binmt.cc/thread-174032-3-1.html"))
-        // 没有页码按第 1 页处理（调用方据此跳过额外的取页请求）
-        assertEquals(1, ForumParser.pageFromThreadUrl("https://bbs.binmt.cc/forum.php?mod=viewthread&tid=174032"))
     }
 
     @Test
@@ -1081,6 +1066,55 @@ class ForumParserTest {
     fun `at users ignore a challenge page response`() {
         val body = "<html><script>var x = 1</script></html>"
         assertEquals(emptyList<String>(), ForumParser.parseAtUsers(body))
+    }
+
+    @Test
+    fun `friend list keeps level and time but drops blacklist action link`() {
+        // 访客/足迹页：p.txt 里两行 font 是等级与访问时间，都是描述
+        val visitor = """
+            <html><body><div class="comiis_friend_boxs"><div class="bg_f b_b cl">
+            <div class="comiis_userlist01 cl"><li class="b_t">
+              <p class="ytit f_d"><a href="home.php?mod=spacecp&amp;ac=friend&amp;op=add&amp;uid=160471">加好友</a></p>
+              <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=160471&amp;do=profile" class="list01_limg"><img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=160471&amp;size=middle"></a>
+              <p class="tit"><a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=160471&amp;do=profile">醉期</a></p>
+              <p class="txt"><font class="f_d">小学生</font> <font class="f_d">10月11日</font></p>
+            </li></div></div></div></body></html>
+        """.trimIndent()
+        val visitorItem = ForumParser.parseFriends(visitor, 1).users.single()
+        assertEquals("160471", visitorItem.uid)
+        assertEquals("醉期", visitorItem.username)
+        assertEquals("小学生 10月11日", visitorItem.description)
+
+        // 黑名单页：p.txt 里只有「解除黑名单」操作链接，不能当描述照抄
+        val blacklist = """
+            <html><body><div class="comiis_friend_boxs"><div class="bg_f b_b cl">
+            <div class="comiis_userlist01 cl"><li class="b_t">
+              <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=156705&amp;do=profile" class="list01_limg"><img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=156705&amp;size=middle"></a>
+              <p class="tit"><a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=156705&amp;do=profile">nzyqw</a></p>
+              <p class="txt"><a href="home.php?mod=spacecp&amp;ac=friend&amp;op=blacklist&amp;subop=delete&amp;uid=156705&amp;start=" class="f_g">解除黑名单</a></p>
+            </li></div></div></div></body></html>
+        """.trimIndent()
+        val blacklistItem = ForumParser.parseFriends(blacklist, 1).users.single()
+        assertEquals("156705", blacklistItem.uid)
+        assertEquals(null, blacklistItem.description)
+    }
+
+    @Test
+    fun `friend request rows fall back to any li holding a profile link`() {
+        // 容器类名与模板不一致时，只要行内有用户资料链接就算一行
+        val html = """
+            <html><body><div class="some_other_box"><ul>
+              <li class="x_y">
+                <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=99&amp;do=profile" class="list01_limg"><img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=99&amp;size=middle"></a>
+                <p class="tit"><a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=99&amp;do=profile">申请人</a></p>
+                <p class="txt">想加您为好友</p>
+              </li>
+            </ul></div></body></html>
+        """.trimIndent()
+        val items = ForumParser.parseFriendRequests(html, 1).requests
+        assertEquals(1, items.size)
+        assertEquals("99", items.single().uid)
+        assertEquals("申请人", items.single().username)
     }
 
     @Test

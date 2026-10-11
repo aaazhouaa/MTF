@@ -20,4 +20,14 @@ object CacheKeys {
     fun guide(view: String): String = "guide|$view"
 
     fun search(keyword: String): String = "search|$keyword"
+
+    /** 圈子/用户搜索按关键词分槽，与帖子搜索互不覆盖。 */
+    fun searchForum(keyword: String): String = "search_forum|$keyword"
+
+    fun searchUser(keyword: String): String = "search_user|$keyword"
+
+    fun forumList(): String = "forumlist"
+
+    /** 个人中心按 uid 分槽：换账号后不闪出上一个账号的资料。 */
+    fun profile(uid: String): String = "profile|$uid"
 }

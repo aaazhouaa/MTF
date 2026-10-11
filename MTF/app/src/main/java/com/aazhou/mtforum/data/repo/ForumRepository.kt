@@ -42,7 +42,7 @@ private val REPLY_ERROR_PATTERN = Regex("抱歉|非法操作|请先登录|需要
 
 /** 点赞/收藏失败提示词。 */
 private val LIKE_ERROR_PATTERN = Regex(
-    "没有点赞权限|不能点赞|今日评价机会已用完|关闭的主题|请先登录|formhash错误|非法操作|不能收藏",
+    "没有点赞权限|不能点赞|今日评价机会已用完|关闭的主题|请先登录|formhash错误|非法操作|不能收藏|submit_invalid|errorhandle_",
 )
 
 /** 举报失败：返回体仍是举报表单或跳登录页。 */
@@ -344,26 +344,45 @@ class ForumRepository(
             body.isNotBlank() && !LIKE_ERROR_PATTERN.containsMatchIn(body)
         } else {
             val favid = favoriteFavid(tid) ?: return@withContext false
-            val url = http.url(
-                "home.php?mod=spacecp&ac=favorite&op=delete&favid=$favid&type=all&mobile=2",
-            )
-            val body = http.post(
-                url,
-                mapOf(
-                    "formhash" to formhash,
-                    "deletesubmit" to "true",
-                    "handlekey" to "comiis",
-                ),
-                referer = "https://bbs.binmt.cc/home.php?mod=space&do=favorite&type=all&mobile=2",
-            )
-            body.isNotBlank() && !LIKE_ERROR_PATTERN.containsMatchIn(body)
+            deleteFavorite(favid)
         }
     }
 
-    /** 从收藏列表页找出该主题的 favid。 */
+    /**
+     * 从收藏列表页找出该主题的 favid。
+     *
+     * 站点「我的收藏」导航指向 view=me 页，删除链接（op=delete&favid=）就在收藏行内。
+     */
     private suspend fun favoriteFavid(tid: String): String? {
-        val html = http.get(http.url("home.php?mod=space&do=favorite&type=all&mobile=2"))
+        val html = http.get(http.url("home.php?mod=space&do=favorite&view=me&type=all&mobile=2"))
         return ForumParser.parseFavoriteFavid(html, tid)
+    }
+
+    /**
+     * 按 favid 取消收藏。
+     *
+     * 站点 submitcheck 只读 URL 查询串里的 formhash（请求体里的不看），收藏页也没有
+     * form 输入框，令牌只以 URL 参数形态出现在页面里，故统一把 formhash 拼进 URL。
+     */
+    suspend fun deleteFavorite(favid: String): Boolean = withContext(Dispatchers.IO) {
+        if (favid.isBlank()) return@withContext false
+        val favoritePage = http.url("home.php?mod=space&do=favorite&view=me&type=all&mobile=2")
+        val pageHtml = runCatching { http.get(favoritePage) }.getOrDefault("")
+        val formhash = ForumParser.parseFormhashAny(pageHtml) ?: return@withContext false
+        val url = http.url(
+            "home.php?mod=spacecp&ac=favorite&op=delete&favid=$favid&type=all" +
+                "&formhash=$formhash&deletesubmit=true&handlekey=comiis&inajax=1&mobile=2",
+        )
+        val body = http.post(
+            url,
+            mapOf(
+                "formhash" to formhash,
+                "deletesubmit" to "true",
+                "handlekey" to "comiis",
+            ),
+            referer = favoritePage,
+        )
+        body.isNotBlank() && !LIKE_ERROR_PATTERN.containsMatchIn(body)
     }
 
     /** 关注/取消关注：站点用同一入口的 op 参数区分。 */
@@ -438,22 +457,6 @@ class ForumRepository(
     suspend fun chatConversation(touid: String): ChatConversation = withContext(Dispatchers.IO) {
         val html = http.get(http.url("home.php?mod=space&do=pm&subop=view&touid=$touid&mobile=2"))
         ForumParser.parseChatConversation(html, touid)
-    }
-
-    /**
-     * 提醒里「回复了您的帖子」指向的楼层在第几页。
-     *
-     * 站点的楼层链接是 redirect 中转地址，302 到 `viewthread&tid=X&page=N`；
-     * 直接把这一页拉回来，比从第 1 页顺着自动链翻到末页快得多。
-     * 中转失败（风控拦截等）返回 null，调用方退化成只打开帖子。
-     */
-    suspend fun noticeReplyPage(tid: String, pid: String): Int? = withContext(Dispatchers.IO) {
-        val target = runCatching {
-            http.redirectLocation(
-                http.url("forum.php?mod=redirect&goto=findpost&ptid=$tid&pid=$pid"),
-            )
-        }.getOrNull() ?: return@withContext null
-        ForumParser.pageFromThreadUrl(target)
     }
 
     /** 指定用户的个人中心（他人主页）。 */
@@ -698,27 +701,16 @@ class ForumRepository(
         ForumParser.parseMyThreads(html, page)
     }
 
-    /** 我的收藏列表（type: all=全部, thread=帖子, forum=版块）。 */
-    suspend fun myFavorites(type: String = "all", page: Int = 1): FavoritePage = withContext(Dispatchers.IO) {
-        val html = http.get(http.url("home.php?mod=space&do=favorite&type=$type&page=$page&mobile=2"))
-        ForumParser.parseFavorites(html, page)
+    /** 指定用户的帖子列表（type: thread=ta发表的主题, reply=ta参与的回复）。 */
+    suspend fun userThreads(uid: String, type: String = "thread", page: Int = 1): MyThreadPage = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("home.php?mod=space&uid=$uid&do=thread&view=me&type=$type&page=$page&mobile=2"))
+        ForumParser.parseMyThreads(html, page)
     }
 
-    /** 按 favid 删除收藏。 */
-    suspend fun deleteFavorite(favid: String): Boolean = withContext(Dispatchers.IO) {
-        val html = http.get(http.url("home.php?mod=space&do=favorite&type=all&mobile=2"))
-        val formhash = ForumParser.parseFormhash(html) ?: return@withContext false
-        val url = http.url("home.php?mod=spacecp&ac=favorite&op=delete&favid=$favid&type=all&mobile=2")
-        val body = http.post(
-            url,
-            mapOf(
-                "formhash" to formhash,
-                "deletesubmit" to "true",
-                "handlekey" to "comiis",
-            ),
-            referer = "https://bbs.binmt.cc/home.php?mod=space&do=favorite&type=all&mobile=2",
-        )
-        body.isNotBlank() && !LIKE_ERROR_PATTERN.containsMatchIn(body)
+    /** 我的收藏列表（type: all=全部, thread=帖子, forum=版块）。 */
+    suspend fun myFavorites(type: String = "all", page: Int = 1): FavoritePage = withContext(Dispatchers.IO) {
+        val html = http.get(http.url("home.php?mod=space&do=favorite&view=me&type=$type&page=$page&mobile=2"))
+        ForumParser.parseFavorites(html, page)
     }
 
     /** 好友列表（view: 空为全部好友, visitor=最近来访, trace=我看过谁, blacklist=黑名单）。 */
@@ -745,42 +737,75 @@ class ForumRepository(
 
     /** 关注 / 取消关注用户。 */
     suspend fun toggleFollowUser(uid: String, follow: Boolean): Boolean = withContext(Dispatchers.IO) {
-        val html = http.get(http.url("home.php?mod=follow&do=following&mobile=2"))
-        val formhash = ForumParser.parseFormhash(html) ?: ""
+        val formhash = fetchFormhash(FORMHASH_PAGE)
+        if (formhash.isBlank()) return@withContext false
         val url = http.url(
             "home.php?mod=spacecp&ac=follow&op=${if (follow) "add" else "del"}" +
-                "&fuid=$uid&hash=$formhash&mobile=2",
+                "&fuid=$uid&hash=$formhash&handlekey=followmod&inajax=1&mobile=2",
         )
-        val res = http.get(url)
-        res.isNotBlank()
+        isWriteSucceeded(http.get(url))
     }
 
     /** 关注 / 取消关注用户，返回站点提示文本。 */
     suspend fun followUser(uid: String, formhash: String?, follow: Boolean): String = withContext(Dispatchers.IO) {
-        val fh = formhash?.takeIf { it.isNotBlank() } ?: run {
-            val html = http.get(http.url("home.php?mod=follow&do=following&mobile=2"))
-            ForumParser.parseFormhash(html) ?: ""
-        }
+        // 个人中心页与关注操作页都不含 formhash：黑名单页的退出登录链接带 formhash 参数
+        val fh = formhash?.takeIf { it.isNotBlank() } ?: fetchFormhash(FORMHASH_PAGE)
+        if (fh.isBlank()) return@withContext "获取操作凭据失败，请重试"
         val url = http.url(
             "home.php?mod=spacecp&ac=follow&op=${if (follow) "add" else "del"}" +
-                "&fuid=$uid&hash=$fh&inajax=1&mobile=2",
+                "&fuid=$uid&hash=$fh&handlekey=followmod&inajax=1&mobile=2",
         )
-        val res = http.get(url)
-        ForumParser.parseAjaxMessage(res) ?: if (follow) "已关注" else "已取消关注"
+        readWriteResult(http.get(url), if (follow) "已关注" else "已取消关注")
+            .fold({ it }, { it.message ?: "操作失败，请重试" })
     }
+
+    /** 依次抓页面提取 formhash；都取不到返回空串，调用方据此中止写操作。 */
+    private suspend fun fetchFormhash(vararg paths: String): String {
+        for (path in paths) {
+            ForumParser.parseFormhashAny(http.get(http.url(path)))?.let { return it }
+        }
+        return ""
+    }
+
+    /**
+     * spacecp 写操作回执（GET/POST 都带 inajax=1）：站点返回
+     * `<root><![CDATA[<div class=comiis_tip><dt id=messagetext><p>提示文本
+     * <script>...succeedhandle_xxx(...)]]></root>`，成功与失败分别由 succeedhandle_ /
+     * errorhandle_ 标记；未登录、formhash 失配、WAF 挑战都会落到没有标记的分支。
+     */
+    private fun readWriteResult(body: String, successText: String): Result<String> {
+        if (body.isBlank()) return Result.failure(IllegalStateException("站点没有返回结果"))
+        val payload = Regex("(?s)<!\\[CDATA\\[(.*?)\\]\\]>").find(body)?.groupValues?.get(1) ?: body
+        val ok = Regex("succeedhandle_|do_success|操作成功|成功收听|已成为好友").containsMatchIn(payload)
+        if (ok) return Result.success(successText)
+        val message = ForumParser.parseAjaxMessage(body)
+        val failed = Regex("errorhandle_|submit_invalid|formhash|请先登录|Access Denied|非法操作|没有权限")
+            .containsMatchIn(payload)
+        if (failed || message != null) {
+            return Result.failure(IllegalStateException(message ?: "操作失败"))
+        }
+        return Result.failure(IllegalStateException("操作失败，请重试"))
+    }
+
+    private fun isWriteSucceeded(body: String): Boolean = readWriteResult(body, "").isSuccess
 
     /** 添加好友（发送好友申请并带附言）。 */
     suspend fun addFriend(uid: String, formhash: String, note: String = ""): Result<String> = withContext(Dispatchers.IO) {
-        val url = http.url("home.php?mod=spacecp&ac=friend&op=add&uid=$uid&inajax=1")
+        val referer = http.url("home.php?mod=space&uid=$uid&do=profile&mobile=2")
+        // 个人中心页不含 formhash，传入为空时抓加好友操作页取新鲜的
+        val fh = formhash.takeIf { it.isNotBlank() }
+            ?: fetchFormhash("home.php?mod=spacecp&ac=friend&op=add&uid=$uid&mobile=2")
+        if (fh.isBlank()) return@withContext Result.failure(IllegalStateException("获取操作凭据失败，请重试"))
+        val url = http.url("home.php?mod=spacecp&ac=friend&op=add&uid=$uid&inajax=1&mobile=2")
         val params = mapOf(
-            "referer" to http.url("home.php?mod=space&uid=$uid&do=profile&mobile=2"),
+            "referer" to referer,
             "addsubmit" to "true",
             "addsubmit_btn" to "true",
-            "formhash" to formhash,
+            "formhash" to fh,
             "note" to note,
             "gid" to "1",
         )
-        val res = http.post(url, params)
+        val res = http.post(url, params, referer = referer)
         val msg = ForumParser.parseAjaxMessage(res) ?: if (res.isNotBlank()) "请求已发送" else "发送失败"
         Result.success(msg)
     }
@@ -788,32 +813,66 @@ class ForumRepository(
     /** 发送私信（聊聊天）。 */
     suspend fun sendPrivateMessage(touid: String, formhash: String, message: String): Result<String> = withContext(Dispatchers.IO) {
         if (message.isBlank()) return@withContext Result.failure(IllegalArgumentException("消息内容不能为空"))
+        // 个人中心页不含 formhash；会话页带有效值，传入为空时从会话页取
+        val fh = formhash.takeIf { it.isNotBlank() }
+            ?: chatConversation(touid).formhash.orEmpty()
+        if (fh.isBlank()) return@withContext Result.failure(IllegalStateException("获取操作凭据失败，请重试"))
+        val referer = http.url("home.php?mod=space&do=pm&mobile=2")
         val url = http.url("home.php?mod=spacecp&ac=pm&op=send&pmid=0&daterange=2&pmsubmit=yes&inajax=1&mobile=2")
         val params = mapOf(
-            "formhash" to formhash,
+            "formhash" to fh,
             "touid" to touid,
             "message" to message,
             "pmsubmit" to "yes",
         )
-        val res = http.post(url, params)
+        val res = http.post(url, params, referer = referer)
         val msg = ForumParser.parseAjaxMessage(res) ?: if (res.isNotBlank()) "发送成功" else "发送失败"
         Result.success(msg)
     }
 
     /** 将用户加入黑名单（拉黑ta）。 */
     suspend fun addUserBlacklist(username: String, formhash: String): Result<String> = withContext(Dispatchers.IO) {
-        val url = http.url("home.php?mod=spacecp&ac=friend&op=blacklist&start=&inajax=1")
+        // 个人中心页不含 formhash，传入为空时抓黑名单页取新鲜的；
+        // submitcheck 只读 URL 查询串里的 formhash，请求体里的不看
+        val fh = formhash.takeIf { it.isNotBlank() }
+            ?: fetchFormhash("home.php?mod=space&do=friend&view=blacklist&mobile=2")
+        if (fh.isBlank()) return@withContext Result.failure(IllegalStateException("获取操作凭据失败，请重试"))
+        val referer = http.url("home.php?mod=space&do=friend&view=blacklist&mobile=2")
+        val url = http.url(
+            "home.php?mod=spacecp&ac=friend&op=blacklist&start=&formhash=$fh&inajax=1&mobile=2",
+        )
         val params = mapOf(
             "blacklistsubmit" to "true",
             "blacklistsubmit_btn" to "true",
-            "formhash" to formhash,
+            "formhash" to fh,
             "username" to username,
         )
-        val res = http.post(url, params)
-        val msg = ForumParser.parseAjaxMessage(res) ?: if (res.isNotBlank()) "已加入黑名单" else "操作失败"
-        Result.success(msg)
+        val res = http.post(url, params, referer = referer)
+        readWriteResult(res, "已加入黑名单")
+    }
+
+    /**
+     * 将用户移出黑名单。
+     *
+     * 站点的 subop=delete 分支直接删 home_blacklist，不走 submitcheck，无需 formhash。
+     */
+    suspend fun removeUserBlacklist(uid: String): Result<String> = withContext(Dispatchers.IO) {
+        if (uid.isBlank()) return@withContext Result.failure(IllegalStateException("用户不存在"))
+        val res = http.get(
+            http.url(
+                "home.php?mod=spacecp&ac=friend&op=blacklist&subop=delete&uid=$uid" +
+                    "&inajax=1&mobile=2",
+            ),
+        )
+        readWriteResult(res, "已移出黑名单")
     }
 }
+
+/**
+ * formhash 的可靠来源页：黑名单页的「退出登录」链接带 formhash 参数，而个人主页、
+ * 关注操作页都不含。写操作取不到凭证时抓这一页。
+ */
+private const val FORMHASH_PAGE = "home.php?mod=space&do=friend&view=blacklist&mobile=2"
 
 /** 站点用户列表每页条数（好友/关注都是 24）。 */
 private const val AT_USER_PAGE_SIZE = 24

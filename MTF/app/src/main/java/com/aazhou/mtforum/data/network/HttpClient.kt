@@ -171,11 +171,20 @@ class HttpClient(
             .header("Content-Type", "application/x-www-form-urlencoded")
         if (!referer.isNullOrEmpty()) builder.header("Referer", referer)
         val request = builder.post(form.build()).build()
-        val body = client.newCall(request).execute().use { it.body?.string() ?: "" }
-        // 写操作不自动重放（避免重复提交），仅求解并留存 Cookie
+        fun execute(): String =
+            client.newCall(request).execute().use { it.body?.string() ?: "" }
+        var body = execute()
+        // 写操作命中 WAF 挑战：本地解出 cookie 后按原请求体重放一次。Discuz 的这几个写操作
+        // 都幂等（重复关注/重复拉黑/重复删好友返回的都是提示而非重复生效），重放安全；
+        // 不解就重放的话，调用方只会收到一段挑战页，写操作全变成假成功。
         if (WafSolver.looksLikeChallenge(body)) {
-            onLog?.invoke(LogLevel.WARN, TAG, "写操作命中 WAF 挑战，仅留存 Cookie 不重放：$url", null)
+            onLog?.invoke(LogLevel.WARN, TAG, "写操作命中 WAF 挑战，求解后重放：$url", null)
             WafSolver.solve(body)?.let { cookieStore.setCookie(host, WafSolver.COOKIE_NAME, it) }
+            val retried = execute()
+            if (!WafSolver.looksLikeChallenge(retried)) {
+                onLog?.invoke(LogLevel.INFO, TAG, "写操作 WAF 求解通过，已重放：$url", null)
+                body = retried
+            }
         }
         return body
     }

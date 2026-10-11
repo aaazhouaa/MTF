@@ -70,7 +70,7 @@ fun ProfileScreen(
 ) {
     val context = LocalContext.current
     val colors = LocalMtfColors.current
-    val viewModel: ProfileViewModel = appViewModel { ProfileViewModel(it.repository) }
+    val viewModel: ProfileViewModel = appViewModel { ProfileViewModel(it.repository, it.contentCache, it.sessionStore) }
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
 

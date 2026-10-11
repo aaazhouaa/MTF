@@ -73,6 +73,7 @@ object Routes {
     const val DRAFTS = "drafts"
     const val MY_FAVORITES = "my_favorites"
     const val MY_FRIENDS = "my_friends"
+    const val USER_POSTS = "user_posts/{uid}"
     const val FOLLOW_LIST = "follow_list?type={type}"
 
     fun followList(type: String = "following") = "follow_list?type=$type"
@@ -80,10 +81,8 @@ object Routes {
     fun forum(fid: String, name: String) = "forum/$fid/${Uri.encode(name)}"
     fun thread(tid: String) = "thread/$tid"
 
-    /** 从消息提醒跳进来：[pid] 为要定位的楼层，空表示只打开帖子。 */
-    fun threadAnchor(tid: String, pid: String?) =
-        if (pid.isNullOrBlank()) "thread/$tid" else "thread/$tid?pid=$pid"
     fun user(uid: String) = "user/$uid"
+    fun userPosts(uid: String) = "user_posts/$uid"
     fun chat(uid: String, name: String? = null) =
         if (name.isNullOrBlank()) "chat/$uid" else "chat/$uid?name=${Uri.encode(name)}"
     fun post(fid: String, name: String) =
@@ -222,6 +221,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onBack = { navController.popBackStack() },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onForumClick = { fid, name -> navController.navigate(Routes.forum(fid, name)) },
                 )
             }
             composable(Routes.LOGIN) {
@@ -258,9 +258,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
             composable(Routes.NOTICE) {
                 NoticeScreen(
                     onBack = { navController.popBackStack() },
-                    onThreadClick = { tid, pid ->
-                        navController.navigate(Routes.threadAnchor(tid, pid))
-                    },
+                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     // 消息里的头像进对应用户的个人主页
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                     onChatClick = { uid, name -> navController.navigate(Routes.chat(uid, name)) },
@@ -307,11 +305,6 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 Routes.THREAD,
                 arguments = listOf(
                     navArgument("tid") { type = NavType.StringType },
-                    navArgument("pid") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
-                    },
                 ),
             ) { entry ->
                 ThreadDetailScreen(
@@ -320,8 +313,6 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
                     // 正文里的站内帖子链接在 App 内继续看帖，不进浏览器
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
-                    // 消息提醒跳进来时带上要定位的楼层
-                    anchorPid = entry.arguments?.getString("pid")?.takeIf { it.isNotBlank() },
                     // 楼主是自己：进整页编辑（标题 + 正文）
                     onEditThread = { tid, pid, fid, name ->
                         navController.navigate(Routes.editPost(tid, pid, fid, name))
@@ -355,6 +346,9 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onBack = { navController.popBackStack() },
                     onChat = { targetUid, targetName ->
                         navController.navigate(Routes.chat(targetUid, targetName))
+                    },
+                    onPostsClick = { targetUid ->
+                        navController.navigate(Routes.userPosts(targetUid))
                     },
                 )
             }
@@ -397,6 +391,17 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
 
             composable(Routes.MY_POSTS) {
                 com.aazhou.mtforum.ui.screen.myposts.MyPostsScreen(
+                    onBack = { navController.popBackStack() },
+                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                )
+            }
+            composable(
+                Routes.USER_POSTS,
+                arguments = listOf(navArgument("uid") { type = NavType.StringType }),
+            ) { entry ->
+                com.aazhou.mtforum.ui.screen.user.UserPostsScreen(
+                    uid = entry.arguments?.getString("uid").orEmpty(),
                     onBack = { navController.popBackStack() },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },

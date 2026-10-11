@@ -58,6 +58,7 @@ import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.image.smallImageRequest
+import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
@@ -78,6 +79,7 @@ fun UserProfileScreen(
     uid: String,
     onBack: () -> Unit,
     onChat: (uid: String, name: String) -> Unit = { _, _ -> },
+    onPostsClick: (uid: String) -> Unit = {},
 ) {
     val colors = LocalMtfColors.current
     val viewModel: UserProfileViewModel = appViewModel {
@@ -86,10 +88,12 @@ fun UserProfileScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val isSelf by viewModel.isSelf.collectAsStateWithLifecycle()
     val isFollowing by viewModel.isFollowing.collectAsStateWithLifecycle()
+    val isBlocked by viewModel.isBlocked.collectAsStateWithLifecycle()
     val isOperating by viewModel.isOperating.collectAsStateWithLifecycle()
 
     var showAddFriendDialog by remember { mutableStateOf(false) }
     var showBlockDialog by remember { mutableStateOf(false) }
+    var showAvatarPreview by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
@@ -138,13 +142,20 @@ fun UserProfileScreen(
                         .verticalScroll(scrollState)
                         .padding(horizontal = 14.dp, vertical = 24.dp),
                 ) {
-                    UserHeaderCard(profile = profile)
+                    UserHeaderCard(
+                        profile = profile,
+                        onPostsClick = { onPostsClick(uid) },
+                        onAvatarClick = {
+                            if (!profile.avatarUrl.isNullOrBlank()) showAvatarPreview = true
+                        },
+                    )
 
                     Spacer(Modifier.height(18.dp))
 
                     UserActionList(
                         isSelf = isSelf,
                         isFollowing = isFollowing,
+                        isBlocked = isBlocked,
                         isOperating = isOperating,
                         onToggleFollow = { viewModel.toggleFollow() },
                         onAddFriend = { showAddFriendDialog = true },
@@ -152,7 +163,13 @@ fun UserProfileScreen(
                             val targetName = profile.name.orEmpty().ifBlank { "用户$uid" }
                             onChat(uid, targetName)
                         },
-                        onBlock = { showBlockDialog = true },
+                        onBlock = {
+                            if (isBlocked) {
+                                viewModel.unblockUser { viewModel.load() }
+                            } else {
+                                showBlockDialog = true
+                            }
+                        },
                     )
                 }
 
@@ -181,6 +198,14 @@ fun UserProfileScreen(
                         },
                     )
                 }
+
+                if (showAvatarPreview) {
+                    ImagePreview(
+                        urls = listOf(profile.avatarUrl.orEmpty()),
+                        initialIndex = 0,
+                        onDismiss = { showAvatarPreview = false },
+                    )
+                }
             }
         }
     }
@@ -193,7 +218,11 @@ fun UserProfileScreen(
  * - 主体行：左侧用户名与 UID，右侧三个统计指标（帖子、关注、粉丝），黄/金黄色，细竖线分割。
  */
 @Composable
-private fun UserHeaderCard(profile: UserProfile) {
+private fun UserHeaderCard(
+    profile: UserProfile,
+    onPostsClick: () -> Unit,
+    onAvatarClick: () -> Unit,
+) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
     val avatarSize = 68.dp
@@ -256,6 +285,7 @@ private fun UserHeaderCard(profile: UserProfile) {
                     StatItem(
                         label = "帖子",
                         value = profile.threads,
+                        onClick = onPostsClick,
                     )
                     VerticalDivider(
                         modifier = Modifier
@@ -289,6 +319,7 @@ private fun UserHeaderCard(profile: UserProfile) {
                 .size(avatarSize)
                 .clip(CircleShape)
                 .background(colors.quoteBackground)
+                .clickable { onAvatarClick() }
                 .border(3.dp, colors.surface, CircleShape),
         ) {
             AsyncImage(
@@ -305,11 +336,14 @@ private fun UserHeaderCard(profile: UserProfile) {
 private fun StatItem(
     label: String,
     value: Int?,
+    onClick: (() -> Unit)? = null,
 ) {
     val colors = LocalMtfColors.current
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
+        modifier = Modifier
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .padding(horizontal = 2.dp, vertical = 4.dp),
     ) {
         Text(
             text = value?.toString() ?: "0",
@@ -331,6 +365,7 @@ private fun StatItem(
 private fun UserActionList(
     isSelf: Boolean,
     isFollowing: Boolean,
+    isBlocked: Boolean,
     isOperating: Boolean,
     onToggleFollow: () -> Unit,
     onAddFriend: () -> Unit,
@@ -390,9 +425,9 @@ private fun UserActionList(
 
         ActionRowItem(
             icon = R.drawable.ic_forbid,
-            iconTint = MaterialTheme.colorScheme.error,
-            title = "拉黑ta",
-            subtitle = "将用户加入黑名单",
+            iconTint = if (isBlocked) colors.textSecondary else MaterialTheme.colorScheme.error,
+            title = if (isBlocked) "移除黑名单" else "拉黑ta",
+            subtitle = if (isBlocked) "点击恢复与对方的互动" else "将用户加入黑名单",
             onClick = onBlock,
             enabled = !isOperating,
         )

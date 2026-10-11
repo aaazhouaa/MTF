@@ -29,6 +29,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -52,6 +53,7 @@ import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.common.scrollToTop
@@ -68,11 +70,18 @@ fun ForumListScreen(
 ) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
-    val viewModel: ForumListViewModel = appViewModel { ForumListViewModel(it.repository) }
+    val viewModel: ForumListViewModel = appViewModel { ForumListViewModel(it.repository, it.contentCache) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(actionMessage) {
+        val message = actionMessage ?: return@LaunchedEffect
+        AppToast.show(message)
+        viewModel.consumeActionMessage()
+    }
 
     Scaffold(
         containerColor = colors.background,

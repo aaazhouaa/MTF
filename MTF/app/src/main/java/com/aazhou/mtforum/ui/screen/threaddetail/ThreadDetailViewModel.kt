@@ -29,11 +29,6 @@ class ThreadDetailViewModel(
     private val repository: ForumRepository,
     private val actionStore: ActionStore,
     myUidFlow: Flow<String>,
-    /**
-     * 从消息提醒跳进来时要定位的楼层 pid。
-     * 该楼层常在最末几页，故额外把所在页拉回来并让界面滚过去（见 [fetchAnchorPage]）。
-     */
-    private val anchorPid: String? = null,
 ) : ViewModel() {
 
     /** 当前登录用户 uid（用于判定某条回复是否本人发表）。 */
@@ -42,13 +37,6 @@ class ThreadDetailViewModel(
 
     private val _state = MutableStateFlow<UiState<ThreadPage>>(UiState.Loading)
     val state: StateFlow<UiState<ThreadPage>> = _state.asStateFlow()
-
-    /** 待定位的楼层 pid；界面滚到位后调 [consumeAnchor] 清掉。 */
-    private val _anchor = MutableStateFlow(anchorPid)
-    val anchor: StateFlow<String?> = _anchor.asStateFlow()
-
-    /** 定位楼层所在页是否已拉回过（只做一次）。 */
-    private var anchorPageFetched = false
 
     /**
      * 已知可 @ 的用户名：站点 getatuser 名单（关注 + 好友）加上选择器里实际选中的名字。
@@ -308,9 +296,6 @@ class ThreadDetailViewModel(
             mergeIntoPool(seq, target, data)
             recordProgress(seq, target, data.totalPages)
             adoptMeta(data)
-            // 目标楼层通常在很后面的页，先拉回来合入楼层池再上屏；反过来先上屏再拉，
-            // 界面会先渲染到帖子正文、等目标页到达后再跳过去。
-            fetchAnchorPage()
             publish()
             // 主页面已经上屏，再把要更新的几页拉回来：楼层按 pid 覆盖写，界面就地换版
             val stale = stalePages - target
@@ -319,60 +304,6 @@ class ThreadDetailViewModel(
                 publish()
             }
         }
-    }
-
-    /**
-     * 把提醒指向的楼层所在页拉回来并楼层池。
-     *
-     * 被回复的楼层通常在最末几页，从第 1 页顺着自动链翻过去要几十个请求；这里先按
-     * redirect 中转地址拿到页码、直接取那一页，界面随即滚到该楼层。那个页码是正序
-     * 口径的编号，故按正序拉、记进正序序列；不推进页码记录：自动链仍从第 2 页继续，
-     * 中间的页照旧在后台补齐，列表不会留下空洞。
-     */
-    private suspend fun fetchAnchorPage() {
-        val pid = anchorPid ?: return
-        if (anchorPageFetched || pool.containsKey(pid)) return
-        anchorPageFetched = true
-        val generation = dataGeneration
-        val page = try {
-            repository.noticeReplyPage(tid, pid)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            null
-        } ?: return
-        if (page <= 1 || generation != dataGeneration) return
-        // 定位页按正序拉：noticeReplyPage 给出的页码是正序口径的编号
-        val seq = Sequence(opOnlyAuthorId(), FETCH_ORDER)
-        val data = try {
-            repository.threadPage(tid, page, FETCH_ORDER, opOnlyAuthorId())
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            return
-        }
-        if (generation != dataGeneration) return
-        mergeIntoPool(seq, page, data)
-        // 定位页是任意页：只记「拉过了」、不推进页码，否则续拉走到这一页时会因为
-        // 一条新楼层都没入库而误判整帖到底，中间留下没拉过的空洞
-        noteFetchedPage(seq, page)
-        // 定位场景不预先续拉：后续页按楼层插在目标前面，会把目标挤出处屏幕。
-        // 底部仍是「还有更多」的状态，用户往下滑照样能接着看。
-        publish()
-    }
-
-    /** 界面已滚到定位楼层，清掉待定位状态。 */
-    fun consumeAnchor() {
-        _anchor.value = null
-    }
-
-    /**
-     * 定位前把藏住目标楼层的灌水折叠展开。
-     *
-     * 只看本次：折叠态随 ViewModel 生灭，退出重进仍是用户原来的偏好。
-     */
-    fun revealAnchorReply(pid: String) {
-        if (_waterPids.value.contains(pid)) _foldExpanded.value = true
     }
 
     /**
@@ -846,16 +777,6 @@ class ThreadDetailViewModel(
             fetched = true
             if (data.posts.any { it.pid == pid }) return true
         }
-        // 记到的页上都没有它：页码过期了，问站点它现在在第几页
-        val located = runCatching { repository.noticeReplyPage(tid, pid) }.getOrNull()
-        if (located != null && located > 0) {
-            // findpost 给的是未过滤口径的页码，故不能带 authorid：带上就连页号都不是一套了
-            val data = fetchPageOrNull(Sequence(null, FETCH_ORDER), located)
-            if (data != null) {
-                mergeIntoPool(Sequence(null, FETCH_ORDER), located, data)
-                return data.posts.any { it.pid == pid }
-            }
-        }
         return if (fetched) false else null
     }
 
@@ -1242,7 +1163,6 @@ class ThreadDetailViewModel(
 data class ScrollAnchor(val index: Int, val offset: Int)
 
 /** 闪烁总时长（两轮淡入淡出）；界面据此撤掉高亮态，滚出屏幕再回来不会重复闪。 */
-internal const val FLASH_HIGHLIGHT_MS = 1500L
 
 /**
  * 站点正序口径：不带 ordertype 参数。倒序走 ordertype=1，是站点自己的另一套

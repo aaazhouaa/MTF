@@ -35,6 +35,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,7 +62,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
+import com.aazhou.mtforum.data.model.AtUser
+import com.aazhou.mtforum.data.model.Forum
+import com.aazhou.mtforum.data.model.SearchTab
+import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
@@ -74,7 +81,9 @@ import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
+import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.bodyTextColor
+import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.launch
 
 private const val PREFS_SEARCH = "mtf_search_prefs"
@@ -91,6 +100,7 @@ fun SearchScreen(
     onBack: () -> Unit = {},
     onThreadClick: (tid: String) -> Unit,
     onUserClick: (uid: String) -> Unit,
+    onForumClick: (fid: String, name: String) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val colors = LocalMtfColors.current
@@ -99,10 +109,19 @@ fun SearchScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
+    val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
+    val forumState by viewModel.forumState.collectAsStateWithLifecycle()
+    val userState by viewModel.userState.collectAsStateWithLifecycle()
 
     var input by remember { mutableStateOf(viewModel.keyword) }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
+
+    // 进入页面即聚焦搜索框并弹起输入法
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
 
     // 搜索历史保存
     var historyList by remember {
@@ -114,7 +133,7 @@ fun SearchScreen(
         if (trimmed.isNotEmpty()) {
             input = trimmed
             keyboardController?.hide()
-            viewModel.search(trimmed)
+            viewModel.submit(trimmed)
             val updated = (listOf(trimmed) + historyList.filterNot { it.equals(trimmed, ignoreCase = true) }).take(12)
             historyList = updated
             saveSearchHistory(context, updated)
@@ -257,6 +276,28 @@ fun SearchScreen(
                         )
                     }
                 }
+
+                val accent = accentTextColor()
+                TabRow(
+                    selectedTabIndex = SearchTab.values().indexOf(selectedTab),
+                    containerColor = colors.topBar,
+                    contentColor = accent,
+                ) {
+                    SearchTab.values().forEach { tab ->
+                        Tab(
+                            selected = tab == selectedTab,
+                            onClick = { viewModel.selectTab(tab) },
+                            text = {
+                                Text(
+                                    tab.label,
+                                    fontWeight = if (tab == selectedTab) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 14.sp,
+                                    color = if (tab == selectedTab) accent else colors.textSecondary,
+                                )
+                            },
+                        )
+                    }
+                }
             }
         },
     ) { padding ->
@@ -268,7 +309,9 @@ fun SearchScreen(
                     scope.launch { listState.scrollToTop() }
                 },
         ) {
-            when (val current = state) {
+            when (selectedTab) {
+                SearchTab.Thread -> {
+                    when (val current = state) {
                 null -> {
                     // 未搜索时的精美发现视图：搜索历史 + 推荐搜索
                     Column(
@@ -370,7 +413,7 @@ fun SearchScreen(
                     }
                 }
                 is UiState.Loading -> LoadingBox()
-                is UiState.Error -> ErrorBox(current.message, { viewModel.search(input) })
+                is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
                 is UiState.Success -> {
                     val result = current.data
                     if (result.threads.isEmpty()) {
@@ -406,6 +449,60 @@ fun SearchScreen(
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         CircularProgressIndicator(Modifier.size(22.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                }
+                }
+                SearchTab.Forum -> {
+                    when (val current = forumState) {
+                        null -> EmptyBox("输入关键词搜索圈子")
+                        is UiState.Loading -> LoadingBox()
+                        is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
+                        is UiState.Success -> {
+                            val forums = current.data
+                            if (forums.isEmpty()) {
+                                EmptyBox("没有找到相关圈子")
+                            } else {
+                                LazyColumn(
+                                    state = listState,
+                                    contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    items(forums, key = { it.fid }) { forum ->
+                                        ForumResultRow(
+                                            forum = forum,
+                                            onClick = { onForumClick(forum.fid, forum.name) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                SearchTab.User -> {
+                    when (val current = userState) {
+                        null -> EmptyBox("输入关键词搜索用户")
+                        is UiState.Loading -> LoadingBox()
+                        is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
+                        is UiState.Success -> {
+                            val users = current.data
+                            if (users.isEmpty()) {
+                                EmptyBox("没有找到相关用户")
+                            } else {
+                                LazyColumn(
+                                    state = listState,
+                                    contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    items(users, key = { it.uid }) { user ->
+                                        UserResultRow(
+                                            user = user,
+                                            onClick = { onUserClick(user.uid) },
+                                        )
                                     }
                                 }
                             }
@@ -472,3 +569,88 @@ private fun clearSearchHistory(context: Context) {
     val sp = context.getSharedPreferences(PREFS_SEARCH, Context.MODE_PRIVATE)
     sp.edit().remove(KEY_HISTORY).apply()
 }
+
+/** 圈子搜索结果行。 */
+@Composable
+private fun ForumResultRow(
+    forum: Forum,
+    onClick: () -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(colors.quoteBackground),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_home),
+                contentDescription = null,
+                tint = colors.iconSecondary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            forum.name,
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+            color = bodyTextColor(),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** 用户搜索结果行。 */
+@Composable
+private fun UserResultRow(
+    user: AtUser,
+    onClick: () -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
+        AsyncImage(
+            model = smallImageRequest(user.avatarUrl),
+            contentDescription = null,
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(colors.quoteBackground)
+                .dimImageInDark(),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                user.name,
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                color = bodyTextColor(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (user.subtitle.isNotBlank()) {
+                Text(
+                    user.subtitle,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+

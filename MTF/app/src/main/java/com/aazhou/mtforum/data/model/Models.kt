@@ -283,8 +283,6 @@ data class Notice(
     val text: String,
     val timeText: String? = null,
     val tid: String? = null,
-    /** 提醒指向的楼层 pid（「回复了您的帖子」这类提醒有），用于跳转到对应楼层。 */
-    val pid: String? = null,
     /** 该条提醒关联用户的头像地址（系统类提醒没有用户头像，为 null）。 */
     val avatarUrl: String? = null,
     /** 该条提醒关联用户的 uid；点头像进入其个人主页，为 null 时不可点。 */
