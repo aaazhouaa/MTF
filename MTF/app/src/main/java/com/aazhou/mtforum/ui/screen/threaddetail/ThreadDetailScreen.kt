@@ -695,15 +695,6 @@ fun ThreadDetailScreen(
                                     pageImages = pageImages,
                                     onLongPress = { actionTarget = it },
                                     onThreadClick = onThreadClick,
-                                    // 引用卡的「原文」：被引楼层已加载就滚过去，否则提示
-                                    onQuoteClick = { pid ->
-                                        val index = page?.posts?.indexOfFirst { it.pid == pid } ?: -1
-                                        if (index >= 0) {
-                                            scope.launch { listState.animateScrollToItem(index) }
-                                        } else {
-                                            AppToast.show("原楼层还未加载，往下翻翻看")
-                                        }
-                                    },
                                 )
                             }
                             item(key = "pager") {
@@ -1758,7 +1749,6 @@ internal fun ReplyBlock(
     pageImages: List<String>,
     onLongPress: (Post) -> Unit,
     onThreadClick: (String) -> Unit,
-    onQuoteClick: (String) -> Unit = {},
 ) {
     val colors = LocalMtfColors.current
     val context = LocalContext.current
@@ -1830,8 +1820,6 @@ internal fun ReplyBlock(
                         openForumLink(context, url, siteHost, onThreadClick, onUserClick)
                     },
                     selectable = false,
-                    // 引用卡的「原文」：跳到被引的那一楼（由上层定位）
-                    onQuoteClick = onQuoteClick,
                 )
             }
         }
