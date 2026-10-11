@@ -487,6 +487,17 @@ class HtmlContentTest {
     }
 
     @Test
+    fun atMentionAnchorBecomesLinkSpan() {
+        // 站点把 @ 到的人烘成指向其用户空间的链接（评论与首帖同一套楼层结构）
+        val html = "底包用的<a href=\"https://bbs.binmt.cc/space-uid-113924.html\" target=\"_blank\">" +
+            "@清扬婉兮</a> ，感谢坛友提供的帖子"
+        val text = parseContentBlocks(html).filterIsInstance<ContentBlock.Text>().single()
+        val span = text.spans.single { it.linkUrl != null }
+        assertEquals("https://bbs.binmt.cc/space-uid-113924.html", span.linkUrl)
+        assertEquals("@清扬婉兮", text.text.substring(span.start, span.end))
+    }
+
+    @Test
     fun externalHttpImageIsUpgradedToHttps() {
         // 网络策略只对站内域名放开明文，站外图床的 http 直链会被系统拦掉、图显示成空白占位
         val image = parseContentBlocks("<img src=\"http://i0.hdslb.com/bfs/new_dyn/4fb5b4d5.jpg\" />")

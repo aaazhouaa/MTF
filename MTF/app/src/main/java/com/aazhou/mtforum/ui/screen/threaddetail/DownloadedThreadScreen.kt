@@ -140,7 +140,7 @@ fun DownloadedThreadScreen(
                                         pageImages = pageImages,
                                         onUnlock = {},
                                         onLinkClick = { url ->
-                                            openForumLink(context, url, siteHost, onThreadClick)
+                                            openForumLink(context, url, siteHost, onThreadClick, onUserClick)
                                         },
                                     )
                                 }

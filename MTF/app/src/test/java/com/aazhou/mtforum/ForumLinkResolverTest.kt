@@ -71,6 +71,32 @@ class ForumLinkResolverTest {
     }
 
     @Test
+    fun prettySpaceUrlIsOpenedAsUserProfile() {
+        assertEquals("113924", ForumLinkResolver.siteUserId("https://bbs.binmt.cc/space-uid-113924.html", host))
+        assertEquals("113924", ForumLinkResolver.siteUserId("space-uid-113924.html", host))
+    }
+
+    @Test
+    fun homePhpSpaceUrlIsOpenedAsUserProfile() {
+        assertEquals(
+            "156549",
+            ForumLinkResolver.siteUserId("https://bbs.binmt.cc/home.php?mod=space&uid=156549&do=profile", host),
+        )
+        assertEquals("156549", ForumLinkResolver.siteUserId("home.php?mod=space&uid=156549", host))
+    }
+
+    @Test
+    fun nonSpaceUrlsAreNotUserProfiles() {
+        // spacecp 下的操作链接（加好友、备注、发消息）也带 uid/touid，但不是用户空间
+        assertNull(ForumLinkResolver.siteUserId("https://bbs.binmt.cc/home.php?mod=spacecp&ac=friend&op=add&uid=1", host))
+        assertNull(ForumLinkResolver.siteUserId("https://bbs.binmt.cc/home.php?mod=space&do=pm&subop=view&touid=1", host))
+        assertNull(ForumLinkResolver.siteUserId("https://bbs.binmt.cc/space-uid-.html", host))
+        assertNull(ForumLinkResolver.siteUserId("https://example.com/space-uid-1.html", host))
+        assertNull(ForumLinkResolver.siteUserId("https://bbs.binmt.cc/thread-160969-1-1.html", host))
+        assertNull(ForumLinkResolver.siteUserId(null, host))
+    }
+
+    @Test
     fun blankOrBrokenUrlYieldsNull() {
         assertNull(ForumLinkResolver.siteThreadId(null, host))
         assertNull(ForumLinkResolver.siteThreadId("   ", host))
