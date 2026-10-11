@@ -1017,6 +1017,43 @@ internal fun filterAtUsers(users: List<String>, keyword: String): List<String> {
 }
 
 /**
+ * 站点侧 @ 的唯一契约：`@用户名` 后面必须紧跟一个 ASCII 空白（Discuz 用
+ * `preg_match_all("/@([^\r\n]*?)\s/i", message.' ')` 取候选用户名），且候选按出现顺序
+ * 截断到用户组的 @ 名额——第一个候选不是有效用户名时，整条消息的 @ 全部静默失效。
+ *
+ * 输入法常把 @ 后的尾随空格吞掉，用户也可能紧接中文标点，这里按已知名单把分隔空白补回来。
+ * 名单之外的 @（邮箱、手输的陌生人名）不动：补了空格站点也解析不了，反而改坏用户正文。
+ */
+internal fun normalizeAtMentions(message: String, knownNames: Collection<String>): String {
+    val names = knownNames.distinct().filter { it.isNotEmpty() }.sortedByDescending { it.length }
+    if (names.isEmpty()) return message
+    val sb = StringBuilder(message)
+    var i = 0
+    while (i < sb.length) {
+        if (sb[i] == '@') {
+            val name = names.firstOrNull { sb.startsWith(it, i + 1, ignoreCase = true) }
+            if (name != null) {
+                val after = i + 1 + name.length
+                // 行尾不补：站点提交时自己会追加一个空格；只修「后面紧跟了非空白字符」的情况
+                if (after < sb.length && !sb[after].isAtSeparator()) {
+                    sb.insert(after, ' ')
+                    i = after + 1
+                } else {
+                    i = after
+                }
+                continue
+            }
+        }
+        i++
+    }
+    return sb.toString()
+}
+
+/** 站点正则里的 `\s` 只认 ASCII 空白；全角空格、零宽字符都不算分隔。 */
+private fun Char.isAtSeparator(): Boolean =
+    this == ' ' || this == '\t' || this == '\n' || this == '\r' || this == '\u000B' || this == '\u000C'
+
+/**
  * 包装当前选区，或在光标处插入带前缀/后缀的模板；
  * 若无选区，光标自动停在 [prefix] 之后供用户立即输入。
  */

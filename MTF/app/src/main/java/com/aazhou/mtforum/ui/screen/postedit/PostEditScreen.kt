@@ -835,6 +835,7 @@ fun PostEditScreen(
                 onPick = { username ->
                     showAtPicker = false
                     viewModel.insertTextAtSelection("@$username ")
+                    viewModel.noteAtUsers(listOf(username))
                     atPickerFocusRequest++
                 },
             )

@@ -58,6 +58,12 @@ class ThreadDetailViewModel(
     /** 定位楼层所在页是否已拉回过（只做一次）。 */
     private var anchorPageFetched = false
 
+    /**
+     * 已知可 @ 的用户名：站点 getatuser 名单（关注 + 好友）加上选择器里实际选中的名字。
+     * 提交前用它把「@用户名」后缺失的 ASCII 空白补回来（见 [normalizeAtMentions]）。
+     */
+    private val atNames = mutableSetOf<String>()
+
     /** 本次进帖为定位展开过折叠：退出重进（VM 重建）即恢复用户原来的折叠偏好。 */
     private var anchorRevealed = false
 
@@ -1029,6 +1035,11 @@ class ThreadDetailViewModel(
         return true
     }
 
+    /** 记录可 @ 的用户名（站点名单与选择器选中项），供提交前补 @ 分隔空白用。 */
+    fun noteAtUsers(names: List<String>) {
+        atNames += names.filter { it.isNotBlank() }
+    }
+
     fun reply(message: String) {
         val current = _state.value
         if (current !is UiState.Success) {
@@ -1045,6 +1056,9 @@ class ThreadDetailViewModel(
         val notice = target?.let {
             ForumParser.replyQuoteNotice(it.authorName, it.timeText, it.contentHtml, it.pid, tid)
         }
+        // 站点只认「@用户名 + ASCII 空白」，候选还按出现顺序受用户组 @ 名额截断，
+        // 少一个空格整条消息的 @ 都会静默失效，故提交前按已知名单补回分隔空白
+        val message = normalizeAtMentions(message, atNames)
         // 站点用的 noticeauthor 是 authcode 加密的作者 id，客户端构造不出来；只有不指定
         // 回复对象时才沿用详情页快速回复框里站点给的隐藏域。
         val noticeAuthor = if (target == null) current.data.noticeAuthor else null

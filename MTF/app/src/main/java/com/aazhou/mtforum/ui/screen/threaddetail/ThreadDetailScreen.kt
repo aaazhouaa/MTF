@@ -349,6 +349,7 @@ fun ThreadDetailScreen(
     LaunchedEffect(composerVisible) {
         if (composerVisible && atUsers == null) {
             atUsers = runCatching { container.repository.fetchAtUsers() }.getOrDefault(emptyList())
+            atUsers?.let { viewModel.noteAtUsers(it) }
         }
     }
 
@@ -827,6 +828,7 @@ fun ThreadDetailScreen(
                 atPickerVisible = false
                 val key = replyTarget?.pid
                 drafts[key] = (drafts[key] ?: TextFieldValue("")).insertAtSelection("@$name ")
+                viewModel.noteAtUsers(listOf(name))
                 composerFocusRequest++
             },
         )

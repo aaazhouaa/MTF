@@ -9,6 +9,7 @@ import com.aazhou.mtforum.data.parser.SmileyPack
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.SmileyStore
 import com.aazhou.mtforum.ui.screen.threaddetail.insertAtSelection
+import com.aazhou.mtforum.ui.screen.threaddetail.normalizeAtMentions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -109,6 +110,12 @@ class PostEditViewModel(
         _message.value = newMessage
     }
 
+    /** 记录可 @ 的用户名（站点名单与选择器选中项），供提交前补 @ 分隔空白用。 */
+    fun noteAtUsers(names: List<String>) {
+        val merged = (_atUsers.value + names).filter { it.isNotBlank() }.distinct()
+        _atUsers.value = merged
+    }
+
     fun onSelectType(type: ThreadType?) {
         _selectedType.value = type
     }
@@ -183,7 +190,9 @@ class PostEditViewModel(
                     fid = fid,
                     formhash = formhash,
                     subject = sub,
-                    message = _message.value.text,
+                    // 站点只认「@用户名 + ASCII 空白」，候选还按出现顺序受用户组 @ 名额截断，
+                    // 少一个空格整条消息的 @ 都会静默失效，故提交前按已知名单补回分隔空白
+                    message = normalizeAtMentions(_message.value.text, _atUsers.value),
                     posttime = init.posttime,
                     typeid = _selectedType.value?.id,
                     aids = aids,

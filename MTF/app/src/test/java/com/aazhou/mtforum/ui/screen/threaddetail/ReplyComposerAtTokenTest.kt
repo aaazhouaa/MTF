@@ -85,4 +85,56 @@ class ReplyComposerAtTokenTest {
         assertEquals(emptyList<String>(), filterAtUsers(listOf("abc"), "zz"))
         assertEquals(emptyList<String>(), filterAtUsers(emptyList(), "ab"))
     }
+
+    @Test
+    fun normalizeAddsMissingSeparator() {
+        // 输入法吞掉 @ 后的尾随空格，站点就只认到「Bin你好」这个不存在的用户名
+        assertEquals("@Bin 你好", normalizeAtMentions("@Bin你好", listOf("Bin")))
+    }
+
+    @Test
+    fun normalizeKeepsExistingSeparator() {
+        val text = "@Bin 你好"
+        assertEquals(text, normalizeAtMentions(text, listOf("Bin")))
+    }
+
+    @Test
+    fun normalizeHandlesChinesePunctuation() {
+        // 中文逗号不是站点正则里的 \s，同样要补
+        assertEquals("@Bin ，你好", normalizeAtMentions("@Bin，你好", listOf("Bin")))
+    }
+
+    @Test
+    fun normalizeLeavesUnknownAtAlone() {
+        // 邮箱与手输的陌生人名不在名单里，补了空格站点也解析不了，不动用户正文
+        assertEquals("a@b.com", normalizeAtMentions("a@b.com", listOf("Bin")))
+        assertEquals("@路人甲 你好", normalizeAtMentions("@路人甲 你好", listOf("Bin")))
+    }
+
+    @Test
+    fun normalizeMatchesLongestNameFirst() {
+        // 名单同时含 Bin 与 Binx 时，第一个 @ 必须认长名，否则会切成「@Bin x你好」
+        assertEquals(
+            "@Binx 你好@Bin 你好",
+            normalizeAtMentions("@Binx你好@Bin你好", listOf("Bin", "Binx")),
+        )
+    }
+
+    @Test
+    fun normalizeSkipsEndOfMessage() {
+        // 行尾不补：站点提交时自己会追加一个空格
+        assertEquals("你好@Bin", normalizeAtMentions("你好@Bin", listOf("Bin")))
+        assertEquals("@Bin\n下一行", normalizeAtMentions("@Bin\n下一行", listOf("Bin")))
+    }
+
+    @Test
+    fun normalizeWithoutNamesIsNoop() {
+        val text = "@Bin你好"
+        assertEquals(text, normalizeAtMentions(text, emptyList()))
+    }
+
+    @Test
+    fun normalizeIsCaseInsensitive() {
+        assertEquals("@bin 你好", normalizeAtMentions("@bin你好", listOf("Bin")))
+    }
 }
