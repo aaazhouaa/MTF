@@ -104,8 +104,6 @@ object ForumParser {
     /** 引用块时间是否为绝对日期（站点对新鲜被引楼层渲染的是「N 分钟前」这类相对时间）。 */
     private val RE_ABS_DATE = Regex("\\d{4}-\\d{1,2}-\\d{1,2}")
 
-    /** 正文里的 BBCode 引用块：`[quote]…[/quote]`。 */
-    private val RE_QUOTE_BLOCK = Regex("""\[quote\][\s\S]*?\[/quote\]""", RegexOption.IGNORE_CASE)
 
     /** 「本帖最后由 X 于 2026-10-5 12:39 编辑」里的时间，用于「时间 编辑」小字。 */
     private val RE_EDIT_TIME = Regex("\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}\\s+\\d{1,2}:\\d{2}(?::\\d{2})?")
@@ -1197,12 +1195,16 @@ object ForumParser {
             ?.takeIf { it.isNotBlank() }
             ?: parseFormhash(html)
 
-        // 站点把对方在线状态写进标题行的 font 里：「昵称 (在线)」/「昵称 (离线)」。
-        // 整段 text 会把括号也带进昵称，故先摘掉再判状态
-        val headName = document.selectFirst(".header .name, .category .name, header span:not(.none)")
+        // 站点把昵称与在线状态一起写在顶部标题行里：`<h2 class="flex">昵称 <font>(在线)</font></h2>`。
+        // 整段 text 会把括号也带进昵称，故先摘掉再判状态；标题行缺失时两项都为 null
+        val headName = document.selectFirst(
+            "#comiis_head h2, .comiis_head h2, .header .name, .category .name, header span:not(.none)",
+        )
+        val headText = headName?.text().orEmpty()
         val targetName = headName?.ownText()?.trim()?.ifBlank { null }
-            ?: headName?.text()?.trim()?.removeSuffix("(在线)")?.removeSuffix("(离线)")?.trim()
-        val targetOnline = headName?.text()?.contains("(在线)")
+            ?: headText.trim().removeSuffix("(在线)").removeSuffix("(离线)").trim().ifEmpty { null }
+        val targetOnline = headText.takeIf { it.contains("(在线)") || it.contains("(离线)") }
+            ?.contains("(在线)")
         val nodes = document.select(".msgbox > div[class*='msg'], .friend_msg, .self_msg, .msgbox li, .comiis_pmlist li")
             .ifEmpty {
                 document.select("div.dialog_green, div.dialog_white")
@@ -1613,24 +1615,8 @@ object ForumParser {
         val textarea = document.selectFirst("textarea[name=message], textarea#message")
             ?: document.selectFirst("textarea")
         val raw = textarea?.wholeText().orEmpty()
-        val text = if (raw.isNotBlank()) raw else document.selectFirst("input[name=message]")?.attr("value").orEmpty()
-        // 站点把引用回复的 [quote] 块一起存进正文，原样回填会让用户改完保存后把被引
-        // 内容再烘回楼层里。编辑只该动自己的话，故先摘掉这些块
-        return stripQuoteBlocks(text)
-    }
-
-    /**
-     * 剥掉正文里的 `[quote]…[/quote]` 块，保留块外自己的话。
-     *
-     * 逐轮替换到稳定：块与块相邻、块内含块时单次非贪婪匹配会留下残段。
-     */
-    private fun stripQuoteBlocks(text: String): String {
-        var result = text
-        while (true) {
-            val next = RE_QUOTE_BLOCK.replace(result, "")
-            if (next.length == result.length) return result.trim('\n', ' ', '\t', '\r')
-            result = next
-        }
+        if (raw.isNotBlank()) return raw
+        return document.selectFirst("input[name=message]")?.attr("value").orEmpty()
     }
 
     /**

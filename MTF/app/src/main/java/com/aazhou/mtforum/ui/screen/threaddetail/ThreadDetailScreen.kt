@@ -599,7 +599,6 @@ fun ThreadDetailScreen(
                             val replies = data.posts.filter { it !== op }
                             if (foldExpanded) replies else replies.filter { it.pid !in waterPids }
                         }
-                        Box(Modifier.fillMaxSize()) {
                         PullToRefreshBox(
                             isRefreshing = isRefreshing,
                             onRefresh = { viewModel.refresh() },
@@ -721,7 +720,6 @@ fun ThreadDetailScreen(
                                 }
                             }
                         }
-                        }
                             // 「全部评论」栏滚过视口顶端后，这一份副本贴在顶栏下沿不再随正文走；
                             // 下滑时原栏回到视口里，副本淡出退场。做成 Box 覆盖层而不是
                             // LazyColumn 的 item：item 一进一出会改变后续 item 的下标，
@@ -736,9 +734,9 @@ fun ThreadDetailScreen(
                                         1f
                                     } else {
                                         val item = info.visibleItemsInfo[idx]
-                                        // 原栏往上走出视口的过程就是淡入过程，走完即不透明
-                                        // size 是这一格的像素高，不是 IntSize
-                                        (1f - (-item.offset.toFloat() / item.size.coerceAtLeast(1).toFloat()))
+                                        // 原栏往上走出视口的过程就是副本淡入的过程：offset 由 0 走到底
+                                        // （一格的高度），alpha 同步由 0 到 1。size 是这一格的像素高
+                                        (-item.offset.toFloat() / item.size.coerceAtLeast(1).toFloat())
                                             .coerceIn(0f, 1f)
                                     }
                                 }
@@ -781,8 +779,8 @@ fun ThreadDetailScreen(
                     }
                 }
             }
-            }
         }
+    }
         // 输入面板弹出时：整页压一层遮罩（连顶栏和状态栏下方一起盖住），挡掉误点；
         // 面板挂在遮罩之上，所以遮罩能盖住顶栏而盖不住面板。
         // 遮罩的显隐要走 AnimatedVisibility：退出动画那一下必须还留在组合里播完，
@@ -834,6 +832,8 @@ fun ThreadDetailScreen(
                 recentCodes = recentCodes,
                 onSmileyUsed = { code -> scope.launch { container.smileyStore.addRecent(code) } },
                 uploadCredentials = uploadCredentials,
+                existingAttachments = (editForm as? ThreadDetailViewModel.EditFormState.Ready)
+                    ?.attachments.orEmpty(),
                 onUploadImage = { file ->
                     // 凭据可能还没到手（登录前抓的页面没有上传表单）：选完图再补取一次
                     val credentials = uploadCredentials ?: viewModel.ensureUploadCredentials()

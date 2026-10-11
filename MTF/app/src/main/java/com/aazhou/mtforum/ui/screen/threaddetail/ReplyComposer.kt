@@ -106,6 +106,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
+import com.aazhou.mtforum.data.model.EditAttachment
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.parser.Smiley
 import com.aazhou.mtforum.data.parser.SmileyPack
@@ -148,6 +149,8 @@ internal fun ReplyComposer(
     onSmileyUsed: (String) -> Unit,
     uploadCredentials: Pair<String, String>?,
     onUploadImage: suspend (File) -> String?,
+    /** 编辑态下该楼已挂在站点上的图片附件：摆出来供查看，不参与本次提交。 */
+    existingAttachments: List<EditAttachment> = emptyList(),
     /** 「@朋友」候选名单：与站点网页端编辑器同源，输入 @ 时按关键字过滤，点候选插 `@用户名 `。 */
     atUsers: List<String>,
     /** 打开「@朋友」选择页：默认列出好友与关注，可全局搜索全站用户。 */
@@ -169,6 +172,8 @@ internal fun ReplyComposer(
     // 本次会话已传上去的图：缩略图条可点开全屏查看，也能删掉不要的那张
     var uploaded by remember { mutableStateOf<List<UploadedImage>>(emptyList()) }
     var previewUploaded by remember { mutableStateOf(-1) }
+    // 全屏预览的取图顺序：站点已有附件在前，本次上传的在后，两个来源共用一套预览
+    val previewModels: List<Any> = existingAttachments.map { it.url } + uploaded.map { it.uri }
 
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(MAX_UPLOAD_IMAGES),
@@ -557,17 +562,35 @@ internal fun ReplyComposer(
                 }
             }
 
-            // 已传图片缩略条：点图全屏查看，点「删除」把该图的标记从正文里摘掉
-            if (uploaded.isNotEmpty()) {
+            // 图片附件缩略条：点图全屏查看，点「删除」把该图的标记从正文里摘掉
+            if (uploaded.isNotEmpty() || existingAttachments.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "已上传图片 (${uploaded.size})",
+                    text = "图片附件 (${existingAttachments.size + uploaded.size})",
                     style = MaterialTheme.typography.labelMedium,
                     color = colors.textSecondary,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(6.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(existingAttachments, key = { _, it -> it.aid }) { index, item ->
+                        Box(
+                            Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(colors.background)
+                                .border(0.6.dp, colors.divider, RoundedCornerShape(8.dp)),
+                        ) {
+                            AsyncImage(
+                                model = item.url,
+                                contentDescription = item.fileName.ifBlank { null },
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clickable { previewUploaded = index },
+                            )
+                        }
+                    }
                     itemsIndexed(uploaded, key = { _, it -> it.aid }) { index, item ->
                         Box(
                             Modifier
@@ -582,7 +605,9 @@ internal fun ReplyComposer(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .clickable { previewUploaded = index },
+                                    .clickable {
+                                        previewUploaded = existingAttachments.size + index
+                                    },
                             )
                             Box(
                                 Modifier
@@ -756,9 +781,9 @@ internal fun ReplyComposer(
     }
 
     // 已传图片的全屏查看：本地 Uri 直显，删除入口不放在这里（避免误触）
-    if (previewUploaded in uploaded.indices) {
+    if (previewUploaded in previewModels.indices) {
         ImagePreview(
-            urls = uploaded.map { it.uri },
+            urls = previewModels,
             initialIndex = previewUploaded,
             onDismiss = { previewUploaded = -1 },
         )

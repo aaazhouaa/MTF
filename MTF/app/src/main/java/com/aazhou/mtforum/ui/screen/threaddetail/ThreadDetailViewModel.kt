@@ -2,6 +2,7 @@ package com.aazhou.mtforum.ui.screen.threaddetail
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aazhou.mtforum.data.model.EditAttachment
 import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LikeResult
 import com.aazhou.mtforum.data.model.PageProgress
@@ -242,7 +243,8 @@ class ThreadDetailViewModel(
         val previousOpOnly = _opOnly.value
         val previousOrderType = _orderType.value
         // 已有内容时保持显示（切换排序/只看楼主不清屏、不闪 Loading），请求回来原地替换。
-        val keepContent = pool.isNotEmpty()
+        // 判据看 state 而不只是池子：清池重载（置顶后）也要留住屏幕上那份，别闪一下转圈
+        val keepContent = pool.isNotEmpty() || _state.value is UiState.Success
         if (!keepContent) {
             _state.value = UiState.Loading
         }
@@ -804,18 +806,27 @@ class ThreadDetailViewModel(
                 return@launch
             }
             _actionMessage.value = if (stick) "已置顶该回复" else "已取消置顶"
-            // 置顶会改变楼层所在页：把已拉过的每条序列的第 1 页与最后一页都重拉一遍合入池子，
-            // 否则该楼还停在原位置、上屏看不到变化
-            for (seq in viewProgress.keys.toList()) {
-                val last = maxOf(progressOf(seq).totalPages, progressOf(seq).maxPage).coerceAtLeast(1)
-                for (pageNo in if (last > 1) listOf(1, last) else listOf(1)) {
-                    val fresh = fetchPageOrNull(seq, pageNo) ?: continue
-                    mergeIntoPool(seq, pageNo, fresh)
-                    recordProgress(seq, pageNo, fresh.totalPages)
-                }
-            }
-            publish()
+            reloadAllAfterStick()
         }
+    }
+
+    /**
+     * 置顶/取消置顶后整体重载。
+     *
+     * 置顶会把楼层搬到第 1 页首帖之后，取消置顶则搬回它原本所在的页——原位可能在任意
+     * 一页。增量合并只覆盖到重新拉过的页，没拉到的那几页里这条楼层还留着旧的置顶态与
+     * 空楼层号，列表就与站点对不上（用户看到「消失的是另一条」）；退出重进能好，是因为
+     * 那会儿池子本来就是空的。故清空楼层池与分页记录，按当前视图从头拉一遍。
+     */
+    private fun reloadAllAfterStick() {
+        pool.clear()
+        pageOf.clear()
+        viewProgress.clear()
+        fetchedPages.clear()
+        shortPageRetry.clear()
+        exhaustedViews.clear()
+        dataGeneration++
+        load(1)
     }
 
     /** 删除自己的回复。 */
@@ -997,7 +1008,7 @@ class ThreadDetailViewModel(
                 val data = repository.fetchEditPostInit(tid, post.pid)
                 _editForm.value = when {
                     data.permissionDenied != null -> EditFormState.Error(data.permissionDenied)
-                    else -> EditFormState.Ready(post.pid, data.message)
+                    else -> EditFormState.Ready(post.pid, data.message, data.attachments)
                 }
             } catch (e: Exception) {
                 _editForm.value = EditFormState.Error(friendlyError(e, "加载编辑内容失败"))
@@ -1115,7 +1126,15 @@ class ThreadDetailViewModel(
     sealed interface EditFormState {
         data object Idle : EditFormState
         data object Loading : EditFormState
-        data class Ready(val pid: String, val text: String) : EditFormState
+        /**
+         * @param attachments 该楼已挂在站点上的图片附件：编辑态要把它们摆出来供查看，
+         * 否则带图的楼层一编辑就看不见自己原来贴了哪些图。
+         */
+        data class Ready(
+            val pid: String,
+            val text: String,
+            val attachments: List<EditAttachment> = emptyList(),
+        ) : EditFormState
         data class Error(val message: String) : EditFormState
     }
 

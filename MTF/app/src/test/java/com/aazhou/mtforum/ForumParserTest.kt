@@ -1345,7 +1345,8 @@ class ForumParserTest {
     }
 
     @Test
-    fun editMessageDropsQuoteBlockButKeepsOwnText() {
+    fun editMessageKeepsQuoteBlockIntact() {
+        // 引用回复的 [quote] 块是楼层的一部分：编辑后仍是引用回复，摘掉它会变成独立评论
         val html = """
             <html><head><title>编辑</title></head><body>
             <form id="postform">
@@ -1357,7 +1358,9 @@ class ForumParserTest {
             </body></html>
         """.trimIndent()
         val data = ForumParser.parseEditPostInit(html)
-        assertEquals("我自己的正文", data.message)
+        assertTrue(data.message.startsWith("[quote]"))
+        assertTrue(data.message.endsWith("我自己的正文"))
+        assertTrue(data.message.contains("频道里面是你的账号被封了"))
     }
 
     @Test
@@ -1397,5 +1400,47 @@ class ForumParserTest {
         val normal = posts.single { it.pid == "11910144" }
         assertTrue(!normal.sticky)
         assertEquals(2, normal.floor)
+    }
+
+    @Test
+    fun chatConversationParsesOnlineFlag() {
+        val html = """
+            <html><head><title>聊天</title></head><body>
+            <div id="comiis_head"><div class="comiis_head f_top cl">
+              <div class="header_z"><a href="javascript:;">x</a></div>
+              <h2 class="flex"> Shiray <font class="f14">(在线)</font> </h2>
+            </div></div>
+            <form><input type="hidden" name="formhash" value="abc123"></form>
+            <div class="msgbox"><div class="friend_msg"><div class="dialog_t">在吗</div></div></div>
+            </body></html>
+        """.trimIndent()
+        val convo = ForumParser.parseChatConversation(html, "155359")
+        // 昵称不能把「(在线)」带进去，状态要单独取到
+        assertEquals("Shiray", convo.targetName)
+        assertEquals(true, convo.targetOnline)
+    }
+
+    @Test
+    fun chatConversationParsesOfflineFlag() {
+        val html = """
+            <html><head><title>聊天</title></head><body>
+            <div id="comiis_head"><h2 class="flex"> Shiray <font class="f14">(离线)</font> </h2></div>
+            </body></html>
+        """.trimIndent()
+        val convo = ForumParser.parseChatConversation(html, "155359")
+        assertEquals("Shiray", convo.targetName)
+        assertEquals(false, convo.targetOnline)
+    }
+
+    @Test
+    fun chatConversationWithoutStatusLeavesFlagNull() {
+        val html = """
+            <html><head><title>聊天</title></head><body>
+            <div id="comiis_head"><h2 class="flex"> Shiray </h2></div>
+            </body></html>
+        """.trimIndent()
+        val convo = ForumParser.parseChatConversation(html, "155359")
+        assertEquals("Shiray", convo.targetName)
+        assertNull(convo.targetOnline)
     }
 }
