@@ -135,30 +135,59 @@ class ThreadDetailViewModel(
      * 楼主 / 正序 / 倒序只是同一批楼层的三种看法，池子共用一份：切视图不再重新请求
      * 已加载过的楼层，也不会因为某个视图只加载到一半就切走而漏评论（重复加载几条
      * 没关系，按 pid 覆盖写只会更新数据，不会多占一行）。
-     * 楼层一律按正序口径拉，倒序页由客户端反排，池子顺序才不会两种口径混在一起。
+     * 楼层号是站点给的绝对序号，装配时按它排，所以从哪条序列拉回来的都融得进同一份。
      */
     private val pool = LinkedHashMap<String, Post>()
 
-    /** 每种拉取口径（全部 / 只看楼主）各自拉到第几页、总页数多少。 */
-    private val viewProgress = LinkedHashMap<String, PageProgress>()
+    /**
+     * 一条拉取序列：楼主过滤 × 排序方向。
+     *
+     * 站点两边的页码编号不是一回事：正序第 1 页是最旧的评论，倒序（ordertype=1）
+     * 第 1 页是全帖最新的评论。所以「拉到第几页」「拉过哪些页」必须按序列分开记，
+     * 只记一套会让切排序后把没拉过的页当成拉过。
+     */
+    private data class Sequence(val authorId: String?, val orderType: Int)
+
+    /** 当前序列：只看楼主时带楼主 uid，排序方向取当前档位。 */
+    private val currentSequence: Sequence
+        get() = Sequence(opOnlyAuthorId(), _orderType.value)
+
+    /** 每条序列各自拉到第几页、总页数多少。 */
+    private val viewProgress = LinkedHashMap<Sequence, PageProgress>()
 
     /**
-     * 每个口径「为补齐差额而重拉过、却没补上任何楼层」的页码与当时的应收条数。
+     * 每条序列已经拉过哪些页码。
+     *
+     * 续拉位置由它算：只记「最大页」的话，合入过任意一页（定位楼层所在页、编辑后
+     * 重拉的那一页）就会把中间没拉过的页永久跳过，评论从此缺一截。
+     */
+    private val fetchedPages = HashMap<Sequence, MutableSet<Int>>()
+
+    /**
+     * 每条序列里每个楼层出自哪一页。
+     *
+     * 站点页面不给楼层的修改时间，别人改过的评论只有重拉那一页才会更新（楼层按
+     * pid 覆盖写）。下拉刷新据此把「刚看过的那几楼」所在的页再拉一遍。
+     */
+    private val pageOf = HashMap<Sequence, MutableMap<String, Int>>()
+
+    /**
+     * 每条序列「为补齐差额而重拉过、却没补上任何楼层」的页码与当时的应收条数。
      * 同一页码、同一应收条数下重拉一次仍无果就收手：那说明差额来自站点计数与可见
      * 楼层本身不一致，而不是漏拉，继续重拉只会空转。池子一补齐就清掉；站点计数一变
      * （有新评论）记录自然失效，末页会被重新捞一次。
      */
-    private val shortPageRetry = HashMap<String, Pair<Int, Int>>()
+    private val shortPageRetry = HashMap<Sequence, Pair<Int, Int>>()
 
     /**
-     * 已判定「拉到的都是真实末尾之后的空页」的口径。
+     * 已判定「拉到的都是真实末尾之后的空页」的序列。
      *
      * 越界探测页会被站点夹成末页：池子不再有新增，页码也不再前进。此时若继续按
      * maxPage + 1 发请求，每批都会去敲同一页，自动续拉链与滑动预加载交替空转成
-     * 无限请求。故整批空转一次即判定该口径到底，收手不发请求；一次真实页拉回来
+     * 无限请求。故整批空转一次即判定该序列到底，收手不发请求；一次真实页拉回来
      * （进帖、切筛选、下拉刷新、回复后刷新）会清掉标记，重新按最新计数评估。
      */
-    private val exhaustedViews = HashSet<String>()
+    private val exhaustedViews = HashSet<Sequence>()
 
     /** 不随分页与排序变化的帖子级字段。 */
     private var subject: String? = null
@@ -191,8 +220,11 @@ class ThreadDetailViewModel(
     private val _likeUsersLoading = MutableStateFlow(false)
     val likeUsersLoading: StateFlow<Boolean> = _likeUsersLoading.asStateFlow()
 
-    /** 切换排序/只看楼主时界面传来的滚动锚点，新楼层上屏时才交给界面。 */
+    /** 切换排序/只看楼主时界面传来的滚动锚点，新楼层上屏后才交给界面。 */
     private var requestedAnchor: ScrollAnchor? = null
+
+    /** 界面最近可见的楼层 id（列表里那几个固定项的 key 也会进来，比对时自然滤掉）。 */
+    private var recentVisiblePids: Set<String> = emptySet()
 
     /** 数据请求代次：每次 load 递增，用于丢弃过期请求的结果，避免旧数据覆盖新数据。 */
     private var dataGeneration = 0
@@ -206,12 +238,12 @@ class ThreadDetailViewModel(
     }
 
     /**
-     * 拉取当前口径的第 [target] 页并入楼层池；target 为 1 表示从头拉。
-     * 排序只影响客户端怎么排，请求一律按正序口径发，故这里不带 orderType。
+     * 拉取 [seq] 序列的第 [target] 页并入楼层池；target 为 1 表示该序列的头一页。
+     * 请求按序列自己的排序口径发：正序第 1 页是最旧的评论，倒序（ordertype=1）
+     * 第 1 页是全帖最新的评论，与站点网页端同一套翻页。
      */
-    fun load(target: Int = currentMaxPage) {
-        // 只看楼主必须带上楼主 uid，否则会把别人的楼层混进来；uid 取自缓存或上一次响应
-        val authorId = opOnlyAuthorId()
+    fun load(target: Int = currentMaxPage, orderType: Int = _orderType.value) {
+        val seq = Sequence(opOnlyAuthorId(), orderType)
         val previousOpOnly = _opOnly.value
         val previousOrderType = _orderType.value
         // 已有内容时保持显示（切换排序/只看楼主不清屏、不闪 Loading），请求回来原地替换。
@@ -222,7 +254,7 @@ class ThreadDetailViewModel(
         val generation = ++dataGeneration
         viewModelScope.launch {
             val data = try {
-                repository.threadPage(tid, target, FETCH_ORDER, authorId)
+                repository.threadPage(tid, target, seq.orderType, seq.authorId)
             } catch (e: Exception) {
                 if (generation != dataGeneration) return@launch
                 requestedAnchor = null
@@ -266,8 +298,8 @@ class ThreadDetailViewModel(
                 _followState.value = FollowState.Done(following, fromUser = false)
                 actionInitialized = true
             }
-            mergeIntoPool(data)
-            recordProgress(authorId, target, data.totalPages)
+            mergeIntoPool(seq, target, data)
+            recordProgress(seq, target, data.totalPages)
             adoptMeta(data)
             // 目标楼层通常在很后面的页，先拉回来合入楼层池再上屏；反过来先上屏再拉，
             // 界面会先渲染到帖子正文、等目标页到达后再跳过去。
@@ -280,8 +312,9 @@ class ThreadDetailViewModel(
      * 把提醒指向的楼层所在页拉回来并楼层池。
      *
      * 被回复的楼层通常在最末几页，从第 1 页顺着自动链翻过去要几十个请求；这里先按
-     * redirect 中转地址拿到页码、直接取那一页，界面随即滚到该楼层。不推进页码记录：
-     * 自动链仍从第 2 页继续，中间的页照旧在后台补齐，列表不会留下空洞。
+     * redirect 中转地址拿到页码、直接取那一页，界面随即滚到该楼层。那个页码是正序
+     * 口径的编号，故按正序拉、记进正序序列；不推进页码记录：自动链仍从第 2 页继续，
+     * 中间的页照旧在后台补齐，列表不会留下空洞。
      */
     private suspend fun fetchAnchorPage() {
         val pid = anchorPid ?: return
@@ -296,6 +329,8 @@ class ThreadDetailViewModel(
             null
         } ?: return
         if (page <= 1 || generation != dataGeneration) return
+        // 定位页按正序拉：noticeReplyPage 给出的页码是正序口径的编号
+        val seq = Sequence(opOnlyAuthorId(), FETCH_ORDER)
         val data = try {
             repository.threadPage(tid, page, FETCH_ORDER, opOnlyAuthorId())
         } catch (e: CancellationException) {
@@ -304,7 +339,10 @@ class ThreadDetailViewModel(
             return
         }
         if (generation != dataGeneration) return
-        mergeIntoPool(data)
+        mergeIntoPool(seq, page, data)
+        // 定位页是任意页：只记「拉过了」、不推进页码，否则续拉走到这一页时会因为
+        // 一条新楼层都没入库而误判整帖到底，中间留下没拉过的空洞
+        noteFetchedPage(seq, page)
         // 定位场景不预先续拉：后续页按楼层插在目标前面，会把目标挤出处屏幕。
         // 底部仍是「还有更多」的状态，用户往下滑照样能接着看。
         publish()
@@ -368,31 +406,31 @@ class ThreadDetailViewModel(
         val generation = dataGeneration
         _loadingMore.value = true
         _loadMoreState.value = LoadMoreState.Loading
-        val authorId = opOnlyAuthorId()
-        val startPage = nextPageToFetch(authorId)
+        val seq = currentSequence
+        val startPage = nextPageToFetch(seq)
         if (startPage == 0) {
             // 池子已收齐（或差额来自站点计数本身，重拉过一次仍没补上）：收手，不再空转
             _hasNext.value = false
             _loadMoreState.value = LoadMoreState.End
             return false
         }
-        val knownTotalPages = maxOf(current.data.totalPages, progressOf(authorId).totalPages)
+        val knownTotalPages = maxOf(current.data.totalPages, progressOf(seq).totalPages)
         // 最近一个真实交付过楼层的页码：越界探测被站点夹成末页、什么也没带来时，
         // 用它把 recordProgress 收回去，免得幻觉页码（如池里 58 楼却去敲第 178 页）
         // 每次进帖都重放
-        var lastProductivePage = progressOf(authorId).maxPage
+        var lastProductivePage = progressOf(seq).maxPage
         var added = 0
         val failed = try {
-            val data = repository.threadPage(tid, startPage, FETCH_ORDER, authorId)
+            val data = repository.threadPage(tid, startPage, seq.orderType, seq.authorId)
             // 空响应的总页数不可信（越界夹页/解析失败常给出离谱页数），拿它推进
             // progress 会让 nextPageToFetch 一直去追不存在的页码
             val saneTotalPages =
                 if (data.posts.isEmpty() && data.totalPages > knownTotalPages) knownTotalPages
                 else data.totalPages
-            added = mergeIntoPool(data)
+            added = mergeIntoPool(seq, startPage, data)
             // 拉到过就记页码，哪怕整页都是已入库楼层：定位楼层会把目标页提前合入
             // 池子却不记 progress，续拉走到那一页时若守住页码不动，就会反复敲同一页
-            recordProgress(authorId, startPage, saneTotalPages)
+            recordProgress(seq, startPage, saneTotalPages)
             if (added > 0) {
                 lastProductivePage = startPage
             } else if (startPage > knownTotalPages) {
@@ -401,8 +439,8 @@ class ThreadDetailViewModel(
                 // 续拉才不会每次进入都去敲 178、179 这种不存在的页码；真正的新
                 // 评论由末页重拉与站点计数变化发现。
                 val healed = lastProductivePage.coerceAtLeast(1)
-                viewProgress[progressKey(authorId)] =
-                    PageProgress(authorId = authorId, maxPage = healed, totalPages = healed)
+                viewProgress[seq] =
+                    PageProgress(authorId = seq.authorId, maxPage = healed, totalPages = healed)
             }
             false
         } catch (e: Exception) {
@@ -415,18 +453,17 @@ class ThreadDetailViewModel(
             _loadingMore.value = false
             return failed
         }
-        val key = progressKey(authorId)
         // 确实拉到过页、却一条新楼层都没入库：后面都是真实末尾之后的空页，
         // 再拉只会空转。failed 不判定——那只是没拉到，不是没有。
         if (!failed && added == 0) {
-            exhaustedViews.add(key)
+            exhaustedViews.add(seq)
         }
         // 池子仍少于站点计数：记下这次补拉的页码，下次同一页码再来一次还没补上就收手
         val expected = expectedPoolSize()
         if (expected != null && pool.size < expected) {
-            shortPageRetry[key] = startPage to expected
+            shortPageRetry[seq] = startPage to expected
         } else {
-            shortPageRetry.remove(key)
+            shortPageRetry.remove(seq)
         }
         publish()
         _loadingMore.value = false
@@ -444,39 +481,46 @@ class ThreadDetailViewModel(
         return viewPage().copy(posts = poolOrder())
     }
 
-    /** [authorId] 口径已加载到的最大页（续拉位置）。 */
+    /** 当前序列已加载到的最大页（续拉位置）。 */
     private val currentMaxPage: Int
-        get() = progressOf(opOnlyAuthorId()).maxPage.coerceAtLeast(1)
+        get() = progressOf(currentSequence).maxPage.coerceAtLeast(1)
 
     /** 续拉时的楼主过滤参数：只看楼主必须带上，否则会把别人的楼层混进来。 */
     private fun opOnlyAuthorId(): String? = if (_opOnly.value) opUid else null
 
-    private fun progressKey(authorId: String?): String = authorId.orEmpty()
+    private fun progressOf(seq: Sequence): PageProgress =
+        viewProgress[seq] ?: PageProgress(authorId = seq.authorId)
 
-    private fun progressOf(authorId: String?): PageProgress =
-        viewProgress[progressKey(authorId)] ?: PageProgress(authorId = authorId)
-
-    /** 记下某口径拉到第几页；页码只增不减，免得重复请求刚拉过的页。 */
-    private fun recordProgress(authorId: String?, fetchedPage: Int, totalPages: Int) {
-        val current = progressOf(authorId)
-        viewProgress[progressKey(authorId)] = PageProgress(
-            authorId = authorId,
+    /** 记下某序列拉到第几页；页码只增不减，免得重复请求刚拉过的页。 */
+    private fun recordProgress(seq: Sequence, fetchedPage: Int, totalPages: Int) {
+        val current = progressOf(seq)
+        noteFetchedPage(seq, fetchedPage)
+        viewProgress[seq] = PageProgress(
+            authorId = seq.authorId,
             maxPage = maxOf(current.maxPage, fetchedPage),
             totalPages = maxOf(current.totalPages, totalPages),
         )
     }
 
+    /** 只记「这个页码拉过了」，不动页码记录：合入任意页（定位楼层所在页）时用。 */
+    private fun noteFetchedPage(seq: Sequence, page: Int) {
+        fetchedPages.getOrPut(seq) { mutableSetOf() } += page
+    }
+
     /**
-     * 把一页楼层并入池子，返回新入库的条数。
+     * 把 [seq] 序列第 [pageNo] 页的楼层并入池子，返回新入库的条数。
      *
      * 按 pid 覆盖写：同一条评论重复加载只会更新数据、不会重复占一行。这是
      * 「切视图不漏不重」的根——池子是全集，任何视图都只是它的一个投影。
+     * 同时记下每个楼层来自哪一页，供下拉刷新重拉「刚看过的楼层」用。
      */
-    private fun mergeIntoPool(page: ThreadPage): Int {
+    private fun mergeIntoPool(seq: Sequence, pageNo: Int, page: ThreadPage): Int {
         var added = 0
+        val pageMap = pageOf.getOrPut(seq) { mutableMapOf() }
         for (post in page.posts) {
             if (!pool.containsKey(post.pid)) added++
             pool[post.pid] = post
+            pageMap[post.pid] = pageNo
         }
         return added
     }
@@ -501,38 +545,42 @@ class ThreadDetailViewModel(
     private fun expectedPoolSize(): Int? = totalReplies?.let { it + 1 }
 
     /**
-     * 当前口径下一个该拉的页码；0 表示不用再拉。
+     * 当前序列下一个该拉的页码；0 表示不用再拉。
+     *
+     * 每条序列都从自己的第 1 页往上顺翻：正序第 1 页是最旧的评论，倒序（ordertype=1）
+     * 第 1 页是全帖最新的评论——和网页端点「倒序」看到的是同一屏。
      *
      * 「页拉完了」不等于「评论拉完了」：新评论追加在最后一个 page 之内，总页数不变，
      * 只按 maxPage + 1 判断永远等不到「还有下一页」，新评论就再也不会出现。故以站点
-     * 自己的评论数为准——池子仍少于该计数时，重拉该口径的最后一页把页内的新增与
+     * 自己的评论数为准——池子仍少于该计数时，重拉该序列的最后一页把页内的新增与
      * 漏掉的楼层一起捞回来。
      */
-    private fun nextPageToFetch(authorId: String?): Int {
-        val key = progressKey(authorId)
+    private fun nextPageToFetch(seq: Sequence): Int {
         // 上一次已整批空转（请求到的都是真实末尾之后的空页）：收手，不再发请求
-        if (key in exhaustedViews) return 0
+        if (seq in exhaustedViews) return 0
         val expected = expectedPoolSize()
-        // 池子已按站点计数收齐：任何口径（楼主/正序/倒序）都不必再发请求
+        // 池子已按站点计数收齐：任何序列（楼主/正序/倒序）都不必再发请求
         if (expected != null && pool.size >= expected) return 0
-        val progress = viewProgress[key]
-        // 这个口径还没拉过（例如第一次切只看楼主），从第 1 页开始才知道有多少
+        val progress = viewProgress[seq]
+        // 这条序列还没拉过（第一次切只看楼主/倒序），从它的第 1 页开始
         if (progress == null || progress.maxPage == 0) return 1
-        if (progress.maxPage < progress.totalPages) return progress.maxPage + 1
+        val lastPage = maxOf(progress.totalPages, progress.maxPage).coerceAtLeast(1)
+        val loaded = fetchedPages[seq].orEmpty()
+        val missing = (1..lastPage).firstOrNull { it !in loaded }
+        if (missing != null) return missing
         // 站点没给评论数，无从判断页内是否还有漏掉的楼层，回到「页拉完就不拉」
         if (expected == null) return 0
         // 页都拉过了但池子还没收齐：先把最后一页重拉一次——新评论追加在末页之内，
         // 总页数不变；重拉没补上再往后探一页，站点的分页元素可能漏解析，真实页数比
         // 记录的多。越界请求要么返回空、要么夹到末页，按 pid 去重不会重复入库。
-        val lastPage = maxOf(progress.totalPages, progress.maxPage).coerceAtLeast(1)
-        val (retriedPage, retriedExpected) = shortPageRetry[key] ?: (0 to 0)
+        val (retriedPage, retriedExpected) = shortPageRetry[seq] ?: (0 to 0)
         if (retriedExpected != expected) return lastPage
         if (retriedPage == lastPage + 1) return 0
         return lastPage + 1
     }
 
-    /** 当前口径还要不要接着拉。 */
-    private fun hasNextForView(): Boolean = nextPageToFetch(opOnlyAuthorId()) > 0
+    /** 当前序列还要不要接着拉。 */
+    private fun hasNextForView(): Boolean = nextPageToFetch(currentSequence) > 0
 
     /**
      * 池子的正序口径。
@@ -560,6 +608,8 @@ class ThreadDetailViewModel(
     /**
      * 当前视图的楼层：只看楼主时按楼主 uid 过滤，倒序时整表反向。
      * 三者都是同一份池子的投影，不需要各自请求。
+     * 池子里可能同时有两条序列拉回来的楼层（正序从旧往新、倒序从新往旧），按楼层号
+     * 排序再反向才融得成一份；倒序第一屏来自站点倒序第 1 页，即全帖最新评论。
      */
     private fun viewPosts(): List<Post> {
         val all = poolOrder()
@@ -581,7 +631,7 @@ class ThreadDetailViewModel(
             forumName = forumName,
             posts = viewPosts(),
             page = currentMaxPage,
-            totalPages = latest?.totalPages ?: progressOf(opOnlyAuthorId()).totalPages,
+            totalPages = latest?.totalPages ?: progressOf(currentSequence).totalPages,
             formhash = latest?.formhash,
             replyUrl = latest?.replyUrl,
             fid = fid ?: latest?.fid,
@@ -601,11 +651,12 @@ class ThreadDetailViewModel(
      *
      * 站点不单独回传改后的内容，只有重拉的页面里有；被编辑的楼层常在后几页（自己的
      * 回复多半在末尾），故先按 pid 解析它所在页再拉那一页，解析不出才退回第 1 页。
+     * 解析出的页码是正序口径的编号，与当前视图是不是倒序无关，故按正序拉。
      */
     private fun refreshEditedFloor(pid: String) {
         viewModelScope.launch {
             val page = runCatching { repository.noticeReplyPage(tid, pid) }.getOrNull()
-            if (page != null && page > 1) load(page) else refreshFirstPage()
+            if (page != null && page > 1) load(page, FETCH_ORDER) else refreshFirstPage()
         }
     }
 
@@ -620,18 +671,18 @@ class ThreadDetailViewModel(
             load(1)
             return
         }
-        val authorId = opOnlyAuthorId()
+        val seq = currentSequence
         val generation = dataGeneration
         viewModelScope.launch {
             val fresh = try {
-                repository.threadPage(tid, 1, FETCH_ORDER, authorId)
+                repository.threadPage(tid, 1, seq.orderType, seq.authorId)
             } catch (e: Exception) {
                 if (generation == dataGeneration) _actionMessage.value = friendlyError(e, "刷新失败")
                 return@launch
             }
             if (generation != dataGeneration) return@launch
-            mergeIntoPool(fresh)
-            recordProgress(authorId, 1, fresh.totalPages)
+            mergeIntoPool(seq, 1, fresh)
+            recordProgress(seq, 1, fresh.totalPages)
             adoptMeta(fresh)
             publish()
         }
@@ -640,7 +691,8 @@ class ThreadDetailViewModel(
     /**
      * 三档分段（楼主/正序/倒序）一次切换：先改状态、再统一走一遍加载。
      * 避免 onOpOnly(false)+onOrder(x) 两个回调各触发一次 load 造成竞态与重复请求。
-     * [anchor] 是切换前的滚动位置，新楼层上屏后原样恢复，屏幕不跳。
+     * [anchor] 是新楼层上屏后界面要恢复到的位置；切正序/倒序时传评论区顶部，倒序的
+     * 第一屏就是全帖最新评论，切只看楼主才恢复切换前的位置。
      */
     fun setReplyFilter(opOnly: Boolean, orderType: Int, anchor: ScrollAnchor? = null) {
         val changed = _opOnly.value != opOnly || _orderType.value != orderType
@@ -648,7 +700,10 @@ class ThreadDetailViewModel(
         requestedAnchor = anchor
         _opOnly.value = opOnly
         _orderType.value = orderType
-        load(currentMaxPage)
+        // 拉「新序列的第 1 页」：站点倒序的第 1 页就是全帖最新评论，与网页端同一套
+        // 翻页；这条序列已经拉过了就接着往下，全都拉过就只换视图重发、不再发请求
+        val target = nextPageToFetch(currentSequence)
+        if (target > 0) load(target) else viewModelScope.launch { publish() }
     }
 
     /**
@@ -957,8 +1012,12 @@ class ThreadDetailViewModel(
     }
 
     /**
-     * 下拉刷新：重拉第 1 页并入楼层池，不置 Loading、不丢失滚动数据。
-     * 楼层按 pid 覆盖写，列表不会整页回退；总评论数若变了，自动链接着补新页。
+     * 下拉刷新：重拉当前序列的第 1 页，外加「刚看过的那几楼」所在的页，不置
+     * Loading、不丢失滚动数据。楼层按 pid 覆盖写，列表不会整页回退；总评论数若变了，
+     * 自动链接着补新页。倒序视图下拉拉的是站点倒序第 1 页，新评论本来就排在那，一刷就到。
+     *
+     * 多拉的那几页是为了抓别人对已加载楼层的编辑：站点不给修改时间，只有重拉那一页
+     * 才会更新。楼层就在屏上，用户感知是「老的先留着，拉到新的就地换版」。
      */
     fun refresh() {
         if (_isRefreshing.value) return
@@ -967,22 +1026,44 @@ class ThreadDetailViewModel(
             return
         }
         _isRefreshing.value = true
-        val authorId = opOnlyAuthorId()
+        val seq = currentSequence
         val generation = dataGeneration
+        // 第 1 页这次刷新本来就拉，剔掉避免重复请求
+        val seenPages = recentVisiblePids
+            .mapNotNull { pageOf[seq]?.get(it) }
+            .filter { it != 1 }
+            .toSortedSet()
         viewModelScope.launch {
             try {
-                val fresh = repository.threadPage(tid, 1, FETCH_ORDER, authorId)
+                val fresh = repository.threadPage(tid, 1, seq.orderType, seq.authorId)
                 // 期间又切换了排序/只看楼主：这次刷新的结果已过时，丢弃
                 if (generation != dataGeneration) return@launch
-                mergeIntoPool(fresh)
-                recordProgress(authorId, 1, fresh.totalPages)
+                mergeIntoPool(seq, 1, fresh)
+                recordProgress(seq, 1, fresh.totalPages)
                 adoptMeta(fresh)
+                for (page in seenPages) {
+                    if (generation != dataGeneration) break
+                    val extra = try {
+                        repository.threadPage(tid, page, seq.orderType, seq.authorId)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // 附带的那几页是尽力而为：失败不影响第 1 页的刷新结果，也不提示
+                        continue
+                    }
+                    mergeIntoPool(seq, page, extra)
+                }
                 publish()
             } catch (e: Exception) {
                 if (generation == dataGeneration) _actionMessage.value = friendlyError(e, "刷新失败")
             }
             if (generation == dataGeneration) _isRefreshing.value = false
         }
+    }
+
+    /** 界面回报最近可见的楼层 id：下拉刷新据此决定额外重拉哪几页。 */
+    fun noteVisiblePids(pids: Set<String>) {
+        recentVisiblePids = pids
     }
 
     /** 打赏（pid 为空为打赏首帖）。 */
@@ -1034,9 +1115,11 @@ data class ScrollAnchor(val index: Int, val offset: Int)
 internal const val FLASH_HIGHLIGHT_MS = 1500L
 
 /**
- * 拉楼层的排序口径固定「正序」：楼主过滤只是站点参数，倒序由客户端反排。
- * 翻页序列只有一条，池子顺序才不会两种口径混在一起；每页条数与总页数
- * 也只用这一条序列衡量，视图再怎么切都不影响。
+ * 站点正序口径：不带 ordertype 参数。倒序走 ordertype=1，是站点自己的另一套
+ * 翻页（第 1 页即全帖最新评论），页码与正序不是一套编号，故按序列分开记。
+ *
+ * 仍保留这个常量：定位楼层、编辑后重拉拿到的页码都是正序口径的编号，与当前视图
+ * 是不是倒序无关，那两处按它拉。
  */
 private const val FETCH_ORDER = 0
 

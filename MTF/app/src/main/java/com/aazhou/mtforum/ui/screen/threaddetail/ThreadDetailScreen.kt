@@ -135,6 +135,7 @@ import com.aazhou.mtforum.ui.theme.dimImageInDark
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -413,6 +414,14 @@ fun ThreadDetailScreen(
         if (shouldLoadMore) viewModel.loadMore()
     }
 
+    // 回报最近可见的楼层：下拉刷新要把这些楼层所在的页一并重拉，抓别人对它们的编辑。
+    // 只在可见集合变化时回调（一次滑动几次，不是每帧），写的是普通字段，不触发重组。
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? String } }
+            .distinctUntilChanged()
+            .collect { viewModel.noteVisiblePids(it.toSet()) }
+    }
+
     val todo: (String) -> Unit = { msg -> AppToast.show(msg) }
     // 未登录时互动入口只弹提示：不发请求、不开弹窗、不改状态
     val requireLogin: (String) -> Boolean = { hint ->
@@ -682,7 +691,16 @@ fun ThreadDetailScreen(
                                         viewModel.setReplyFilter(true, orderType, anchorNow())
                                     },
                                     onOrder = {
-                                        viewModel.setReplyFilter(false, it, anchorNow())
+                                        // 正序/倒序是两套排法，切过去直接跳到评论区顶部：
+                                        // 倒序的第一屏就是全帖最新评论
+                                        viewModel.setReplyFilter(
+                                            opOnly = false,
+                                            orderType = it,
+                                            anchor = ScrollAnchor(
+                                                index = if (op != null) 1 else 0,
+                                                offset = 0,
+                                            ),
+                                        )
                                     },
                                 )
                                 HorizontalDivider(color = colors.divider)
