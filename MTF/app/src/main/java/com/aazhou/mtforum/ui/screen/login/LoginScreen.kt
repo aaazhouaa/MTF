@@ -33,7 +33,9 @@ import com.aazhou.mtforum.ui.common.appViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(onBack: () -> Unit, onSuccess: () -> Unit) {
-    val viewModel: LoginViewModel = appViewModel { LoginViewModel(it.repository, it.sessionStore) }
+    val viewModel: LoginViewModel = appViewModel {
+        LoginViewModel(it.repository, it.sessionStore) { it.refreshCurrentUserAsync() }
+    }
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     var username by remember { mutableStateOf("") }

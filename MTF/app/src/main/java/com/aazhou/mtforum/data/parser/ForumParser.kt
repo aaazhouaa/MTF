@@ -28,6 +28,7 @@ import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.data.model.NewThreadPageData
 import com.aazhou.mtforum.data.model.NewThreadResult
 import com.aazhou.mtforum.data.model.EditPostPageData
+import com.aazhou.mtforum.data.model.EditAttachment
 import com.aazhou.mtforum.data.model.EditPostResult
 import com.aazhou.mtforum.data.model.ThreadType
 import com.aazhou.mtforum.data.model.FavoriteItem
@@ -62,6 +63,7 @@ object ForumParser {
     // 贴图上传凭据：comiis 模板把 uid/hash 写进帖子页内联的上传配置里
     private val RE_UPLOAD_UID = Regex("uploadformdata:\\{uid:\"(\\d+)\"")
     private val RE_UPLOAD_HASH = Regex("uploadformdata:\\{uid:\"\\d+\",\\s*hash:\"([0-9a-fA-F]+)\"")
+    private val RE_UPLOAD_PAIR = Regex("uploadformdata:\\{uid:\"(\\d+)\",\\s*hash:\"([0-9a-fA-F]+)\"")
     private val RE_QUOTE_PID = Regex("pid=(\\d+)")
     private val RE_BR = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
     private val RE_TAG = Regex("<[^>]+>")
@@ -1498,6 +1500,17 @@ object ForumParser {
     private val RE_TID_MATCH = Regex("""thread-(\d+)|tid=(\d+)""")
 
     /**
+     * 从页面内联上传配置里取贴图凭据（uid + hash）。
+     *
+     * 供私聊借页面取凭据用：站点只在帖子页/发帖页给这份配置，hash 与会话绑定、
+     * 与取自哪个页面无关。两个字段缺任何一个都按没有处理。
+     */
+    fun parseUploadCredentials(html: String): Pair<String, String>? {
+        val match = RE_UPLOAD_PAIR.find(html) ?: return null
+        return match.groupValues[1] to match.groupValues[2]
+    }
+
+    /**
      * 解析发帖页初始数据（formhash、posttime、图片上传凭据 uid/hash、主题分类 types、无权限提示）。
      */
     fun parseNewThreadInit(html: String): NewThreadPageData {
@@ -1559,11 +1572,29 @@ object ForumParser {
             formhash = parseFormhash(html).orEmpty(),
             subject = subject,
             message = editMessageText(document),
+            attachments = editAttachments(document),
             uploadUid = RE_UPLOAD_UID.find(html)?.groupValues?.get(1),
             uploadHash = RE_UPLOAD_HASH.find(html)?.groupValues?.get(1),
             types = threadTypes(document),
             permissionDenied = permissionDenied,
         )
+    }
+
+    /**
+     * 编辑表单里已挂上的图片附件：站点把它们列在 `ul#imglist`，每条 li 带 `span.del[aid]` 与
+     * `img#aimg_<aid>`，缩略图地址即正文里 `[attachimg]<aid>[/attachimg]` 指向的那张图。
+     * li.up_btn 是上传按钮，不是附件。
+     */
+    private fun editAttachments(document: Document): List<EditAttachment> {
+        return document.select("ul.comiis_post_imglist > li").mapNotNull { li ->
+            if (li.hasClass("up_btn")) return@mapNotNull null
+            val img = li.selectFirst("img[id^=aimg_]") ?: return@mapNotNull null
+            val aid = li.selectFirst("span.del[aid]")?.attr("aid")?.trim()
+                ?: img.id().removePrefix("aimg_").ifEmpty { null }
+            val url = img.attr("src").trim()
+            if (aid.isNullOrEmpty() || url.isEmpty()) return@mapNotNull null
+            EditAttachment(aid = aid, url = url, fileName = img.attr("title").trim())
+        }
     }
 
     /** 编辑表单里的原文：首选 message 文本域，退化到页面第一个文本域或同名隐藏域。 */

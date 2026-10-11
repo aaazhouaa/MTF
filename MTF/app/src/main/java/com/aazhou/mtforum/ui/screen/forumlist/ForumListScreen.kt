@@ -234,20 +234,6 @@ private fun ForumGroupCard(
                 color = bodyTextColor(),
                 modifier = Modifier.weight(1f),
             )
-            // 版块数量胶囊
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(colors.quoteBackground)
-                    .padding(horizontal = 7.dp, vertical = 2.dp),
-            ) {
-                Text(
-                    text = "${group.forums.size}",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                    color = colors.textSecondary,
-                )
-            }
         }
 
         // 分组内版块列表

@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -133,6 +134,7 @@ private val LocalGlassTabScale = staticCompositionLocalOf { { 1f } }
  *
  * 手势：整条底栏接管按下/滑动，胶囊立即跟到手指所在 tab；胶囊按下时放大溢出并出现水珠高光。
  * 胶囊宽度只覆盖当前选中 tab，故不会挡住相邻 tab 的点击。
+ * 点击/落点仍是当前选中的 tab 时额外回调 [onReselect]（切到别的 tab 不回调），供页面做回顶部一类的页内操作。
  */
 @Composable
 fun GlassBottomBar(
@@ -140,6 +142,7 @@ fun GlassBottomBar(
     tabs: List<GlassTab>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
+    onReselect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // 深浅必须取 LocalIsDarkTheme：用户可在设置里覆盖系统深浅，看 isSystemInDarkTheme
@@ -177,6 +180,10 @@ fun GlassBottomBar(
         }
 
         var currentIndex by remember { mutableIntStateOf(selectedIndex) }
+        // 选中态与回调都要经 state 间接读：底栏手势的 pointerInput 只认 tabWidth/tabsCount
+        // 为键，切过 tab 后不会重建，直接捕获 composable 参数会一直拿到旧值
+        val selectedIndexState = rememberUpdatedState(selectedIndex)
+        val onReselectState = rememberUpdatedState(onReselect)
 
         // 手指是否按在底栏上，用于把手势拖动与点击（胶囊自动滚动）区分开
         val pointerDownState = remember { mutableStateOf(false) }
@@ -288,6 +295,8 @@ fun GlassBottomBar(
                 val idx = lastValue.roundToInt().fastCoerceIn(0, tabsCount - 1)
                 dampedDragAnimation.animateToValue(idx.toFloat())
                 onSelect(idx)
+                // 落点没变：这一次点击不产生导航，只当作「重复点当前 tab」上报
+                if (idx == selectedIndexState.value) onReselectState.value(idx)
             }
         }
 

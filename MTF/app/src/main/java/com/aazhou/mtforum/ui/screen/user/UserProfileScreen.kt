@@ -68,6 +68,7 @@ import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.common.scrollToTop
+import com.aazhou.mtforum.ui.screen.profile.ProfileContent
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -82,6 +83,13 @@ fun UserProfileScreen(
     onBack: () -> Unit,
     onChat: (uid: String, name: String) -> Unit = { _, _ -> },
     onPostsClick: (uid: String) -> Unit = {},
+    onLogin: () -> Unit = {},
+    onDownloads: () -> Unit = {},
+    onDrafts: () -> Unit = {},
+    onMyPosts: () -> Unit = {},
+    onMyFavorites: () -> Unit = {},
+    onMyFriends: () -> Unit = {},
+    onFollowList: (String) -> Unit = {},
 ) {
     val colors = LocalMtfColors.current
     val viewModel: UserProfileViewModel = appViewModel {
@@ -139,6 +147,20 @@ fun UserProfileScreen(
             )
         },
     ) { padding ->
+        // 看自己的主页：内容与底栏「我的」页一致，顶栏仍是本页的返回键
+        if (isSelf) {
+            ProfileContent(
+                modifier = Modifier.padding(padding),
+                onLogin = onLogin,
+                onDownloads = onDownloads,
+                onDrafts = onDrafts,
+                onMyPosts = onMyPosts,
+                onMyFavorites = onMyFavorites,
+                onMyFriends = onMyFriends,
+                onFollowList = onFollowList,
+            )
+            return@Scaffold
+        }
         when (val current = state) {
             is UiState.Loading -> LoadingBox(Modifier.padding(padding))
             is UiState.Error -> ErrorBox(current.message, { viewModel.load() }, Modifier.padding(padding))

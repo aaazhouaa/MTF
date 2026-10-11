@@ -38,9 +38,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,6 +109,8 @@ fun HomeScreen(
     onUserClick: (uid: String) -> Unit,
     onProfileClick: (uid: String) -> Unit,
     onLogin: () -> Unit,
+    /** 底栏重复点击「首页」的计数，每点一次回顶一次；0 表示未触发过。 */
+    scrollToTopTick: Int,
 ) {
     val colors = LocalMtfColors.current
     val container = LocalContext.current.container()
@@ -135,6 +139,17 @@ fun HomeScreen(
     val pagerState = rememberPagerState(initialPage = 0) { HomeTabs.views.size }
     // 每页一个列表状态并提升到页面作用域：切 tab 不丢滚动位置，也不重建已翻页的数据
     val listStates = HomeTabs.views.map { rememberLazyListState() }
+
+    // 底栏重复点击「首页」：与双击顶栏同一效果，回当前分页的顶部。
+    // 已处理到第几次必须记住：切 tab 时本页组合会被销毁再按 saveState 重建，不记住的话
+    // 重建后同一 tick 会再触发一次，白丢恢复出来的滚动位置
+    var handledScrollTopTick by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(scrollToTopTick) {
+        if (scrollToTopTick > handledScrollTopTick) {
+            handledScrollTopTick = scrollToTopTick
+            listStates[pagerState.currentPage].scrollToTop()
+        }
+    }
 
     // 加载/操作类提示改走全局轻提示：页面级提示卡片已由 AppToast 统一承载
     LaunchedEffect(actionMessage) {

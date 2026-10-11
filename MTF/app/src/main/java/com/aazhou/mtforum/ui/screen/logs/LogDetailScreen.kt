@@ -247,7 +247,7 @@ private fun shareEntry(context: Context, entry: LogEntry) {
     context.startActivity(Intent.createChooser(intent, "分享此条日志"))
 }
 
-/** 导出单条日志到「下载/MTF」，结果经 [onResult] 回调给界面。 */
+/** 导出单条日志到「下载/MTF/Logs」，结果经 [onResult] 回调给界面。 */
 private fun exportEntry(
     context: Context,
     entry: LogEntry,
@@ -259,7 +259,7 @@ private fun exportEntry(
         val ok = withContext(Dispatchers.IO) {
             saveTextDocument(context, fileName, entry.toText()) != null
         }
-        onResult(if (ok) "已导出到 下载/MTF" else "导出失败")
+        onResult(if (ok) "已导出到 下载/MTF/Logs" else "导出失败")
     }
 }
 

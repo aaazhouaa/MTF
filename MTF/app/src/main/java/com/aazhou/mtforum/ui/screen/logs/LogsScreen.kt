@@ -137,7 +137,7 @@ fun LogsScreen(
                             val ok = withContext(Dispatchers.IO) {
                                 saveTextDocument(context, name, text) != null
                             }
-                            AppToast.show(if (ok) "已导出到 下载/MTF" else "导出失败")
+                            AppToast.show(if (ok) "已导出到 下载/MTF/Logs" else "导出失败")
                         }
                     }) {
                         Icon(
@@ -496,7 +496,9 @@ internal fun logFileName(): String {
 
 private fun shareLogs(context: Context, entries: List<LogEntry>, level: LogLevel) {
     val text = entries.toExportText(BuildConfig.VERSION_NAME, level)
-    val cacheFile = File(context.cacheDir, "mtf_share_${System.currentTimeMillis()}.txt")
+    // 必须落在 file_paths.xml 已配置的 logs/ 子目录内，FileProvider 才认这个根
+    val dir = File(context.cacheDir, "logs").apply { mkdirs() }
+    val cacheFile = File(dir, "mtf_share_${System.currentTimeMillis()}.txt")
     cacheFile.writeText(text)
     val uri = FileProvider.getUriForFile(
         context,

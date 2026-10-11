@@ -565,7 +565,10 @@ fun PostEditScreen(
                                         viewModel.recordSmileyUsed(code)
                                     }
                                 },
-                                modifier = Modifier.fillMaxSize(),
+                                // 与回复输入区同一套内边距：表情网格与分类栏不贴死屏幕左右边缘
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 14.dp, vertical = 4.dp),
                             )
                         }
                     }
@@ -777,7 +780,7 @@ fun PostEditScreen(
                                             .border(0.6.dp, colors.divider, RoundedCornerShape(10.dp)),
                                     ) {
                                         AsyncImage(
-                                            model = attachment.localFile,
+                                            model = attachment.imageModel,
                                             contentDescription = attachment.fileName,
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier
@@ -879,7 +882,7 @@ fun PostEditScreen(
         // 点附件缩略图看大图：整组可左右翻页，点中的那张作首页；本地文件没有网络地址，只留缩放与翻页
         if (previewImageIndex >= 0 && uploadedImages.isNotEmpty()) {
             ImagePreview(
-                urls = uploadedImages.map { it.localFile },
+                urls = uploadedImages.map { it.imageModel },
                 initialIndex = previewImageIndex.coerceAtMost(uploadedImages.lastIndex),
                 onDismiss = { previewImageIndex = -1 },
             )

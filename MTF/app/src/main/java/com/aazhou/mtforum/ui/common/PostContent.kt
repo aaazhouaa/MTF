@@ -142,13 +142,15 @@ fun PostContent(
      * 菜单之前弹出系统的剪切/复制工具条，长按菜单反而点不出来。
      */
     selectable: Boolean = true,
+    /** 引用卡的「原文」点击：带上被引楼层 pid，用于跳到那一楼。 */
+    onQuoteClick: ((pid: String) -> Unit)? = null,
 ) {
     if (selectable) {
         SelectionContainer {
-            PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier)
+            PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier, onQuoteClick)
         }
     } else {
-        PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier)
+        PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier, onQuoteClick)
     }
 }
 
@@ -162,12 +164,13 @@ private fun PostContentBody(
     pageImages: List<String>,
     bodyStyle: TextStyle,
     modifier: Modifier,
+    onQuoteClick: ((pid: String) -> Unit)? = null,
 ) {
     val blocks = remember(html) { parseContentBlocks(html) }
     val colors = LocalMtfColors.current
     val darkTheme = LocalIsDarkTheme.current
     Column(modifier) {
-        if (quote != null && quote.text.isNotBlank()) QuoteCard(quote)
+        if (quote != null && quote.text.isNotBlank()) QuoteCard(quote, onQuoteClick)
         for (block in blocks) {
             when (block) {
                 is ContentBlock.Quote -> {
@@ -528,7 +531,15 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
         if (cachedAspect != null && aspectRatio != cachedAspect) aspectRatio = cachedAspect
     }
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        val maxImageWidth = maxWidth * 0.92f
+        // 单图比多图网格单格略大即可：同时限宽与限高，横图按宽、竖图按高，避免长图把列表撑得过长
+        val maxImageWidth = maxWidth * 0.6f
+        val maxImageHeight = maxWidth * 0.9f
+        val sizeModifier =
+            if (aspectRatio >= maxImageWidth / maxImageHeight) {
+                Modifier.width(maxImageWidth).aspectRatio(aspectRatio)
+            } else {
+                Modifier.height(maxImageHeight).aspectRatio(aspectRatio)
+            }
         AsyncImage(
             model = postImageRequest(url),
             contentDescription = null,
@@ -548,11 +559,11 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
             },
             modifier = Modifier
                 .align(Alignment.Center)
-                .width(maxImageWidth)
-                .aspectRatio(aspectRatio)
+                .then(sizeModifier)
                 .clip(RoundedCornerShape(6.dp))
                 .background(colors.quoteBackground)
                 .dimImageInDark()
+                .border(1.dp, colors.divider, RoundedCornerShape(6.dp))
                 .then(
                     if (onImageClick != null) Modifier.clickable { onImageClick() } else Modifier
                 ),
@@ -585,6 +596,7 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
                             .aspectRatio(1f / cellRatio)
                             .clip(RoundedCornerShape(6.dp))
                             .background(colors.quoteBackground)
+                            .border(1.dp, colors.divider, RoundedCornerShape(6.dp))
                             .then(
                                 if (onImageClick != null) Modifier.clickable { onImageClick(url) } else Modifier
                             ),
@@ -680,7 +692,7 @@ private fun InlineVideo(url: String, poster: String?, onPlay: (() -> Unit)?) {
 
 /** 引用卡：上方「回复 {被引作者}：」斜体小字；正文带「原文」前缀，下方一条与正文等长的细灰线；右下角仅时间。 */
 @Composable
-private fun QuoteCard(quote: PostQuote) {
+private fun QuoteCard(quote: PostQuote, onQuoteClick: ((pid: String) -> Unit)? = null) {
     val colors = LocalMtfColors.current
     val accentColor = accentTextColor()    // 正文最后一行的文字宽度：细线长度跟着它走，多行也只在最后一行下面画一条
     var lastLineRight by remember(quote.text) { mutableStateOf(0f) }
@@ -701,9 +713,28 @@ private fun QuoteCard(quote: PostQuote) {
                 .fillMaxWidth()
                 .padding(horizontal = 10.dp, vertical = 7.dp),
         ) {
+            // 「原文」二字在站点给出被引楼层 pid 时可点：带上 pid 跳到那一楼
+            val quotedPid = quote.pid?.takeIf { it.isNotBlank() && onQuoteClick != null }
             Text(
                 text = buildAnnotatedString {
                     withStyle(SpanStyle(color = accentColor, fontWeight = FontWeight.Bold)) {
+                        if (quotedPid != null) {
+                            addLink(
+                                LinkAnnotation.Clickable(
+                                    tag = quotedPid,
+                                    styles = TextLinkStyles(
+                                        style = SpanStyle(
+                                            color = accentColor,
+                                            fontWeight = FontWeight.Bold,
+                                            textDecoration = TextDecoration.Underline,
+                                        ),
+                                    ),
+                                    linkInteractionListener = { onQuoteClick?.invoke(quotedPid) },
+                                ),
+                                0,
+                                2,
+                            )
+                        }
                         append("原文 ")
                     }
                     append(quote.text)

@@ -1,5 +1,6 @@
 package com.aazhou.mtforum.ui.screen.postedit
 
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -22,9 +23,14 @@ import java.io.File
 /** 已上传图片附件 */
 data class UploadedImageAttachment(
     val aid: String,
-    val localFile: File,
+    val localFile: File?,
     val fileName: String,
-)
+    /** 编辑态回填的站上已有附件：没有本地文件，缩略图与预览都走站点地址。 */
+    val remoteUrl: String? = null,
+) {
+    /** 缩略图与大图共用的加载对象：新上传走本地文件，回填的站上附件走站点地址。 */
+    val imageModel: Any get() = localFile ?: remoteUrl.orEmpty()
+}
 
 class PostEditViewModel(
     val fid: String,
@@ -99,6 +105,16 @@ class PostEditViewModel(
                 _editData.value = data
                 _subject.value = data.subject.orEmpty()
                 _message.value = TextFieldValue(data.message)
+                // 站点把已挂的图片附件单列在编辑表单里，回填成缩略图：只取正文的话，
+                // 里面的 [attachimg] 标记在输入框里只是段弱化文字，编辑页一张图都看不见
+                _uploadedImages.value = data.attachments.map {
+                    UploadedImageAttachment(
+                        aid = it.aid,
+                        localFile = null,
+                        fileName = it.fileName,
+                        remoteUrl = it.url,
+                    )
+                }
                 if (data.permissionDenied != null) {
                     _state.value = PostState.Error(data.permissionDenied)
                 }
@@ -227,6 +243,19 @@ class PostEditViewModel(
 
     fun removeAttachment(attachment: UploadedImageAttachment) {
         _uploadedImages.value = _uploadedImages.value.filter { it.aid != attachment.aid }
+        // 站上已有的附件，删的是正文里的引用：标记留在输入框里，保存后图仍旧挂在帖子上
+        if (attachment.remoteUrl == null) return
+        val current = _message.value
+        val tag = "[attachimg]${attachment.aid}[/attachimg]"
+        val start = current.text.indexOf(tag)
+        if (start < 0) return
+        val end = start + tag.length
+        val cursor = current.selection.start
+        val newCursor = if (cursor >= end) cursor - tag.length else minOf(cursor, start)
+        _message.value = current.copy(
+            text = current.text.removeRange(start, end),
+            selection = TextRange(newCursor.coerceIn(0, current.text.length - tag.length)),
+        )
     }
 
     fun insertTextAtSelection(insertText: String) {

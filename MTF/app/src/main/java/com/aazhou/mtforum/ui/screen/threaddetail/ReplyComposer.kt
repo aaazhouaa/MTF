@@ -162,7 +162,7 @@ internal fun ReplyComposer(
     var uploading by remember { mutableStateOf(false) }
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null || uploadCredentials == null) return@rememberLauncherForActivityResult
+        if (uri == null) return@rememberLauncherForActivityResult
         uploading = true
         scope.launch {
             try {
@@ -486,11 +486,8 @@ internal fun ReplyComposer(
                         }
                     }
                     ComposerToolButton(R.drawable.ic_image, "图片") {
-                        if (uploadCredentials != null) {
-                            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        } else {
-                            AppToast.show("上传凭据已失效，返回帖子重进试试")
-                        }
+                        // 不在这里拦「无凭据」：凭据可能在登录后才拿到，选完图再补取
+                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     }
                     // @：打开「@朋友」选择页（好友/关注 + 全站搜索）
                     ComposerToolButton(R.drawable.ic_at, "提到朋友") { onOpenAtPicker() }
@@ -914,8 +911,11 @@ internal fun SmileyOverlay(
             val box = if (last.top != first.top) first else Rect(first.left, first.top, last.right, last.bottom)
             with(density) {
                 val side = 22.dp.toPx()
-                val left = box.left + (box.width - side) / 2f
-                val top = box.top + (box.height - side) / 2f
+                // 表情码被行尾截断时只剩首字符那一格，格宽往往远小于表情本身：居中会让表情往左
+                // 溢出压住前一个字，格高不足时上下也会蹭到邻行。偏移不越出格子，多出来的部分
+                // 留在行尾空白里
+                val left = box.left + ((box.width - side) / 2f).coerceAtLeast(0f)
+                val top = box.top + ((box.height - side) / 2f).coerceAtLeast(0f)
                 key(range.first to code) {
                     AsyncImage(
                         model = smiley.url,

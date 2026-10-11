@@ -451,6 +451,18 @@ data class NewThreadResult(
 )
 
 /**
+ * 编辑页表单里已挂在该内容上的图片附件。
+ *
+ * 站点把已有附件单列在表单的 `ul#imglist` 里（正文 textarea 只有 `[attachimg]<aid>[/attachimg]`
+ * 引用），每条带 aid 与缩略图地址；编辑页要显示这些图，只能从这里取。
+ */
+data class EditAttachment(
+    val aid: String,
+    val url: String,
+    val fileName: String,
+)
+
+/**
  * 编辑页初始数据（自己的帖子/评论「编辑」入口拉取）。
  *
  * 站点编辑表单的 textarea 里是数据库中的 BBCode 原文，客户端只能整份取回再交给
@@ -460,6 +472,7 @@ data class EditPostPageData(
     val formhash: String,
     val subject: String? = null,
     val message: String = "",
+    val attachments: List<EditAttachment> = emptyList(),
     val uploadUid: String? = null,
     val uploadHash: String? = null,
     val types: List<ThreadType> = emptyList(),

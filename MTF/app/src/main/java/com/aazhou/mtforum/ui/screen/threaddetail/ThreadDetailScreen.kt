@@ -695,6 +695,15 @@ fun ThreadDetailScreen(
                                     pageImages = pageImages,
                                     onLongPress = { actionTarget = it },
                                     onThreadClick = onThreadClick,
+                                    // 引用卡的「原文」：被引楼层已加载就滚过去，否则提示
+                                    onQuoteClick = { pid ->
+                                        val index = page?.posts?.indexOfFirst { it.pid == pid } ?: -1
+                                        if (index >= 0) {
+                                            scope.launch { listState.animateScrollToItem(index) }
+                                        } else {
+                                            AppToast.show("原楼层还未加载，往下翻翻看")
+                                        }
+                                    },
                                 )
                             }
                             item(key = "pager") {
@@ -777,8 +786,14 @@ fun ThreadDetailScreen(
                 onSmileyUsed = { code -> scope.launch { container.smileyStore.addRecent(code) } },
                 uploadCredentials = uploadCredentials,
                 onUploadImage = { file ->
-                    val (uid, hash) = uploadCredentials ?: return@ReplyComposer null
-                    container.repository.uploadReplyImage(file, uid, hash)
+                    // 凭据可能还没到手（登录前抓的页面没有上传表单）：选完图再补取一次
+                    val credentials = uploadCredentials ?: viewModel.ensureUploadCredentials()
+                    if (credentials == null) {
+                        AppToast.show("上传凭据获取失败，请返回帖子重进试试")
+                        null
+                    } else {
+                        container.repository.uploadReplyImage(file, credentials.first, credentials.second)
+                    }
                 },
                 atUsers = atUsers.orEmpty(),
                 onOpenAtPicker = { atPickerVisible = true },
@@ -1743,6 +1758,7 @@ internal fun ReplyBlock(
     pageImages: List<String>,
     onLongPress: (Post) -> Unit,
     onThreadClick: (String) -> Unit,
+    onQuoteClick: (String) -> Unit = {},
 ) {
     val colors = LocalMtfColors.current
     val context = LocalContext.current
@@ -1814,6 +1830,8 @@ internal fun ReplyBlock(
                         openForumLink(context, url, siteHost, onThreadClick, onUserClick)
                     },
                     selectable = false,
+                    // 引用卡的「原文」：跳到被引的那一楼（由上层定位）
+                    onQuoteClick = onQuoteClick,
                 )
             }
         }

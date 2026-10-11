@@ -1,5 +1,8 @@
 package com.aazhou.mtforum.ui.screen.chat
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,27 +43,39 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.ChatMessage
+import com.aazhou.mtforum.data.parser.SmileyPack
 import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.container
+import com.aazhou.mtforum.ui.screen.threaddetail.SmileyPanel
+import com.aazhou.mtforum.ui.screen.threaddetail.insertAtSelection
+import com.aazhou.mtforum.ui.screen.threaddetail.prepareUploadFile
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -81,10 +96,42 @@ fun ChatScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val displayName by viewModel.targetName.collectAsStateWithLifecycle()
     val isSending by viewModel.isSending.collectAsStateWithLifecycle()
+    val isUploading by viewModel.isUploading.collectAsStateWithLifecycle()
     val myAvatar by viewModel.myAvatarUrl.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
-    var inputText by remember { mutableStateOf("") }
+    var inputText by remember { mutableStateOf(TextFieldValue("")) }
+    var smileyPanelVisible by remember { mutableStateOf(false) }
+    var smileyPacks by remember { mutableStateOf<List<SmileyPack>>(emptyList()) }
+    val recentCodes by context.container().smileyStore.recent
+        .collectAsStateWithLifecycle(initialValue = emptyList())
     val listState = rememberLazyListState()
+
+    LaunchedEffect(Unit) {
+        smileyPacks = runCatching { context.container().repository.smileyPacks() }
+            .getOrDefault(emptyList())
+    }
+
+    val scope = rememberCoroutineScope()
+
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            try {
+                val file = prepareUploadFile(context, uri)
+                viewModel.uploadChatImage(file) { url ->
+                    if (url != null) {
+                        // 私聊没有附件：插 [img] 外链，站点 BBCode 会渲染成图
+                        inputText = inputText.insertAtSelection("[img]$url[/img]")
+                    }
+                }
+            } catch (e: Exception) {
+                AppToast.show(e.message ?: "图片处理失败")
+            }
+        }
+    }
 
     Scaffold(
         containerColor = colors.background,
@@ -140,6 +187,20 @@ fun ChatScreen(
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    ChatToolIcon(R.drawable.ic_smiley, "表情", tint = colors.iconSecondary) {
+                        smileyPanelVisible = !smileyPanelVisible
+                        if (smileyPanelVisible) {
+                            focusManager.clearFocus()
+                            keyboard?.hide()
+                        } else {
+                            keyboard?.show()
+                        }
+                    }
+                    ChatToolIcon(R.drawable.ic_image, "图片", tint = colors.iconSecondary) {
+                        imagePicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    }
                     OutlinedTextField(
                         value = inputText,
                         onValueChange = { inputText = it },
@@ -165,7 +226,7 @@ fun ChatScreen(
                         maxLines = 4,
                     )
 
-                    val canSend = inputText.isNotBlank() && !isSending
+                    val canSend = inputText.text.isNotBlank() && !isSending
                     val primaryColor = MaterialTheme.colorScheme.primary
 
                     Box(
@@ -174,9 +235,9 @@ fun ChatScreen(
                             .clip(CircleShape)
                             .background(if (canSend) primaryColor else primaryColor.copy(alpha = 0.35f))
                             .clickable(enabled = canSend) {
-                                val msg = inputText
+                                val msg = inputText.text
                                 viewModel.sendMessage(msg) {
-                                    inputText = ""
+                                    inputText = TextFieldValue("")
                                 }
                             },
                         contentAlignment = Alignment.Center,
@@ -196,6 +257,20 @@ fun ChatScreen(
                             )
                         }
                     }
+                }
+                if (smileyPanelVisible) {
+                    SmileyPanel(
+                        packs = smileyPacks,
+                        recentCodes = recentCodes,
+                        onPick = { code ->
+                            inputText = inputText.insertAtSelection(code)
+                            scope.launch { context.container().smileyStore.addRecent(code) }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(ChatSmileyPanelHeight)
+                            .padding(horizontal = 14.dp, vertical = 4.dp),
+                    )
                 }
             }
         },
@@ -368,3 +443,24 @@ private fun ChatBubbleItem(
         }
     }
 }
+
+/** 私聊输入栏的工具图标（表情 / 图片）：与发送按钮同高，无底衬。 */
+@Composable
+private fun ChatToolIcon(
+    iconRes: Int,
+    contentDescription: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    IconButton(onClick = onClick, modifier = Modifier.size(38.dp)) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(21.dp),
+        )
+    }
+}
+
+/** 私聊表情面板高度：固定值，不跟键盘高度联动（私聊不需要严格等高）。 */
+private val ChatSmileyPanelHeight = 260.dp

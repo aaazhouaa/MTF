@@ -68,8 +68,45 @@ fun ProfileScreen(
     onFollowList: (String) -> Unit = {},
     onUserClick: (String) -> Unit = {},
 ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(LocalMtfColors.current.background)
+            .statusBarsPadding(),
+    ) {
+        ProfileContent(
+            modifier = Modifier.padding(top = 40.dp, bottom = bottomBarContentPadding()),
+            onLogin = onLogin,
+            onDownloads = onDownloads,
+            onDrafts = onDrafts,
+            onMyPosts = onMyPosts,
+            onMyFavorites = onMyFavorites,
+            onMyFriends = onMyFriends,
+            onFollowList = onFollowList,
+            onUserClick = onUserClick,
+        )
+    }
+}
+
+/**
+ * 「我的」页主体：底栏 tab 与「跳转到自己的个人主页」共用同一份内容。
+ *
+ * insets 由调用方给：tab 页自己避让状态栏并预留玻璃底栏高度；个人主页页由带返回键的
+ * 顶栏 Scaffold 提供，避免出现双份状态栏留白或没有返回键。
+ */
+@Composable
+fun ProfileContent(
+    modifier: Modifier = Modifier,
+    onLogin: () -> Unit,
+    onDownloads: () -> Unit,
+    onDrafts: () -> Unit = {},
+    onMyPosts: () -> Unit = {},
+    onMyFavorites: () -> Unit = {},
+    onMyFriends: () -> Unit = {},
+    onFollowList: (String) -> Unit = {},
+    onUserClick: (String) -> Unit = {},
+) {
     val context = LocalContext.current
-    val colors = LocalMtfColors.current
     val viewModel: ProfileViewModel = appViewModel { ProfileViewModel(it.repository, it.contentCache, it.sessionStore) }
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
@@ -85,12 +122,9 @@ fun ProfileScreen(
     val requireLogin = { showLoginDialog = true }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
-            .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(top = 40.dp, bottom = bottomBarContentPadding()),
+            .verticalScroll(rememberScrollState()),
     ) {
         if (loading && profile == null && context.container().repository.isLoggedIn()) {
             Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) {

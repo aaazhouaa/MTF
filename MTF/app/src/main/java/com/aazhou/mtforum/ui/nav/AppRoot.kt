@@ -9,7 +9,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -126,6 +129,8 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
     val tabRoutes = listOf(Routes.HOME, Routes.FORUMS, Routes.PROFILE)
     val selectedIndex = tabRoutes.indexOf(currentRoute)
     val showBottomBar = selectedIndex >= 0
+    // 底栏重复点击「首页」的计数：每点一次 +1，首页据此把当前分页的列表拉回顶部
+    var homeScrollTopTick by remember { mutableIntStateOf(0) }
 
     Box(
         Modifier
@@ -180,6 +185,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     // 顶栏头像进个人主页（自己的空间页）
                     onProfileClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    scrollToTopTick = homeScrollTopTick,
                 )
             }
             composable(Routes.FORUMS) {
@@ -350,6 +356,26 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onPostsClick = { targetUid ->
                         navController.navigate(Routes.userPosts(targetUid))
                     },
+                    // 看自己的主页时内容即「我的」页，入口导航与底栏 tab 保持一致
+                    onLogin = { navController.navigate(Routes.LOGIN) },
+                    onDownloads = { navController.navigate(Routes.DOWNLOADS) },
+                    onDrafts = { navController.navigate(Routes.DRAFTS) },
+                    onMyPosts = {
+                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_POSTS)
+                        else navController.navigate(Routes.LOGIN)
+                    },
+                    onMyFavorites = {
+                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_FAVORITES)
+                        else navController.navigate(Routes.LOGIN)
+                    },
+                    onMyFriends = {
+                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_FRIENDS)
+                        else navController.navigate(Routes.LOGIN)
+                    },
+                    onFollowList = { type ->
+                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.followList(type))
+                        else navController.navigate(Routes.LOGIN)
+                    },
                 )
             }
 
@@ -460,6 +486,9 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                         launchSingleTop = true
                         restoreState = true
                     }
+                },
+                onReselect = { index ->
+                    if (tabRoutes[index] == Routes.HOME) homeScrollTopTick++
                 },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )

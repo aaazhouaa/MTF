@@ -78,6 +78,9 @@ private const val SMILEY_REVALIDATE_INTERVAL_MS = 12 * 60 * 60 * 1000L
 private const val GUIDE_VIEW_PORTAL = "hot"
 
 /** 论坛数据入口：封装请求 + 解析，UI 层只与它交互。 */
+/** 站点附件 CDN：上传回执只给相对路径，拼图地址用（与站点前端同一前缀）。 */
+private const val ATTACHMENT_CDN = "https://cdn.binmt.cc/"
+
 class ForumRepository(
     private val http: HttpClient,
     private val smileyStore: SmileyStore,
@@ -245,7 +248,22 @@ class ForumRepository(
         file: File,
         uid: String,
         hash: String,
-    ): String? = withContext(Dispatchers.IO) {
+    ): String? = uploadImage(file, uid, hash)?.aid
+
+    /**
+     * 上传结果：[aid] 给 `[attachimg]` 引用，[path] 是站点回的附件相对路径，
+     * [url] 由它拼出 CDN 地址，供 `[img]` 直接引用（私聊没有附件，只能走外链图）。
+     */
+    data class ImageUpload(val aid: String, val path: String) {
+        val url: String get() = ATTACHMENT_CDN + "data/attachment/forum/" + path
+    }
+
+    /** 上传一张图，拿到 aid 与附件路径；失败返回 null。 */
+    suspend fun uploadImage(
+        file: File,
+        uid: String,
+        hash: String,
+    ): ImageUpload? = withContext(Dispatchers.IO) {
         val body = http.upload(
             url = "${HttpClient.BASE_URL}misc.php?mod=swfupload&operation=upload&type=image&inajax=yes&infloat=yes&simple=2",
             file = file,
@@ -254,7 +272,33 @@ class ForumRepository(
         )
         // 响应为 DISCUZUPLOAD|1|0|<aid>|<...>|<附件路径>|<文件名>|...，第 3 段为状态码
         val parts = body.split('|')
-        if (parts.size >= 4 && parts[0] == "DISCUZUPLOAD" && parts[2] == "0") parts[3] else null
+        if (parts.size >= 6 && parts[0] == "DISCUZUPLOAD" && parts[2] == "0") {
+            ImageUpload(aid = parts[3], path = parts[5])
+        } else {
+            null
+        }
+    }
+
+    /**
+     * 取贴图上传凭据（uid + hash）。
+     *
+     * 站点只在帖子页与发帖页的内联脚本里给这份凭据，私聊页没有上传表单；而 hash 是
+     * 会话级的（同一会话在各页面完全一致），与取自哪个页面无关，故借这两个页面取。
+     * 按「自己的帖子 -> 首页热帖 -> 任一版块发帖页」的顺序试，全部落空返回 null。
+     */
+    suspend fun fetchUploadCredentials(): Pair<String, String>? = withContext(Dispatchers.IO) {
+        val pages = mutableListOf<String>()
+        runCatching { myThreads() }.getOrNull()?.threads?.firstOrNull()?.tid
+            ?.let { pages += "thread-$it-1-1.html" }
+        runCatching { home() }.getOrNull()?.hotThreads?.firstOrNull()?.tid
+            ?.let { pages += "thread-$it-1-1.html" }
+        runCatching { forumGroups() }.getOrNull()?.firstOrNull()?.forums?.firstOrNull()?.fid
+            ?.let { pages += "forum.php?mod=post&action=newthread&fid=$it&mobile=2" }
+        for (page in pages) {
+            val html = runCatching { http.get(http.url(page)) }.getOrNull() ?: continue
+            ForumParser.parseUploadCredentials(html)?.let { return@withContext it }
+        }
+        null
     }
 
     /**

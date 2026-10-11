@@ -12,6 +12,8 @@ import kotlinx.coroutines.launch
 class LoginViewModel(
     private val repository: ForumRepository,
     private val sessionStore: SessionStore,
+    /** 会话落盘后通知容器重取当前用户：各页登录态都读容器里那一份，不刷新就还是未登录态。 */
+    private val onSessionSaved: () -> Unit = {},
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<LoginUiState>(LoginUiState.Idle)
@@ -41,6 +43,7 @@ class LoginViewModel(
                     username = profile.name.orEmpty(),
                     avatar = profile.avatarUrl,
                 )
+                onSessionSaved()
                 _state.value = LoginUiState.Success
             } catch (e: Exception) {
                 _state.value = LoginUiState.Error(e.message ?: "网络错误")

@@ -64,7 +64,9 @@ fun LoginDialog(
     val isDark = LocalIsDarkTheme.current
     val primary = MaterialTheme.colorScheme.primary
     val focusManager = LocalFocusManager.current
-    val viewModel: LoginViewModel = appViewModel { LoginViewModel(it.repository, it.sessionStore) }
+    val viewModel: LoginViewModel = appViewModel {
+        LoginViewModel(it.repository, it.sessionStore) { it.refreshCurrentUserAsync() }
+    }
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     var username by remember { mutableStateOf("") }

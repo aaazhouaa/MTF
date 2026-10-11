@@ -8,6 +8,7 @@ import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.SessionStore
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.UiState
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +31,12 @@ class ChatViewModel(
 
     private val _isSending = MutableStateFlow(false)
     val isSending: StateFlow<Boolean> = _isSending.asStateFlow()
+
+    private val _isUploading = MutableStateFlow(false)
+    val isUploading: StateFlow<Boolean> = _isUploading.asStateFlow()
+
+    /** 贴图上传凭据（uid + hash）：会话级，取到一次就能一直用，懒加载。 */
+    private var uploadCredentials: Pair<String, String>? = null
 
     val myAvatarUrl: StateFlow<String?> = sessionStore.avatar
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -108,4 +115,35 @@ class ChatViewModel(
             }
         }
     }
+
+    /**
+     * 私聊贴图：选完图先把图传到站点附件，再拿 CDN 地址回来（私聊没有附件，
+     * 消息里只能插 `[img]地址[/img]`）。上传失败返回 null，由界面提示。
+     */
+    fun uploadChatImage(file: File, onResult: (String?) -> Unit) {
+        if (_isUploading.value) return
+        _isUploading.value = true
+        viewModelScope.launch {
+            try {
+                val credentials = uploadCredentials
+                    ?: repository.fetchUploadCredentials()?.also { uploadCredentials = it }
+                if (credentials == null) {
+                    AppToast.show("上传凭据获取失败，请重试")
+                    onResult(null)
+                    return@launch
+                }
+                val upload = repository.uploadImage(file, credentials.first, credentials.second)
+                if (upload == null) {
+                    AppToast.show("上传失败，可能超出大小限制")
+                }
+                onResult(upload?.url)
+            } catch (e: Exception) {
+                AppToast.show(e.message ?: "上传失败")
+                onResult(null)
+            } finally {
+                _isUploading.value = false
+            }
+        }
+    }
 }
+

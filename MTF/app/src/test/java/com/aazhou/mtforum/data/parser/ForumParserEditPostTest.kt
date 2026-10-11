@@ -43,6 +43,53 @@ class ForumParserEditPostTest {
         assertNull(data.permissionDenied)
     }
 
+    /**
+     * 编辑页已有的图片附件：站点把它们列在 ul#imglist 里（结构与真机抓包一致），
+     * 每条 li 带 span.del[aid] 与 img#aimg_<aid>，缩略图地址即正文引用的那张图。
+     */
+    @Test
+    fun `parseEditPostInit reads existing image attachments`() {
+        val html = """
+            <html><body>
+            <form method="post" name="postform" action="forum.php?mod=post&action=edit&tid=174032&pid=11910108&mobile=2">
+              <input type="hidden" name="formhash" value="a1b2c3d4" />
+              <textarea name="message" id="needmessage">放几张界面截图:
+            [attachimg]377576[/attachimg]
+            [attachimg]377577[/attachimg]</textarea>
+              <div class="comiis_upbox comiis_allowpostimg bg_f cl">
+                <ul id="imglist" class="comiis_post_imglist cl">
+                  <li class="up_btn"><a href="javascript:;"><input type="file" name="Filedata" id="filedata"></a></li>
+                  <li><span aid="377577" up="1" class="del"><a href="javascript:;"></a></span><span class="p_img"><a href="javascript:;" onclick="comiis_addsmilies('[attachimg]377577[/attachimg]')"><span class="charu f_f">插入</span><img style="height:54px;width:54px;" id="aimg_377577" title="shot2.jpg" src="https://oos.binmt.cc//forum/202610/05/133004m0uxckwnluoljn49.jpg" class="vm b_ok"></a></span>
+            <input type="hidden" name="attachnew[377577][description]" value="">
+            </li>
+                  <li><span aid="377576" up="1" class="del"><a href="javascript:;"></a></span><span class="p_img"><a href="javascript:;" onclick="comiis_addsmilies('[attachimg]377576[/attachimg]')"><span class="charu f_f">插入</span><img style="height:54px;width:54px;" id="aimg_377576" title="shot1.jpg" src="https://oos.binmt.cc//forum/202610/05/133003r0izxax0y1wrxlzt.jpg" class="vm b_ok"></a></span>
+            <input type="hidden" name="attachnew[377576][description]" value="">
+            </li>
+                </ul>
+              </div>
+            </form>
+            </body></html>
+        """.trimIndent()
+        val attachments = ForumParser.parseEditPostInit(html).attachments
+        assertEquals(2, attachments.size)
+        // 顺序按站点表单给的来（新的在前），不按正文里的引用顺序
+        assertEquals("377577", attachments[0].aid)
+        assertEquals("https://oos.binmt.cc//forum/202610/05/133004m0uxckwnluoljn49.jpg", attachments[0].url)
+        assertEquals("shot2.jpg", attachments[0].fileName)
+        assertEquals("377576", attachments[1].aid)
+        assertEquals("shot1.jpg", attachments[1].fileName)
+    }
+
+    /** 没有附件时列表里只剩上传按钮，不能把它当成一条附件。 */
+    @Test
+    fun `parseEditPostInit without attachments yields empty list`() {
+        val html = editPageHtml.replace(
+            "<script>var uploadConfig",
+            "<ul id=\"imglist\" class=\"comiis_post_imglist cl\"><li class=\"up_btn\"></li></ul>\n          <script>var uploadConfig",
+        )
+        assertTrue(ForumParser.parseEditPostInit(html).attachments.isEmpty())
+    }
+
     @Test
     fun `parseEditPostInit reads upload credentials and types`() {
         val data = ForumParser.parseEditPostInit(editPageHtml)

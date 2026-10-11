@@ -133,15 +133,29 @@ class AppContainer(application: Application) {
         }
         val profile = runCatching { repository.me() }.getOrElse { e ->
             logger.warn("Session", "拉取当前用户资料失败", e)
+            // 资料页拉取失败不清登录态：cookie 判据仍是已登录，退回上次落盘的资料先上屏，
+            // 否则刚登录成功的一瞬间界面仍按未登录渲染（点赞/评论全被拦）
+            cachedProfile()?.let { _currentUser.value = it }
             return
         }
         if (!profile.isLoggedIn) {
-            _currentUser.value = null
+            cachedProfile()?.let { _currentUser.value = it } ?: run { _currentUser.value = null }
             return
         }
         _currentUser.value = profile
         // 顺手落盘：WebView 里登录的会话此前只存在于内存，重启即丢
         persistSession(profile.uid.orEmpty(), profile.name.orEmpty(), profile.avatarUrl)
+    }
+
+    /** 上次登录落盘的资料；没有（从未登录过）返回 null。 */
+    private suspend fun cachedProfile(): UserProfile? {
+        val uid = sessionStore.uid.first()
+        if (uid.isEmpty()) return null
+        return UserProfile(
+            uid = uid,
+            name = sessionStore.username.first().ifEmpty { null },
+            avatarUrl = sessionStore.avatar.first().ifEmpty { null },
+        )
     }
 
     /** 界面/回调用的非挂起版本。 */

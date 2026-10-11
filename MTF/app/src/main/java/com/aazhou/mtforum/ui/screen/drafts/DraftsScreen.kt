@@ -90,6 +90,8 @@ fun DraftsScreen(
     val selected = remember { mutableStateListOf<String>() }
     var confirmClear by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    // 单篇删除：存放待删草稿的 fid，弹窗确认后按 fid 删
+    var confirmDeleteFid by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         containerColor = colors.background,
@@ -197,6 +199,7 @@ fun DraftsScreen(
                             }
                         },
                         onToggle = { if (checked) selected.remove(draft.fid) else selected.add(draft.fid) },
+                        onDelete = { confirmDeleteFid = draft.fid },
                     )
                 }
             }
@@ -217,6 +220,22 @@ fun DraftsScreen(
         )
     }
 
+    if (confirmDeleteFid != null) {
+        MtfConfirmDialog(
+            title = "删除草稿",
+            message = "删除该草稿？删除后无法恢复。",
+            confirmText = "确认删除",
+            onDismissRequest = { confirmDeleteFid = null },
+            onConfirm = {
+                confirmDeleteFid?.let { fid ->
+                    viewModel.remove(listOf(fid))
+                    selected.remove(fid)
+                }
+                confirmDeleteFid = null
+            },
+        )
+    }
+
     if (confirmClear) {
         MtfConfirmDialog(
             title = "清空草稿箱",
@@ -232,13 +251,14 @@ fun DraftsScreen(
     }
 }
 
-/** 一篇草稿：左侧多选勾框，右侧版块/时间 + 标题 + 正文摘录。 */
+/** 一篇草稿：左侧多选勾框，右侧版块/时间 + 标题 + 正文摘录，尾部删除按钮。 */
 @Composable
 private fun DraftCard(
     draft: PostDraft,
     checked: Boolean,
     onClick: () -> Unit,
     onToggle: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
@@ -323,6 +343,18 @@ private fun DraftCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+
+        IconButton(
+            onClick = onDelete,
+            modifier = Modifier.size(36.dp),
+        ) {
+            Icon(
+                painterResource(R.drawable.ic_delete),
+                contentDescription = "删除草稿",
+                tint = colors.iconSecondary,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }

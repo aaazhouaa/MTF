@@ -1,42 +1,25 @@
 package com.aazhou.mtforum.ui.common
 
-import android.content.Intent
-import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.Drawable
-import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -46,32 +29,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import androidx.core.graphics.drawable.toBitmap
 import coil.compose.AsyncImage
-import com.aazhou.mtforum.R
-import com.aazhou.mtforum.ui.theme.DarkImageDimAlpha
-import com.aazhou.mtforum.ui.theme.LocalDimImagesInDark
-import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
-import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** 手势可缩放的上限。 */
@@ -80,22 +51,16 @@ private const val MAX_SCALE = 5f
 /** 单击判定阈值：抬起位置离按下处超过该距离就不算单击。 */
 private const val TAP_SLOP = 24f
 
-/** 顶部操作栏每次显示后停留的时长。 */
-private const val CONTROLS_VISIBLE_MS = 1000L
-
-/** 亮度高于该值的图片视为浅色，前景改用深色。 */
-private const val LIGHT_IMAGE_LUMINANCE = 0.6f
-
 /**
  * 全屏图片查看：黑底，多图左右翻页，双指缩放、放大后拖动、双击放大/还原，
- * 顶部提供保存到相册 / 分享 / 用浏览器打开。
+ * 单击图片关闭，长按图片经确认后保存到相册。多图时计数常驻显示在底部。
  *
- * 前景色随当前图片亮度自适应：浅色图用深色字、深色图用白色字，并给文字垫一层
- * 同调半透明底衬，避免白字压在浅色截图上、深字压在深色图上看不清。
+ * 单击是否关闭只看触点有没有落在图片实际绘制到的区域内（见 [tapInsideImage]）：
+ * 图片按 ContentScale.Fit 居中绘制，四周的黑边不算图片，点黑边不再误触关闭。
  *
  * [PostContent] 传出的是整组图片地址与命中下标，故同组图片可连续翻看。
  * 列表项也可以是本地文件（如发帖页刚上传的附件）：这类图没有网络地址可取，
- * 保存/分享/浏览器打开整套隐藏，只留缩放与翻页。
+ * 长按不弹保存弹窗，只留缩放与翻页。
  */
 @Composable
 fun ImagePreview(
@@ -109,31 +74,10 @@ fun ImagePreview(
     val pagerState = rememberPagerState(initialPage = initialIndex.coerceIn(0, urls.lastIndex)) {
         urls.size
     }
-    // 三项操作都要先走网络下载，列表里混有本地文件时整套不适用
-    val remoteUrls = urls.filterIsInstance<String>()
-    val remoteActions = remoteUrls.size == urls.size
     var busy by remember { mutableStateOf(false) }
-    // 顶部操作栏（返回/页码/操作图标）默认隐藏；翻页、缩放、拖动等交互都会重新计时，
-    // 显示 [CONTROLS_VISIBLE_MS] 后自动隐去。单击图片不受影响，始终关闭查看器。
-    var controlsVisible by remember { mutableStateOf(false) }
-    var interactionTick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(interactionTick) {
-        if (interactionTick > 0) {
-            controlsVisible = true
-            delay(CONTROLS_VISIBLE_MS)
-            controlsVisible = false
-        }
-    }
-    // 翻页也算一次交互；首帧出现时不触发，保持默认隐藏
-    var pageInitialized by remember { mutableStateOf(false) }
-    LaunchedEffect(pagerState.currentPage) {
-        if (pageInitialized) interactionTick++ else pageInitialized = true
-    }
-    // 每页图片的平均亮度色；翻页时按当前页取用，预加载页算好也能马上用上
-    val pageColors = remember { mutableStateMapOf<Int, Color>() }
-    val background = pageColors[pagerState.currentPage]
+    var confirmDownload by remember { mutableStateOf(false) }
 
-    BackHandler(onBack = onDismiss)
+    BackHandler(enabled = !confirmDownload, onBack = onDismiss)
 
     // 预览必须盖住玻璃底栏：底栏与 NavHost 同在 AppRoot 的 Box 里、且绘制在 NavHost 之后，
     // 作为页面内 composable 的预览无论 fillMaxSize 到哪都被它压住。Popup 挂在窗口装饰层，
@@ -155,125 +99,79 @@ fun ImagePreview(
                 ZoomableImage(
                     model = urls[page],
                     active = pagerState.currentPage == page,
-                    onBackgroundColor = { color -> pageColors[page] = color },
                     onTap = onDismiss,
-                    onInteraction = { interactionTick++ },
+                    onLongPress = {
+                        // 只有远程图片（String 地址）拉得到字节；本地文件没有可下载的地址
+                        if (urls[pagerState.currentPage] is String) confirmDownload = true
+                    },
                 )
             }
 
-            val foreground = foregroundFor(background)
-            val pill = pillFor(background)
-            // 操作图标底衬比正文底衬更实一些，图标在图上更分明
-            val actionPill = elevatedPill(pill)
-
-            AnimatedVisibility(
-                visible = controlsVisible,
-                enter = fadeIn(),
-                exit = fadeOut(),
-            ) {
-                Row(
+            if (urls.size > 1) {
+                Text(
+                    "${pagerState.currentPage + 1} / ${urls.size}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(pill)
-                            .clickable(onClick = onDismiss),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            painterResource(R.drawable.ic_back),
-                            contentDescription = "返回",
-                            tint = foreground,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    if (urls.size > 1) {
-                        Text(
-                            "${pagerState.currentPage + 1} / ${urls.size}",
-                            color = foreground,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(pill)
-                                .padding(horizontal = 10.dp, vertical = 3.dp),
-                        )
-                    }
-                    Spacer(Modifier.weight(1f))
-                    if (remoteActions) {
-                        PreviewActionIcon(R.drawable.ic_download, "保存到相册", foreground, actionPill) {
-                            runBusy(scope, { busy = it }, "保存失败") {
-                                val url = remoteUrls[pagerState.currentPage]
-                                val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
-                                withContext(Dispatchers.IO) { saveToGallery(context, url, bytes) } != null
-                            }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        PreviewActionIcon(R.drawable.ic_share, "分享", foreground, actionPill) {
-                            runBusy(scope, { busy = it }, "分享失败") {
-                                val url = remoteUrls[pagerState.currentPage]
-                                val bytes = withContext(Dispatchers.IO) { downloadBytes(context, url) }
-                                val file = withContext(Dispatchers.IO) { writeCacheFile(context, url, bytes) }
-                                shareImage(context, url, file)
-                                true
-                            }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        PreviewActionIcon(R.drawable.ic_browser, "浏览器打开", foreground, actionPill) {
-                            runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(remoteUrls[pagerState.currentPage])))
-                            }.onFailure { AppToast.show("没有可打开该链接的应用") }
-                        }
-                    }
-                }
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 20.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .padding(horizontal = 14.dp, vertical = 5.dp),
+                )
             }
 
             if (busy) {
                 CircularProgressIndicator(
-                    color = foreground,
+                    color = Color.White,
                     modifier = Modifier.align(Alignment.Center).size(32.dp),
                 )
             }
         }
     }
+
+    if (confirmDownload) {
+        val current = urls[pagerState.currentPage]
+        MtfConfirmDialog(
+            title = "保存到相册",
+            message = "是否将当前图片保存到相册？",
+            confirmText = "保存",
+            onDismissRequest = { confirmDownload = false },
+            onConfirm = {
+                confirmDownload = false
+                if (current is String) {
+                    runBusy(scope, { busy = it }, "保存失败") {
+                        val bytes = withContext(Dispatchers.IO) { downloadBytes(context, current) }
+                        withContext(Dispatchers.IO) { saveToGallery(context, current, bytes) } != null
+                    }
+                }
+            },
+        )
+    }
 }
 
 /**
- * 单张图片：双指缩放、放大后拖动、双击放大或还原、单击关闭。
+ * 单张图片：双指缩放、放大后拖动、双击放大或还原、单击关闭、长按触发保存。
  *
  * [active] 为 false（Pager 预加载的相邻页）时不处理手势，避免抢走翻页。
  * 仅在「多指」或「已放大」时才消费事件：原始比例下的单指拖动不消费，交给 Pager 翻页。
- * 加载成功后把图片平均亮度色经 [onBackgroundColor] 上报，供上层决定前景色。
- * 单击始终回调 [onTap]（关闭查看器）；缩放、拖动等手势会回调 [onInteraction]，
- * 由上层决定是否弹出操作栏，互不干扰。
+ * 单击关闭前先判断触点是否落在图片实际绘制区域内（见 [tapInsideImage]），
+ * 点到 ContentScale.Fit 留下的黑边不关闭；加载中/失败时没有可用矩形，维持点到即关。
  */
 @Composable
 private fun ZoomableImage(
     model: Any,
     active: Boolean,
-    onBackgroundColor: (Color) -> Unit,
     onTap: () -> Unit,
-    onInteraction: () -> Unit,
+    onLongPress: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
+    var intrinsic by remember(model) { mutableStateOf(IntSize.Zero) }
     var loading by remember(model) { mutableStateOf(true) }
     var failed by remember(model) { mutableStateOf(false) }
-    // 压暗开启时，前景色按「膜覆盖后的实际亮度」判定：采样拿的是原图均值，
-    // 直接按它选前景会让压暗后的浅图配深字，对比度失衡
-    val dimScrim = if (LocalIsDarkTheme.current && LocalDimImagesInDark.current) {
-        LocalMtfColors.current.background
-    } else {
-        null
-    }
 
     Box(
         modifier = Modifier
@@ -285,6 +183,7 @@ private fun ZoomableImage(
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val startedZoomed = scale > 1.01f
                     var moved = false
+                    var longPressed = false
                     while (true) {
                         val event = awaitPointerEvent()
                         val pointers = event.changes.count { it.pressed }
@@ -304,14 +203,23 @@ private fun ZoomableImage(
                         }
                         if (event.changes.any { it.positionChanged() }) {
                             moved = true
-                            // 缩放/拖动过程中持续上报交互，让操作栏在操作期间保持可见
-                            onInteraction()
+                        }
+                        // 长按保存：单指静止超过系统长按阈值即触发；多指（缩放）或已拖动不触发
+                        if (!longPressed && !moved && pointers <= 1) {
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change != null &&
+                                change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis
+                            ) {
+                                longPressed = true
+                                onLongPress()
+                            }
                         }
                         if (event.changes.none { it.pressed }) {
                             val upPos = event.changes.firstOrNull { it.id == down.id }?.position
                                 ?: down.position
-                            val isTap = !moved && (upPos - down.position).getDistance() < TAP_SLOP
-                            if (isTap) {
+                            val isTap = !moved && !longPressed &&
+                                (upPos - down.position).getDistance() < TAP_SLOP
+                            if (isTap && (failed || tapInsideImage(upPos, boxSize, intrinsic, scale, offset))) {
                                 onTap()
                             } else if (startedZoomed && scale <= 1.01f) {
                                 // 拖到图片边界外回弹：复位位移
@@ -333,9 +241,8 @@ private fun ZoomableImage(
                 loading = false
                 failed = false
                 val drawable = state.result.drawable
-                scope.launch {
-                    val color = withContext(Dispatchers.Default) { sampleAverageColor(drawable) }
-                    onBackgroundColor(dimScrim?.let { lerp(color, it, DarkImageDimAlpha) } ?: color)
+                if (drawable.intrinsicWidth > 0 && drawable.intrinsicHeight > 0) {
+                    intrinsic = IntSize(drawable.intrinsicWidth, drawable.intrinsicHeight)
                 }
             },
             onError = { loading = false; failed = true },
@@ -361,72 +268,30 @@ private fun ZoomableImage(
     }
 }
 
-/** 顶部操作图标：前景色与圆形底衬随图片亮度动态取用，带点击涟漪。 */
-@Composable
-private fun PreviewActionIcon(
-    iconRes: Int,
-    contentDescription: String,
-    foreground: Color,
-    pill: Color,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            .background(pill)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            painterResource(iconRes),
-            contentDescription = contentDescription,
-            tint = foreground,
-            modifier = Modifier.size(22.dp),
-        )
-    }
-}
-
-/** 图片为浅色时用深色前景，否则用白色；无采样结果（加载中/失败）时按深底用白色。 */
-private fun foregroundFor(background: Color?): Color =
-    if (background != null && background.isLight()) Color(0xE6000000) else Color(0xFFFFFFFF)
-
-/** 文字底衬：浅色图配浅色半透明衬底 + 深字，深色图配深色衬底 + 白字。
- * 中间调图片上单纯的白字或黑字都发灰，垫底衬后对比稳定。
+/**
+ * 判断触点是否落在图片经 ContentScale.Fit 居中绘制、再叠加缩放/位移后的实际区域内。
+ *
+ * 图片按 Fit 缩放到 [box] 内居中，得到未变换矩形；graphicsLayer 以画布中心为变换原点
+ * 做缩放与平移，故把触点反向变换回局部坐标后再判是否落在该矩形内。加载中/失败
+ * （[intrinsic] 非正）时返回 true，维持原来的「点到即关」。
  */
-private fun pillFor(background: Color?): Color =
-    if (background != null && background.isLight()) Color(0x40FFFFFF) else Color(0x66000000)
-
-/** 顶部操作图标的底衬：在普通底衬基础上把不透明度提高 30%，使其在图上更分明。 */
-private fun elevatedPill(pill: Color): Color = pill.copy(alpha = (pill.alpha * 1.3f).coerceAtMost(1f))
-
-private fun Color.isLight(): Boolean =
-    (0.299f * red + 0.587f * green + 0.114f * blue) > LIGHT_IMAGE_LUMINANCE
-
-/** 抽稀采样图片的平均色，用于判断亮度；大图也不至于逐像素遍历。 */
-private fun sampleAverageColor(drawable: Drawable): Color {
-    val bitmap = (drawable as? BitmapDrawable)?.bitmap ?: drawable.toBitmap()
-    if (bitmap.width <= 0 || bitmap.height <= 0) return Color.Black
-    val pixels = bitmap.asImageBitmap().toPixelMap()
-    val stepX = (bitmap.width / 24).coerceAtLeast(1)
-    val stepY = (bitmap.height / 24).coerceAtLeast(1)
-    var red = 0f
-    var green = 0f
-    var blue = 0f
-    var count = 0
-    var y = 0
-    while (y < bitmap.height) {
-        var x = 0
-        while (x < bitmap.width) {
-            val color = pixels[x, y]
-            red += color.red
-            green += color.green
-            blue += color.blue
-            count++
-            x += stepX
-        }
-        y += stepY
-    }
-    return if (count == 0) Color.Black else Color(red / count, green / count, blue / count)
+private fun tapInsideImage(
+    pos: Offset,
+    box: IntSize,
+    intrinsic: IntSize,
+    scale: Float,
+    offset: Offset,
+): Boolean {
+    if (box.width <= 0 || box.height <= 0) return true
+    if (intrinsic.width <= 0 || intrinsic.height <= 0) return true
+    val scaleFit = minOf(box.width.toFloat() / intrinsic.width, box.height.toFloat() / intrinsic.height)
+    val drawW = intrinsic.width * scaleFit
+    val drawH = intrinsic.height * scaleFit
+    val left = (box.width - drawW) / 2f
+    val top = (box.height - drawH) / 2f
+    val cx = box.width / 2f
+    val cy = box.height / 2f
+    val localX = cx + (pos.x - cx - offset.x) / scale
+    val localY = cy + (pos.y - cy - offset.y) / scale
+    return localX >= left && localX <= left + drawW && localY >= top && localY <= top + drawH
 }
-

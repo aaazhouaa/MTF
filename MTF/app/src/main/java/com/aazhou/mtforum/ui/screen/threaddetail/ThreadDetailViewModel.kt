@@ -597,7 +597,36 @@ class ThreadDetailViewModel(
             likedStateKnown = latest?.likedStateKnown ?: false,
             isFavorited = latest?.isFavorited ?: false,
             favoritedStateKnown = latest?.favoritedStateKnown ?: false,
+            noticeAuthor = latest?.noticeAuthor,
+            isFollowingOp = latest?.isFollowingOp ?: false,
+            followingStateKnown = latest?.followingStateKnown ?: false,
+            // 贴图上传凭据必须跟着上屏数据走：页面 HTML 里有，装配时漏掉就永远是 null，
+            // 评论区选图会被当成「凭据失效」直接拒掉
+            uploadUid = latest?.uploadUid,
+            uploadHash = latest?.uploadHash,
         )
+    }
+
+    /**
+     * 贴图上传凭据；页面没给（未登录时抓的页面没有上传表单）时现场重取一次本页补上。
+     *
+     * 用户完全感知不到这一步：点图、选图之后才拉页面，不额外多打请求。
+     */
+    suspend fun ensureUploadCredentials(): Pair<String, String>? {
+        val current = (_state.value as? UiState.Success)?.data
+        val uid = current?.uploadUid
+        val hash = current?.uploadHash
+        if (!uid.isNullOrBlank() && !hash.isNullOrBlank()) return uid to hash
+        val seq = currentSequence
+        val fresh = runCatching { repository.threadPage(tid, currentMaxPage, seq.orderType, seq.authorId) }
+            .getOrNull() ?: return null
+        val freshUid = fresh.uploadUid ?: return null
+        val freshHash = fresh.uploadHash ?: return null
+        // 只把凭据补进上屏数据，楼层内容与分页状态都不动
+        _state.value = UiState.Success(
+            current?.copy(uploadUid = freshUid, uploadHash = freshHash) ?: fresh.copy(posts = emptyList()),
+        )
+        return freshUid to freshHash
     }
 
     /**
