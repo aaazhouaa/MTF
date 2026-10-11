@@ -315,8 +315,8 @@ private suspend fun PointerInputScope.swipeDirectionLock(onVerticalSwipe: (Int) 
                 val far = kotlin.math.abs(total.y) > distanceThreshold
                 val fast = kotlin.math.abs(velocity) > velocityThreshold
                 if (axis == 2 && (far || fast)) {
-                    // 上滑看上一张、下滑看下一张
-                    onVerticalSwipe(if (total.y > 0f) 1 else -1)
+                    // 上滑看下一张、下滑看上一张
+                    onVerticalSwipe(if (total.y > 0f) -1 else 1)
                 }
                 break
             }
