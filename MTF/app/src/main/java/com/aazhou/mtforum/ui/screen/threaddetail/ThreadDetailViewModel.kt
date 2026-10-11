@@ -2,14 +2,11 @@ package com.aazhou.mtforum.ui.screen.threaddetail
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aazhou.mtforum.data.cache.CacheKeys
-import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LikeResult
 import com.aazhou.mtforum.data.model.PageProgress
 import com.aazhou.mtforum.data.model.Post
 import com.aazhou.mtforum.data.model.ThreadPage
-import com.aazhou.mtforum.data.model.ThreadSnapshot
 import com.aazhou.mtforum.data.parser.ForumParser
 import com.aazhou.mtforum.data.repo.ActionStore
 import com.aazhou.mtforum.data.repo.ForumRepository
@@ -18,9 +15,6 @@ import com.aazhou.mtforum.ui.common.isWaterReply
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,13 +23,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 
 class ThreadDetailViewModel(
     private val tid: String,
     private val repository: ForumRepository,
     private val actionStore: ActionStore,
-    private val contentCache: ContentCache,
     myUidFlow: Flow<String>,
     /**
      * 从消息提醒跳进来时要定位的楼层 pid。
@@ -64,9 +56,6 @@ class ThreadDetailViewModel(
      */
     private val atNames = mutableSetOf<String>()
 
-    /** 本次进帖为定位展开过折叠：退出重进（VM 重建）即恢复用户原来的折叠偏好。 */
-    private var anchorRevealed = false
-
     private val _replyState = MutableStateFlow<ReplyState>(ReplyState.Idle)
     val replyState: StateFlow<ReplyState> = _replyState.asStateFlow()
 
@@ -81,10 +70,6 @@ class ThreadDetailViewModel(
 
     private val _editForm = MutableStateFlow<EditFormState>(EditFormState.Idle)
     val editForm: StateFlow<EditFormState> = _editForm.asStateFlow()
-
-    /** 已折叠楼中楼的楼层 pid。 */
-    private val _collapsed = MutableStateFlow<Set<String>>(emptySet())
-    val collapsed: StateFlow<Set<String>> = _collapsed.asStateFlow()
 
     /** 排序：0 正序，1 倒序。 */
     private val _orderType = MutableStateFlow(0)
@@ -196,10 +181,6 @@ class ThreadDetailViewModel(
     private val _loadMoreState = MutableStateFlow<LoadMoreState>(LoadMoreState.Idle)
     val loadMoreState: StateFlow<LoadMoreState> = _loadMoreState.asStateFlow()
 
-    /** 楼中楼树（顶层楼层 + 子楼层）；树未算好前为 null。 */
-    private val _tree = MutableStateFlow<ReplyTree?>(null)
-    val tree: StateFlow<ReplyTree?> = _tree.asStateFlow()
-
     /** 需要默认折叠的灌水楼层 pid。 */
     private val _waterPids = MutableStateFlow<Set<String>>(emptySet())
     val waterPids: StateFlow<Set<String>> = _waterPids.asStateFlow()
@@ -210,129 +191,18 @@ class ThreadDetailViewModel(
     private val _likeUsersLoading = MutableStateFlow(false)
     val likeUsersLoading: StateFlow<Boolean> = _likeUsersLoading.asStateFlow()
 
-    private var treeJob: Job? = null
-
-    /** 自动续拉链；暂停/切换筛选时取消，进入帖子与刷新后重新拉起。 */
-    private var autoLoadJob: Job? = null
-
-    /** 自动续拉链是否在跑（界面据此切换暂停/继续图标，并让开滚动触发的续拉）。 */
-    private val _autoLoadRunning = MutableStateFlow(false)
-    val autoLoadRunning: StateFlow<Boolean> = _autoLoadRunning.asStateFlow()
-
-    /** 用户按了暂停；刷新、切排序都不自动恢复，只能手动点继续。 */
-    private val _autoLoadPaused = MutableStateFlow(false)
-    val autoLoadPaused: StateFlow<Boolean> = _autoLoadPaused.asStateFlow()
-
-    /**
-     * 自动续拉链标识：暂停后紧接着又开始的新链，不能被旧链收尾时置回「未在跑」。
-     */
-    private var autoLoadChainId = 0
-
     /** 切换排序/只看楼主时界面传来的滚动锚点，新楼层上屏时才交给界面。 */
     private var requestedAnchor: ScrollAnchor? = null
 
     /** 数据请求代次：每次 load 递增，用于丢弃过期请求的结果，避免旧数据覆盖新数据。 */
     private var dataGeneration = 0
 
-    /** 当前显示的内容来自缓存且尚未被网络数据替换过；失败提示据此区分「只有缓存」。 */
-    private var cacheOnly = false
-
-    private val cacheJson = Json { ignoreUnknownKeys = true }
-
     /** 下拉刷新中。 */
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     init {
-        loadCachedThenNetwork()
-    }
-
-    /**
-     * 进入帖子与切换排序/只看楼主的公共入口：
-     * 有缓存就整份上屏（三种视图共用一份，切换不重拉），再只把缺的页补齐；
-     * 没有缓存才从头加载。断网时有缓存也能照常看，不再整页转圈后摆一张失败页。
-     */
-    private fun loadCachedThenNetwork() {
-        viewModelScope.launch {
-            val snapshot = readThreadCache()
-            if (snapshot != null) {
-                dataGeneration++
-                cacheOnly = true
-                restore(snapshot)
-                // 关注态先按本地记录上屏：等补拉的第 1 页回来才翻胶囊，观感就是
-                // 「关注过的人重进帖子还是显示关注」
-                actionStore.following(snapshot.opUid.orEmpty())?.let {
-                    _followState.value = FollowState.Done(it, fromUser = false)
-                }
-                // 定位楼层先拉回来合入楼层池再上屏：目标楼层通常在很后面的页，
-                // 先上屏再拉，界面会先渲染到帖子正文、等目标页到达后再跳过去。
-                // 续拉链也等锚点消费掉再开：定位期间后续页会把目标挤出处屏幕
-                fetchAnchorPage()
-                publish(resetCollapsed = true, startChain = _anchor.value == null)
-                // formhash / replyUrl 是一次性令牌，不落盘。缓存命中后补拉一次第 1 页
-                // 把会话态拿回来：楼层按 pid 覆盖写，列表内容不变，只是多一个请求。
-                // 顺带发现新评论——总评论数一变，池子就不再算收齐，续拉会继续。
-                if (session == null) load(1) else resumeAfterCache()
-            } else {
-                load(1)
-            }
-        }
-    }
-
-    /**
-     * 读本地详情快照（楼主 / 正序 / 倒序共用）。
-     *
-     * 过期也照读：快照旧一点也好过对着转圈重新拉整帖，缺的页由补拉链补齐。
-     */
-    private suspend fun readThreadCache(): ThreadSnapshot? =
-        contentCache.read(
-            key = CacheKeys.thread(tid),
-            ttlMillis = CacheKeys.THREAD_TTL,
-            allowExpired = true,
-        ) { cacheJson.decodeFromString<ThreadSnapshot>(it) }
-
-    /** 快照灌进楼层池与帖子级字段；会话态仍为空，等一次真实响应补齐。 */
-    private fun restore(snapshot: ThreadSnapshot) {
-        pool.clear()
-        snapshot.posts.forEach { pool[it.pid] = it }
-        viewProgress.clear()
-        snapshot.progress.forEach { viewProgress[progressKey(it.authorId)] = it }
-        subject = snapshot.subject
-        forumName = snapshot.forumName
-        opUid = snapshot.opUid
-        fid = snapshot.fid
-        totalReplies = snapshot.totalReplies
-    }
-
-    /**
-     * 缓存上屏后把「缓存之后的新页」补齐：已缓存的楼层不再请求，只取新增部分。
-     * 缓存本身不必是全量的（自动链拉到哪存到哪），故从缓存页码接着拉即可。
-     * 失败就停在已加载处并提示，用户滑到底会再次触发 [loadMore]，不做无休止的重试。
-     */
-    private fun resumeAfterCache() {
-        autoLoadJob?.cancel()
-        if (!_hasNext.value) return
-        val dataGen = dataGeneration
-        val chainId = ++autoLoadChainId
-        _autoLoadPaused.value = false
-        _autoLoadRunning.value = true
-        autoLoadJob = viewModelScope.launch {
-            var failed = false
-            try {
-                while (isActive && _hasNext.value) {
-                    failed = fetchNextBatch()
-                    if (failed) break
-                    delay(AUTO_LOAD_DELAY_MS)
-                }
-            } finally {
-                if (chainId == autoLoadChainId) {
-                    _autoLoadRunning.value = false
-                    if (failed && dataGen == dataGeneration) {
-                        _actionMessage.value = "网络不稳定，评论只显示已缓存的部分"
-                    }
-                }
-            }
-        }
+        load(1)
     }
 
     /**
@@ -345,14 +215,9 @@ class ThreadDetailViewModel(
         val previousOpOnly = _opOnly.value
         val previousOrderType = _orderType.value
         // 已有内容时保持显示（切换排序/只看楼主不清屏、不闪 Loading），请求回来原地替换。
-        // 楼层树不能在这里清空：楼层 items 一塌成只剩头部，LazyColumn 会被截到列表尾部
-        // （视觉上跳顶），塌陷后的短列表还会误触发底部的自动续拉。
-        // 新数据与楼层树一起上屏，见 publish()。
         val keepContent = pool.isNotEmpty()
         if (!keepContent) {
             _state.value = UiState.Loading
-            _tree.value = null
-            _waterPids.value = emptySet()
         }
         val generation = ++dataGeneration
         viewModelScope.launch {
@@ -365,11 +230,7 @@ class ThreadDetailViewModel(
                     // 旧内容原样留着，只把分段控件退回原档并提示失败
                     _opOnly.value = previousOpOnly
                     _orderType.value = previousOrderType
-                    _actionMessage.value = if (cacheOnly) {
-                        "加载失败，显示的是缓存内容"
-                    } else {
-                        friendlyError(e)
-                    }
+                    _actionMessage.value = friendlyError(e)
                 } else {
                     _state.value = UiState.Error(friendlyError(e))
                 }
@@ -408,11 +269,10 @@ class ThreadDetailViewModel(
             mergeIntoPool(data)
             recordProgress(authorId, target, data.totalPages)
             adoptMeta(data)
-            cacheOnly = false
             // 目标楼层通常在很后面的页，先拉回来合入楼层池再上屏；反过来先上屏再拉，
-            // 界面会先渲染到帖子正文、等目标页到达后再跳过去。续拉链等锚点消费掉再开
+            // 界面会先渲染到帖子正文、等目标页到达后再跳过去。
             fetchAnchorPage()
-            publish(startChain = _anchor.value == null)
+            publish()
         }
     }
 
@@ -445,11 +305,9 @@ class ThreadDetailViewModel(
         }
         if (generation != dataGeneration) return
         mergeIntoPool(data)
-        // 定位场景不开自动续拉：后续页按楼层插在目标前面，会把目标挤出处屏幕。
-        // 底部仍是「还有更多」的状态，用户往下滑或点「继续」照样能接着看。
-        autoLoadJob?.cancel()
-        _autoLoadRunning.value = false
-        publish(startChain = false)
+        // 定位场景不预先续拉：后续页按楼层插在目标前面，会把目标挤出处屏幕。
+        // 底部仍是「还有更多」的状态，用户往下滑照样能接着看。
+        publish()
     }
 
     /** 界面已滚到定位楼层，清掉待定位状态。 */
@@ -458,45 +316,29 @@ class ThreadDetailViewModel(
     }
 
     /**
-     * 定位前把藏住目标楼层的折叠展开。
+     * 定位前把藏住目标楼层的灌水折叠展开。
      *
      * 只看本次：折叠态随 ViewModel 生灭，退出重进仍是用户原来的偏好。
-     * 楼中楼父楼层被收起时，目标子回复整段不渲染，滚到父楼层也看不见它。
      */
     fun revealAnchorReply(pid: String) {
-        val parentPid = _tree.value?.children?.entries
-            ?.firstOrNull { (_, kids) -> kids.any { it.pid == pid } }?.key
-        val collapsedHidden = listOfNotNull(pid, parentPid).filter { _collapsed.value.contains(it) }
-        val folded = listOfNotNull(pid, parentPid).any { _waterPids.value.contains(it) }
-        if (collapsedHidden.isEmpty() && !folded) return
-        if (collapsedHidden.isNotEmpty()) {
-            _collapsed.value = _collapsed.value - collapsedHidden.toSet()
-        }
-        if (folded) _foldExpanded.value = true
-        // 展开过就一路保持到退出：否则紧接着的 publish 会把刚展开的楼层收回去
-        anchorRevealed = true
+        if (_waterPids.value.contains(pid)) _foldExpanded.value = true
     }
 
     /**
      * 把楼层池按当前视图（楼主过滤 + 排序）装配成一页上屏。
      *
-     * 楼中楼树始终按正序口径算：被引楼层必须排在引用者之前，正序天然满足。
-     * 倒序不重算树，只把顶层楼层与子楼层各自反向——父子关系与灌水折叠判定
-     * 在两种排序下完全一致，已折叠条数也不会因为切排序而变。
+     * 灌水折叠态不在这里重置：用户手动展开/收起后本次浏览内一直保持，退出帖子
+     * VM 重建才恢复默认。
      * 有切换筛选时记录的锚点，就同时交给界面在新楼层上屏后原地定位，屏幕不跳。
      */
-    private suspend fun publish(resetCollapsed: Boolean = true, startChain: Boolean = true) {
-        treeJob?.cancel()
+    private suspend fun publish() {
         val view = viewPage()
-        val (tree, water) = withContext(Dispatchers.Default) { treeFor(view) }
-        // 灌水折叠态不在这里重置：用户手动展开/收起后本次浏览内一直保持，退出帖子
-        // VM 重建才恢复默认；楼中楼收起态仍随重装重置，定位未完成时连它也不重置
-        // （刚为定位展开的楼层会被紧接着的 publish 收回去）。
-        if (resetCollapsed && !anchorRevealed) {
-            _collapsed.value = emptySet()
+        // 灌水判定逐楼层过一遍 Jsoup，长帖上是主线程级别的开销，挪到后台算
+        val water = withContext(Dispatchers.Default) {
+            val op = view.posts.firstOrNull { it.isFirstPost } ?: view.posts.firstOrNull()
+            view.posts.filter { it !== op && isWaterReply(it.contentHtml) }.map { it.pid }.toSet()
         }
         _state.value = UiState.Success(view)
-        _tree.value = tree
         _waterPids.value = water
         _hasNext.value = hasNextForView()
         _loadMoreState.value =
@@ -505,39 +347,22 @@ class ThreadDetailViewModel(
             _pendingScrollAnchor.value = it
             requestedAnchor = null
         }
-        saveToCache()
-        // 首页楼层上屏后再起自动链：首屏先出来，后续页在后台限速补齐
-        if (startChain) syncAutoLoad()
-    }
-
-    /** [view] 的楼中楼树与灌水集合；树按正序算，倒序只把展示顺序反过来。 */
-    private fun treeFor(view: ThreadPage): Pair<ReplyTree, Set<String>> {
-        val ascending = if (_orderType.value == 1) view.posts.asReversed() else view.posts
-        val (built, water) = deriveTree(view.copy(posts = ascending))
-        if (_orderType.value != 1) return built to water
-        return ReplyTree(
-            topLevel = built.topLevel.asReversed(),
-            children = built.children.mapValues { it.value.asReversed() },
-            subReplyTo = built.subReplyTo,
-        ) to water
     }
 
     /** 手动续拉下一页：把新页并入楼层池（界面滚动到底时触发）。 */
     fun loadMore() {
         viewModelScope.launch {
-            val failed = fetchNextBatch()
-            // 手动续拉成功后把自动链接上（用户没暂停时），把剩下的页拉完
-            if (!failed && !_autoLoadPaused.value) syncAutoLoad()
+            fetchNextPage()
         }
     }
 
     /**
-     * 拉取一批楼层并入楼层池（由界面滚动到底触发；自动续拉见 [startAutoLoad]）。
+     * 拉取下一页楼层并入楼层池（由界面滚动到底触发）。
      *
-     * @return true 表示这批一条都没拿到（网络失败）。此时 [loadMoreState] 停在 Idle、
+     * @return true 表示这一页没拿到（网络失败）。此时 [loadMoreState] 停在 Idle、
      * 不做提示也不自动重试，用户滑动到底会再次触发 [loadMore]。
      */
-    private suspend fun fetchNextBatch(): Boolean {
+    private suspend fun fetchNextPage(): Boolean {
         if (_loadingMore.value || !_hasNext.value) return false
         val current = _state.value as? UiState.Success ?: return false
         val generation = dataGeneration
@@ -552,84 +377,66 @@ class ThreadDetailViewModel(
             return false
         }
         val knownTotalPages = maxOf(current.data.totalPages, progressOf(authorId).totalPages)
-        var next = startPage
-        // 差额未补齐时允许越过已知总页数探一页（见 nextPageToFetch），故上界至少放到 startPage
-        var totalPages = maxOf(knownTotalPages, startPage)
-        var pagesFetched = 0
-        // 本批新入库的条数：一次连拉多页凑满一屏，论坛每页条数不定，只拉一页太少、观感卡顿
-        var newInBatch = 0
-        var failed = false
-        var lastFetched = 0
         // 最近一个真实交付过楼层的页码：越界探测被站点夹成末页、什么也没带来时，
         // 用它把 recordProgress 收回去，免得幻觉页码（如池里 58 楼却去敲第 178 页）
         // 每次进帖都重放
         var lastProductivePage = progressOf(authorId).maxPage
-        try {
-            while (pagesFetched < AUTO_LOAD_BATCH_PAGES &&
-                next <= totalPages &&
-                newInBatch < AUTO_LOAD_BATCH_REPLIES
-            ) {
-                val data = repository.threadPage(tid, next, FETCH_ORDER, authorId)
-                // 空响应的总页数不可信（越界夹页/解析失败常给出离谱页数），拿它推进
-                // progress 会让 nextPageToFetch 一直去追不存在的页码
-                val saneTotalPages =
-                    if (data.posts.isEmpty() && data.totalPages > totalPages) totalPages
-                    else data.totalPages
-                totalPages = saneTotalPages
-                val added = mergeIntoPool(data)
-                newInBatch += added
-                lastFetched = next
-                // 拉到过就记页码，哪怕整页都是已入库楼层：定位楼层会把目标页提前合入
-                // 池子却不记 progress，续拉走到那一页时若守住页码不动，就会反复敲同一页
-                recordProgress(authorId, next, saneTotalPages)
-                if (added > 0) {
-                    lastProductivePage = next
-                } else if (next > knownTotalPages) {
-                    // 越界探测页什么都没带来：站点把它夹成了末页，解析出的页数跟着请求
-                    // 页码涨。把 maxPage/totalPages 收回到真实交付过楼层的最后一页，
-                    // 续拉才不会每次进入都去敲 178、179 这种不存在的页码；真正的新
-                    // 评论由末页重拉与站点计数变化发现。
-                    val healed = lastProductivePage.coerceAtLeast(1)
-                    viewProgress[progressKey(authorId)] =
-                        PageProgress(authorId = authorId, maxPage = healed, totalPages = healed)
-                }
-                next++
-                pagesFetched++
+        var added = 0
+        val failed = try {
+            val data = repository.threadPage(tid, startPage, FETCH_ORDER, authorId)
+            // 空响应的总页数不可信（越界夹页/解析失败常给出离谱页数），拿它推进
+            // progress 会让 nextPageToFetch 一直去追不存在的页码
+            val saneTotalPages =
+                if (data.posts.isEmpty() && data.totalPages > knownTotalPages) knownTotalPages
+                else data.totalPages
+            added = mergeIntoPool(data)
+            // 拉到过就记页码，哪怕整页都是已入库楼层：定位楼层会把目标页提前合入
+            // 池子却不记 progress，续拉走到那一页时若守住页码不动，就会反复敲同一页
+            recordProgress(authorId, startPage, saneTotalPages)
+            if (added > 0) {
+                lastProductivePage = startPage
+            } else if (startPage > knownTotalPages) {
+                // 越界探测页什么都没带来：站点把它夹成了末页，解析出的页数跟着请求
+                // 页码涨。把 maxPage/totalPages 收回到真实交付过楼层的最后一页，
+                // 续拉才不会每次进入都去敲 178、179 这种不存在的页码；真正的新
+                // 评论由末页重拉与站点计数变化发现。
+                val healed = lastProductivePage.coerceAtLeast(1)
+                viewProgress[progressKey(authorId)] =
+                    PageProgress(authorId = authorId, maxPage = healed, totalPages = healed)
             }
+            false
         } catch (e: Exception) {
             // 越界探测失败只说明后面没有更多页，不算网络故障（否则会误弹「网络不稳定」）
-            failed = startPage <= knownTotalPages
+            startPage <= knownTotalPages
         }
-        // 期间又切换了排序/只看楼主：这批旧数据已无意义，直接丢弃。
-        // 不动页码：新的加载会自己记页码，旧批次收尾时把页码拨回旧筛选的值会漏页。
+        // 期间又切换了排序/只看楼主：这次的结果已无意义，直接丢弃。
+        // 不动页码：新的加载会自己记页码，旧请求收尾时把页码拨回旧筛选的值会漏页。
         if (generation != dataGeneration) {
             _loadingMore.value = false
             return failed
         }
         val key = progressKey(authorId)
-        // 本批确实拉到过页、却一条新楼层都没入库：后面都是真实末尾之后的空页，
+        // 确实拉到过页、却一条新楼层都没入库：后面都是真实末尾之后的空页，
         // 再拉只会空转。failed 不判定——那只是没拉到，不是没有。
-        if (!failed && newInBatch == 0) {
+        if (!failed && added == 0) {
             exhaustedViews.add(key)
         }
         // 池子仍少于站点计数：记下这次补拉的页码，下次同一页码再来一次还没补上就收手
-        val stillShort = expectedPoolSize()?.let { pool.size < it } ?: false
-        if (stillShort) {
-            val page = if (lastFetched > 0) lastFetched else startPage
-            shortPageRetry[key] = page to (expectedPoolSize() ?: -1)
+        val expected = expectedPoolSize()
+        if (expected != null && pool.size < expected) {
+            shortPageRetry[key] = startPage to expected
         } else {
             shortPageRetry.remove(key)
         }
-        cacheOnly = false
-        publish(startChain = false)
+        publish()
         _loadingMore.value = false
         return failed
     }
 
     /**
      * 点「下载」那一刻的楼层快照：楼层池当前的内容整体冻结，按正序给出，不受
-     * 「只看楼主 / 倒序」筛选影响。只取这一帧、不补拉后续评论：自动续拉在界面侧
-     * 继续跑不影响这份快照，想收进新评论就等加载完再点一次下载，按 tid 覆盖旧副本。
+     * 「只看楼主 / 倒序」筛选影响。只取这一帧、不补拉后续评论：想收进新评论就等
+     * 加载完再点一次下载，按 tid 覆盖旧副本。
      * 详情首屏还没上屏时返回 null——那时连正文都没有，调用方应提示稍后再试。
      */
     fun snapshotForDownload(): ThreadPage? {
@@ -790,56 +597,6 @@ class ThreadDetailViewModel(
     }
 
     /**
-     * 自动把评论分批拉完：批间 [AUTO_LOAD_DELAY_MS] 限速，避免连续请求触发站点风控。
-     *
-     * 失败时在失败处（[page] + 1）再试一次，仍失败就停下：底部停在 Idle，
-     * 之后用户滑动到底会再次触发 [loadMore]，不做无休止的自动重试。
-     * 切换排序/只看楼主会让 [dataGeneration] 变化，旧链据此自行退出。
-     */
-    private fun startAutoLoad() {
-        autoLoadJob?.cancel()
-        if (!_hasNext.value) return
-        val dataGen = dataGeneration
-        val chainId = ++autoLoadChainId
-        _autoLoadPaused.value = false
-        _autoLoadRunning.value = true
-        autoLoadJob = viewModelScope.launch {
-            try {
-                while (isActive) {
-                    delay(AUTO_LOAD_DELAY_MS)
-                    if (dataGen != dataGeneration || !_hasNext.value) break
-                    if (fetchNextBatch()) {
-                        delay(AUTO_LOAD_DELAY_MS)
-                        if (dataGen != dataGeneration || !_hasNext.value) break
-                        if (fetchNextBatch()) break
-                    }
-                }
-            } finally {
-                if (chainId == autoLoadChainId) _autoLoadRunning.value = false
-            }
-        }
-    }
-
-    /** 有后续页、用户没暂停、且链没在跑时，把自动链接上。 */
-    private fun syncAutoLoad() {
-        if (_hasNext.value && !_autoLoadPaused.value && autoLoadJob?.isActive != true) {
-            startAutoLoad()
-        }
-    }
-
-    /** 暂停/继续自动续拉；只在还有后续页时由界面调。 */
-    fun toggleAutoLoad() {
-        if (_autoLoadRunning.value) {
-            _autoLoadPaused.value = true
-            // 先翻转图标再取消协程：取消后 finally 要等下一轮主线程消息才跑
-            _autoLoadRunning.value = false
-            autoLoadJob?.cancel()
-        } else {
-            startAutoLoad()
-        }
-    }
-
-    /**
      * 编辑成功后把改后的正文取回来。
      *
      * 站点不单独回传改后的内容，只有重拉的页面里有；被编辑的楼层常在后几页（自己的
@@ -873,18 +630,15 @@ class ThreadDetailViewModel(
                 return@launch
             }
             if (generation != dataGeneration) return@launch
-            cacheOnly = false
             mergeIntoPool(fresh)
             recordProgress(authorId, 1, fresh.totalPages)
             adoptMeta(fresh)
-            // 不清用户的展开/折叠态：回复成功后正在看的楼层不该被重置
-            publish(resetCollapsed = false, startChain = false)
-            syncAutoLoad()
+            publish()
         }
     }
 
     /**
-     * 三档分段（楼主/正序/倒序）一次切换：先改状态、再统一走一遍缓存优先的加载。
+     * 三档分段（楼主/正序/倒序）一次切换：先改状态、再统一走一遍加载。
      * 避免 onOpOnly(false)+onOrder(x) 两个回调各触发一次 load 造成竞态与重复请求。
      * [anchor] 是切换前的滚动位置，新楼层上屏后原样恢复，屏幕不跳。
      */
@@ -894,7 +648,7 @@ class ThreadDetailViewModel(
         requestedAnchor = anchor
         _opOnly.value = opOnly
         _orderType.value = orderType
-        loadCachedThenNetwork()
+        load(currentMaxPage)
     }
 
     /**
@@ -909,14 +663,6 @@ class ThreadDetailViewModel(
     /** 界面已按锚点定位完，清掉待恢复状态。 */
     fun consumePendingScrollAnchor() {
         _pendingScrollAnchor.value = null
-    }
-
-    fun toggleReplies(pid: String) {
-        _collapsed.value = if (_collapsed.value.contains(pid)) {
-            _collapsed.value - pid
-        } else {
-            _collapsed.value + pid
-        }
     }
 
     /** 展开/收起灌水回复。 */
@@ -959,7 +705,7 @@ class ThreadDetailViewModel(
                 // 直接从楼层池移除该楼层并重算树/灌水；
                 // 不能调 refreshFirstPage：它会重新拉第 1 页，把已删楼层按 pid 再加回来。
                 pool.remove(pid)
-                publish(resetCollapsed = false, startChain = false)
+                publish()
             }
             _actionMessage.value = if (ok) "已删除该回复" else "删除未生效，站点可能不允许删除"
         }
@@ -1228,38 +974,15 @@ class ThreadDetailViewModel(
                 val fresh = repository.threadPage(tid, 1, FETCH_ORDER, authorId)
                 // 期间又切换了排序/只看楼主：这次刷新的结果已过时，丢弃
                 if (generation != dataGeneration) return@launch
-                cacheOnly = false
                 mergeIntoPool(fresh)
                 recordProgress(authorId, 1, fresh.totalPages)
                 adoptMeta(fresh)
-                publish(resetCollapsed = false, startChain = false)
-                syncAutoLoad()
+                publish()
             } catch (e: Exception) {
                 if (generation == dataGeneration) _actionMessage.value = friendlyError(e, "刷新失败")
             }
             if (generation == dataGeneration) _isRefreshing.value = false
         }
-    }
-
-    /**
-     * 把当前楼层池写进本地缓存（楼主 / 正序 / 倒序共用一份）。
-     * 会话态字段不入库：一次性令牌与点赞态缓存住会在下次进入时用错。
-     */
-    private suspend fun saveToCache() {
-        contentCache.write(
-            key = CacheKeys.thread(tid),
-            ttlMillis = CacheKeys.THREAD_TTL,
-            value = ThreadSnapshot(
-                subject = subject,
-                forumName = forumName,
-                opUid = opUid,
-                fid = fid,
-                totalReplies = totalReplies,
-                posts = poolOrder(),
-                progress = viewProgress.values.toList(),
-            ),
-            encode = { cacheJson.encodeToString(ThreadSnapshot.serializer(), it) },
-        )
     }
 
     /** 打赏（pid 为空为打赏首帖）。 */
@@ -1304,159 +1027,11 @@ class ThreadDetailViewModel(
     }
 }
 
-/** 归属匹配用：去掉 HTML 标签、URL 与全部空白（含不换行空格），便于比较正文快照。 */
-private fun normalizeForMatch(s: String?): String = s.orEmpty()
-    .replace(Regex("<[^>]*>"), "")
-    .replace(Regex("https?://\\S+"), "")
-    .replace(Regex("[\\s\\u00A0]+"), "")
-
-/** 引用块短于该长度（纯表情/单个词）时区分不了楼层，宁可不匹配。 */
-private const val MATCH_MIN_CHARS = 6
-
-/**
- * 归属树 + 默认折叠的灌水楼层 pid；带子回复的水帖不折，否则会连子回复一起藏掉。
- *
- * 在线详情与已下载帖子的离线页共用同一套规则：两处看到的父子归属与折叠条数一致。
- */
-internal fun deriveTree(data: ThreadPage): Pair<ReplyTree, Set<String>> {
-    val op = data.posts.firstOrNull { it.isFirstPost } ?: data.posts.firstOrNull()
-    val replies = data.posts.filter { it !== op }
-    val built = buildReplyTree(replies)
-    val water = built.topLevel
-        .filter { isWaterReply(it.contentHtml) && built.children[it.pid].isNullOrEmpty() }
-        .map { it.pid }
-        .toSet()
-    return built to water
-}
-
 /** 切换筛选前界面的滚动位置：首个可见项下标 + 该项被遮住的像素高度。 */
 data class ScrollAnchor(val index: Int, val offset: Int)
 
 /** 闪烁总时长（两轮淡入淡出）；界面据此撤掉高亮态，滚出屏幕再回来不会重复闪。 */
 internal const val FLASH_HIGHLIGHT_MS = 1500L
-
-/** 楼层树：顶层楼层顺序列表 + 「父 pid -> 子楼层列表」。 */
-class ReplyTree(
-    val topLevel: List<Post>,
-    val children: Map<String, List<Post>>,
-    /** 子回复 pid -> 被回复者昵称（仅当回复对象不是顶层楼层时用于展示「回复 xx：」）。 */
-    val subReplyTo: Map<String, String> = emptyMap(),
-)
-
-private class PostNode(val post: Post) {
-    var isSubReply: Boolean = false
-    var orderIndex: Int = -1
-    val children: MutableList<PostNode> = mutableListOf()
-}
-
-/**
- * 把当前页平铺的楼层组织成楼中楼。
- *
- * 站点只有少数引用块带 pid，故按证据强度降级：pid -> 引用正文最长公共子串 -> 昵称。
- * 三者都要求被引楼层排在引用者之前，否则两条互相引用的楼层会因遍历顺序把父子方向弄反。
- */
-private fun buildReplyTree(replies: List<Post>): ReplyTree {
-    if (replies.isEmpty()) return ReplyTree(emptyList(), emptyMap())
-    val nodes = replies.map { PostNode(it) }
-    val byPid = HashMap<String, PostNode>()
-    val byAuthor = HashMap<String, MutableList<PostNode>>()
-    nodes.forEachIndexed { index, node ->
-        node.orderIndex = index
-        node.post.pid.takeIf { it.isNotBlank() }?.let { byPid[it] = node }
-        node.post.authorName.takeIf { it.isNotBlank() }?.let {
-            byAuthor.getOrPut(it) { mutableListOf() }.add(node)
-        }
-    }
-
-    val childrenByParent = HashMap<String, MutableList<Post>>()
-    val subReplyTo = HashMap<String, String>()
-    for (node in nodes) {
-        val quote = node.post.quote ?: continue
-        val parent = resolveParent(node, nodes, byPid, byAuthor) ?: continue
-        // 被引者本身是子回复时压平到它所属的顶层楼层，同一条子线程内的回复只平铺一层
-        val root = if (parent.isSubReply) {
-            nodes.firstOrNull { it !== parent && !it.isSubReply && it.children.any { c -> c === parent } }
-        } else {
-            parent
-        } ?: continue
-        if (root.orderIndex >= node.orderIndex) continue
-        node.isSubReply = true
-        root.children.add(node)
-        childrenByParent.getOrPut(root.post.pid) { mutableListOf() }.add(node.post)
-        // 回复对象不是顶层楼层时，子回复需要标明「回复 xx：」
-        if (root !== parent) {
-            parent.post.authorName.takeIf { it.isNotBlank() }?.let { subReplyTo[node.post.pid] = it }
-        }
-    }
-    return ReplyTree(
-        topLevel = nodes.filter { !it.isSubReply }.map { it.post },
-        children = childrenByParent,
-        subReplyTo = subReplyTo,
-    )
-}
-
-private fun resolveParent(
-    node: PostNode,
-    nodes: List<PostNode>,
-    byPid: Map<String, PostNode>,
-    byAuthor: Map<String, MutableList<PostNode>>,
-): PostNode? {
-    val quote = node.post.quote ?: return null
-    quote.pid?.takeIf { it.isNotBlank() }?.let { pid ->
-        byPid[pid]?.takeIf { it !== node && it.orderIndex < node.orderIndex }?.let { return it }
-    }
-    matchByQuotedContent(node, nodes)?.let { return it }
-    // 昵称是最弱的证据：同一作者的每条楼层都同名，只在无同名歧义时采用
-    val name = quote.author?.takeIf { it.isNotBlank() } ?: return null
-    val candidates = byAuthor[name].orEmpty().filter { it !== node && it.orderIndex < node.orderIndex }
-    return candidates.singleOrNull()
-}
-
-/**
- * pid 缺失或指向未加载楼层时的降级匹配：拿引用块正文去比对各楼层正文。
- *
- * 引用块开头还挂着「回复 X 发表于 …」这段 meta，前缀比较必然对不齐，故用最长公共子串；
- * 只重合寥寥几字更像巧合同词，命中度不足时放弃，交给更弱的昵称证据。
- */
-private fun matchByQuotedContent(node: PostNode, nodes: List<PostNode>): PostNode? {
-    val quoted = normalizeForMatch(node.post.quote?.text ?: return null)
-    if (quoted.length < MATCH_MIN_CHARS) return null
-    var best: PostNode? = null
-    var bestScore = 0
-    for (candidate in nodes) {
-        if (candidate === node || candidate.orderIndex >= node.orderIndex) continue
-        val body = normalizeForMatch(candidate.post.contentHtml)
-        if (body.isEmpty()) continue
-        val score = longestCommonSubstring(quoted, body)
-        if (score > bestScore) {
-            bestScore = score
-            best = candidate
-        }
-    }
-    if (best == null) return null
-    return if (bestScore >= MATCH_MIN_CHARS && bestScore >= quoted.length / 3) best else null
-}
-
-/** 两个字符串的最长公共子串长度（滚动数组）。 */
-private fun longestCommonSubstring(a: String, b: String): Int {
-    if (a.isEmpty() || b.isEmpty()) return 0
-    val shorter = if (a.length <= b.length) a else b
-    val longer = if (a.length <= b.length) b else a
-    var prev = IntArray(shorter.length + 1)
-    var cur = IntArray(shorter.length + 1)
-    var best = 0
-    for (i in 1..longer.length) {
-        for (j in 1..shorter.length) {
-            cur[j] = if (longer[i - 1] == shorter[j - 1]) prev[j - 1] + 1 else 0
-            if (cur[j] > best) best = cur[j]
-        }
-        val swap = prev
-        prev = cur
-        cur = swap
-        cur.fill(0)
-    }
-    return best
-}
 
 /**
  * 拉楼层的排序口径固定「正序」：楼主过滤只是站点参数，倒序由客户端反排。
@@ -1465,16 +1040,3 @@ private fun longestCommonSubstring(a: String, b: String): Int {
  */
 private const val FETCH_ORDER = 0
 
-/**
- * 每批楼层条数：论坛每页条数不定，一次多拉几页凑满一屏，避免只拉一页太少、观感卡顿。
- */
-private const val AUTO_LOAD_BATCH_REPLIES = 10
-
-/** 每批最多连拉的页数，与 [AUTO_LOAD_BATCH_REPLIES] 共同决定一批的量。 */
-private const val AUTO_LOAD_BATCH_PAGES = 2
-
-/**
- * 自动续拉的批间隔（首批同样等这么久，让首屏先渲染完）。
- * 翻页是纯 GET，但连续请求可能触发站点/WAF 的风控挑战，故统一限速。
- */
-private const val AUTO_LOAD_DELAY_MS = 800L

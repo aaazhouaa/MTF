@@ -2,11 +2,9 @@ package com.aazhou.mtforum.ui.screen.threaddetail
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,9 +13,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -25,7 +21,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aazhou.mtforum.ui.common.EmptyBox
@@ -48,7 +43,7 @@ import kotlinx.coroutines.withContext
  * 已下载帖子的查看页：渲染与在线详情完全同构（同一批组件、同一排版），但不接网络。
  *
  * 图片与头像都是存档里的本地文件，正文里的站内链接仍可点（走正常跳转）。
- * 只读：没有回复底栏、没有下拉刷新、没有排序切换，楼中楼展开与灌水折叠照常。
+ * 只读：没有回复底栏、没有下拉刷新、没有排序切换，灌水折叠照常。
  */
 @Composable
 fun DownloadedThreadScreen(
@@ -64,19 +59,10 @@ fun DownloadedThreadScreen(
         OfflineThreadViewModel(tid, it.archiveStore)
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val treeState by viewModel.tree.collectAsStateWithLifecycle()
     val waterPidsState by viewModel.waterPids.collectAsStateWithLifecycle()
-    val collapsed by viewModel.collapsed.collectAsStateWithLifecycle()
     val foldExpanded by viewModel.foldExpanded.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-
-    // 与在线详情同一套「收起楼中楼补底部空白」的做法：收起让列表变矮时，
-    // 滚动位置不会被夹到末尾，上方内容原地不动
-    val nestedHeights = remember { mutableStateMapOf<String, Int>() }
-    val collapsedBuffer by remember {
-        derivedStateOf { collapsed.sumOf { nestedHeights[it] ?: 0 } }
-    }
 
     // 点击图片一律进内置全屏查看器；存档里就是本地图，左右翻页序列同样成立
     var preview by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
@@ -130,11 +116,10 @@ fun DownloadedThreadScreen(
                                 data.posts.flatMap { collectImageUrls(it.contentHtml) }
                             }
                         }
-                        val tree = treeState
                         val waterPids = waterPidsState
-                        val visibleReplies = remember(tree, waterPids, foldExpanded) {
-                            val top = tree?.topLevel.orEmpty()
-                            if (foldExpanded) top else top.filter { it.pid !in waterPids }
+                        val visibleReplies = remember(data.posts, waterPids, foldExpanded) {
+                            val replies = data.posts.filter { it !== op }
+                            if (foldExpanded) replies else replies.filter { it.pid !in waterPids }
                         }
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
@@ -175,18 +160,9 @@ fun DownloadedThreadScreen(
                                 HorizontalDivider(color = colors.divider)
                             }
                             items(visibleReplies, key = { it.pid }) { reply ->
-                                val children = tree?.children?.get(reply.pid).orEmpty()
                                 ReplyBlock(
                                     reply = reply,
-                                    children = children,
-                                    subReplyTo = tree?.subReplyTo.orEmpty(),
-                                    expanded = !collapsed.contains(reply.pid),
-                                    onToggle = { viewModel.toggleReplies(reply.pid) },
-                                    onNestedHeightMeasured = { height ->
-                                        nestedHeights[reply.pid] = height
-                                    },
                                     onReply = {},
-                                    onReplyTo = {},
                                     onImageClick = openImage,
                                     onVideoClick = null,
                                     onUserClick = onUserClick,
@@ -194,17 +170,6 @@ fun DownloadedThreadScreen(
                                     onLongPress = {},
                                     onThreadClick = onThreadClick,
                                 )
-                            }
-                            if (collapsedBuffer > 0) {
-                                item(key = "collapsed-buffer") {
-                                    Spacer(
-                                        Modifier.height(
-                                            with(LocalDensity.current) {
-                                                collapsedBuffer.toDp()
-                                            },
-                                        ),
-                                    )
-                                }
                             }
                         }
                     }

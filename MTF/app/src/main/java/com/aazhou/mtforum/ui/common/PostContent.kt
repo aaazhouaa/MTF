@@ -136,12 +136,6 @@ fun PostContent(
     bodyStyle: TextStyle = MaterialTheme.typography.bodyMedium,
     modifier: Modifier = Modifier,
     /**
-     * 行内前缀：拼在首段正文之前同一段起排，折行后所有行回到前缀的左边缘。
-     *
-     * 首块不是文字（例如正文以图片开头）时，前缀只能单独占一行，退化成两行排版。
-     */
-    inlinePrefix: AnnotatedString? = null,
-    /**
      * 正文是否可长按划选。
      *
      * 评论区楼层传 false：楼层自身挂了长按操作菜单（回复/举报），划选手势会抢在
@@ -151,10 +145,10 @@ fun PostContent(
 ) {
     if (selectable) {
         SelectionContainer {
-            PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier, inlinePrefix)
+            PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier)
         }
     } else {
-        PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier, inlinePrefix)
+        PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier)
     }
 }
 
@@ -168,18 +162,13 @@ private fun PostContentBody(
     pageImages: List<String>,
     bodyStyle: TextStyle,
     modifier: Modifier,
-    inlinePrefix: AnnotatedString?,
 ) {
     val blocks = remember(html) { parseContentBlocks(html) }
     val colors = LocalMtfColors.current
     val darkTheme = LocalIsDarkTheme.current
     Column(modifier) {
         if (quote != null && quote.text.isNotBlank()) QuoteCard(quote)
-        // 首块不是文字（正文以图片开头）时，行内前缀无从拼接，只能单独占一行
-        if (inlinePrefix != null && blocks.firstOrNull() !is ContentBlock.Text) {
-            Text(text = inlinePrefix, style = bodyStyle, modifier = Modifier.padding(vertical = 2.dp))
-        }
-        for ((index, block) in blocks.withIndex()) {
+        for (block in blocks) {
             when (block) {
                 is ContentBlock.Quote -> {
                     Text(
@@ -225,14 +214,11 @@ private fun PostContentBody(
                             )
                         }
                         Text(
-                            text = if (index == 0 && inlinePrefix != null) inlinePrefix + body else body,
+                            text = body,
                             inlineContent = remember(block.smiles) { smileyInlineContent(block.smiles) },
                             style = style,
                             modifier = Modifier.padding(vertical = 2.dp),
                         )
-                    } else if (index == 0 && inlinePrefix != null) {
-                        // 首块是空文本块：前缀自己占一行，正文从下一块开始
-                        Text(text = inlinePrefix, style = bodyStyle)
                     }
                 }
                 is ContentBlock.Image -> SingleImage(

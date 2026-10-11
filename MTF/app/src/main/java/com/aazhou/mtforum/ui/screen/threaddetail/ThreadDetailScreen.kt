@@ -83,15 +83,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -172,7 +169,6 @@ fun ThreadDetailScreen(
             tid,
             it.repository,
             it.actionStore,
-            it.contentCache,
             it.sessionStore.uid,
             anchorPid = anchorPid,
         )
@@ -185,7 +181,6 @@ fun ThreadDetailScreen(
     val loggedIn = currentUser?.isLoggedIn == true
     val state by viewModel.state.collectAsStateWithLifecycle()
     val replyState by viewModel.replyState.collectAsStateWithLifecycle()
-    val collapsed by viewModel.collapsed.collectAsStateWithLifecycle()
     val orderType by viewModel.orderType.collectAsStateWithLifecycle()
     val opOnly by viewModel.opOnly.collectAsStateWithLifecycle()
     val replyTarget by viewModel.replyTarget.collectAsStateWithLifecycle()
@@ -196,14 +191,12 @@ fun ThreadDetailScreen(
     val favoriteCount by viewModel.favoriteCount.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
     val loadMoreState by viewModel.loadMoreState.collectAsStateWithLifecycle()
-    val treeState by viewModel.tree.collectAsStateWithLifecycle()
     val waterPidsState by viewModel.waterPids.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val likeUsers by viewModel.likeUsers.collectAsStateWithLifecycle()
     val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     val foldExpanded by viewModel.foldExpanded.collectAsStateWithLifecycle()
-    val autoLoadRunning by viewModel.autoLoadRunning.collectAsStateWithLifecycle()
     // 从消息提醒跳进来时要定位的楼层
     val anchorPid by viewModel.anchor.collectAsStateWithLifecycle()
     // 定位完成后柔和闪烁两次的楼层（指出是哪一条评论）
@@ -296,14 +289,6 @@ fun ThreadDetailScreen(
             offset = listState.firstVisibleItemScrollOffset,
         )
     }
-    // 楼中楼收起会让列表内容变矮；贴着列表底部时 LazyColumn 只能把滚动位置夹到新的末尾，
-    // 结果是「上面的内容掉下来、作者栏又冒出来」。用与收起块等高的一条底部空白把
-    // 内容高度补回去，滚动位置就不被夹：收起时只有下方内容往上靠，上方原地不动。
-    val nestedHeights = remember { mutableStateMapOf<String, Int>() }
-    val collapsedBuffer by remember {
-        derivedStateOf { collapsed.sumOf { nestedHeights[it] ?: 0 } }
-    }
-
     LaunchedEffect(replyState) {
         when (val r = replyState) {
             is ThreadDetailViewModel.ReplyState.Success -> {
@@ -413,16 +398,14 @@ fun ThreadDetailScreen(
     // 点击正文视频一律进全屏播放页；正文滚动时不持播放器，避免多视频同时解码
     var videoUrl by remember { mutableStateOf<String?>(null) }
     val openVideo: (String) -> Unit = { url -> videoUrl = url }
-    // 列表底部自动续拉：距离末尾还有约一屏（6 条）就开始预加载下一页，不等到划到底。
+    // 列表底部续拉：距离末尾还有约一屏（6 条）就开始加载下一页，不等到划到底。
     // 只在 Idle 时触发（加载失败也停在 Idle，用户继续滑动即可再次尝试）。
     val shouldLoadMore by remember {
         derivedStateOf {
             val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
             val total = listState.layoutInfo.totalItemsCount
-            // autoLoadRunning 时不让开：批间隔里 loadMoreState 是 Idle，
-            // 底部预加载会和自动续拉链抢同一批请求
             hasNext && loadMoreState is ThreadDetailViewModel.LoadMoreState.Idle &&
-                !loadingMore && !autoLoadRunning && total > 0 && last >= total - 6
+                !loadingMore && total > 0 && last >= total - 6
         }
     }
     // key 用 shouldLoadMore 本身：布局完成（false→true）与每拉完一页（Loading→Idle）都会重启
@@ -603,34 +586,22 @@ fun ThreadDetailScreen(
                             // 测量，快速滑动时不会因图片加载完成而撑高所在 item、列表跳屏
                             ImageAspectCache.prefetch(context, context.imageLoader, urls)
                         }
-                        // 楼中楼树与灌水集合在 ViewModel 后台算好，这里只消费，
-                        // 避免主线程做 O(n²) 引用匹配与逐楼层 Jsoup 判定
-                        val tree = treeState
+                        // 灌水集合在 ViewModel 后台算好，这里只消费，避免主线程逐楼层 Jsoup 判定
                         val waterPids = waterPidsState
                         val foldedCount = waterPids.size
-                        val visibleReplies = remember(tree, waterPids, foldExpanded) {
-                            val top = tree?.topLevel.orEmpty()
-                            if (foldExpanded) top else top.filter { it.pid !in waterPids }
+                        // 楼层平铺展示：首帖由头部呈现，其余按当前排序一字排开
+                        val visibleReplies = remember(data.posts, waterPids, foldExpanded) {
+                            val replies = data.posts.filter { it !== op }
+                            if (foldExpanded) replies else replies.filter { it.pid !in waterPids }
                         }
                         // 从消息提醒跳进来：目标楼层（可能在很后面的页）被拉回来后滚到它所在的位置
                         LaunchedEffect(anchorPid, visibleReplies, foldExpanded) {
                             val pid = anchorPid ?: return@LaunchedEffect
-                            // 先把藏住它的折叠展开（只看本次）：父楼层收起时目标子回复整段不渲染，
-                            // 滚到父楼层也看不见它
+                            // 先把藏住它的灌水折叠展开（只看本次）
                             viewModel.revealAnchorReply(pid)
-                            val target = when {
-                                visibleReplies.any { it.pid == pid } -> pid
-                                // 目标是楼中楼的子回复：父楼层就在它上面，滚到父楼层即可
-                                else -> tree?.children?.entries
-                                    ?.firstOrNull { (_, kids) -> kids.any { it.pid == pid } }?.key
-                            }
-                            val index = target
-                                ?.let { key -> visibleReplies.indexOfFirst { it.pid == key } }
-                                ?: -1
+                            val index = visibleReplies.indexOfFirst { it.pid == pid }
                             if (index < 0) {
-                                // 目标还没上屏：所在页没拉到、或刚展开的折叠还没重组完。
-                                // 折叠由 revealAnchorReply 直接置位，这里不能再 toggle——
-                                // 那样会和它各拨一次，目标永远上不了屏。
+                                // 目标还没上屏：所在页没拉到，或刚展开的折叠还没重组完
                                 return@LaunchedEffect
                             }
                             // 列表头部固定两项：帖子头部 + 评论标题栏（头部缺省时少一项）
@@ -646,8 +617,8 @@ fun ThreadDetailScreen(
                                 withFrameNanos { }
                                 listState.scrollToItem(lazyIndex)
                                 withFrameNanos { }
-                                if (listState.layoutInfo.visibleItemsInfo.any { it.key == target }) {
-                                    // 闪烁落在目标本身：是楼中楼子回复时就闪那条子回复
+                                if (listState.layoutInfo.visibleItemsInfo.any { it.key == pid }) {
+                                    // 闪烁落在目标本身
                                     highlightPid = pid
                                     viewModel.consumeAnchor()
                                     // 闪烁只来一下：定位完就撤掉，楼层滚出屏幕再回来不会重复闪
@@ -713,13 +684,10 @@ fun ThreadDetailScreen(
                                     onOrder = {
                                         viewModel.setReplyFilter(false, it, anchorNow())
                                     },
-                                    showAutoLoadToggle = hasNext,
-                                    autoLoadRunning = autoLoadRunning,
-                                    onToggleAutoLoad = { viewModel.toggleAutoLoad() },
                                 )
                                 HorizontalDivider(color = colors.divider)
                             }
-                            if (tree != null && visibleReplies.isEmpty()) {
+                            if (visibleReplies.isEmpty()) {
                                 item(key = "no-comment") {
                                     Box(
                                         Modifier.fillMaxWidth().padding(vertical = 28.dp),
@@ -730,29 +698,14 @@ fun ThreadDetailScreen(
                                 }
                             }
                             items(visibleReplies, key = { it.pid }) { reply ->
-                                val children = tree?.children?.get(reply.pid).orEmpty()
-                                // 定位闪烁：目标是本条；是楼中楼子回复时由 highlightChildPid 闪那条
+                                // 定位闪烁：目标是本条
                                 val highlighted = reply.pid == highlightPid
                                 ReplyBlock(
                                     reply = reply,
-                                    children = children,
-                                    subReplyTo = tree?.subReplyTo.orEmpty(),
-                                    expanded = !collapsed.contains(reply.pid),
                                     highlight = highlighted,
-                                    highlightChildPid = highlightPid,
-                                    onToggle = { viewModel.toggleReplies(reply.pid) },
-                                    onNestedHeightMeasured = { height ->
-                                        nestedHeights[reply.pid] = height
-                                    },
                                     onReply = {
                                         if (requireLogin(LOGIN_HINT_REPLY)) {
                                             viewModel.setReplyTarget(reply)
-                                            composerVisible = true
-                                        }
-                                    },
-                                    onReplyTo = {
-                                        if (requireLogin(LOGIN_HINT_REPLY)) {
-                                            viewModel.setReplyTarget(it)
                                             composerVisible = true
                                         }
                                     },
@@ -783,15 +736,6 @@ fun ThreadDetailScreen(
                                         )
                                     }
                                     else -> Unit
-                                }
-                            }
-                            if (collapsedBuffer > 0) {
-                                item(key = "collapsed-buffer") {
-                                    Spacer(
-                                        Modifier.height(
-                                            with(LocalDensity.current) { collapsedBuffer.toDp() },
-                                        ),
-                                    )
                                 }
                             }
                         }
@@ -1699,7 +1643,7 @@ private fun HiddenContentCard(onUnlock: () -> Unit) {
     }
 }
 
-/** 「全部评论 (N) [已折叠 N 条 / 收起已折叠]  [暂停/继续]  楼主 | 正序 | 倒序」。 */
+/** 「全部评论 (N) [已折叠 N 条 / 收起已折叠]  楼主 | 正序 | 倒序」。 */
 @Composable
 internal fun CommentHeader(
     total: Int?,
@@ -1711,9 +1655,6 @@ internal fun CommentHeader(
     onToggleFold: () -> Unit,
     onOpOnly: (Boolean) -> Unit,
     onOrder: (Int) -> Unit,
-    showAutoLoadToggle: Boolean = false,
-    autoLoadRunning: Boolean = false,
-    onToggleAutoLoad: () -> Unit = {},
 ) {
     val colors = LocalMtfColors.current
     Row(
@@ -1756,25 +1697,6 @@ internal fun CommentHeader(
                         .padding(horizontal = 7.dp, vertical = 2.dp),
                 )
             }
-        }
-        if (showAutoLoadToggle) {
-            Icon(
-                painter = painterResource(
-                    if (autoLoadRunning) {
-                        com.aazhou.mtforum.R.drawable.ic_load_pause
-                    } else {
-                        com.aazhou.mtforum.R.drawable.ic_load_resume
-                    },
-                ),
-                contentDescription = if (autoLoadRunning) "暂停加载" else "继续加载",
-                tint = colors.iconSecondary,
-                modifier = Modifier
-                    .size(20.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable(onClick = onToggleAutoLoad)
-                    .padding(1.dp),
-            )
-            if (sortable) Spacer(Modifier.width(8.dp))
         }
         if (sortable) {
             SegmentedControl(
@@ -1834,13 +1756,7 @@ private fun SegmentedControl(selected: Int, onSelect: (Int) -> Unit) {
 @Composable
 internal fun ReplyBlock(
     reply: Post,
-    children: List<Post>,
-    subReplyTo: Map<String, String>,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    onNestedHeightMeasured: (Int) -> Unit,
     onReply: () -> Unit,
-    onReplyTo: (Post) -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
     onVideoClick: ((String) -> Unit)? = null,
     onUserClick: (String) -> Unit,
@@ -1849,8 +1765,6 @@ internal fun ReplyBlock(
     onThreadClick: (String) -> Unit,
     /** 定位闪烁：从消息提醒跳到本条时柔和闪两下。 */
     highlight: Boolean = false,
-    /** 定位闪烁落在楼中楼的哪条子回复上（目标是子回复时传入其 pid）。 */
-    highlightChildPid: String? = null,
 ) {
     val colors = LocalMtfColors.current
     val context = LocalContext.current
@@ -1928,186 +1842,6 @@ internal fun ReplyBlock(
             Spacer(Modifier.width(45.dp))
             TimeLine(reply)
             Spacer(Modifier.weight(1f))
-            if (children.isNotEmpty()) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable(onClick = onToggle)
-                        .padding(horizontal = 4.dp, vertical = 2.dp),
-                ) {
-                    Icon(
-                        painterResource(
-                            if (expanded) {
-                                com.aazhou.mtforum.R.drawable.ic_arrow_up
-                            } else {
-                                com.aazhou.mtforum.R.drawable.ic_arrow_down
-                            },
-                        ),
-                        contentDescription = null,
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Text(
-                        if (expanded) "收起回复" else "查看 ${children.size} 条回复",
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                        color = colors.textSecondary,
-                    )
-                }
-                Spacer(Modifier.width(6.dp))
-            }
-            Icon(
-                painterResource(com.aazhou.mtforum.R.drawable.ic_reply),
-                contentDescription = "回复",
-                tint = colors.iconSecondary,
-                modifier = Modifier
-                    .size(20.dp)
-                    .clickable(onClick = onReply),
-            )
-        }
-        if (expanded) {
-            // 楼中楼容器缩进 45dp，与正文文字对齐；高度回报给外层：
-            // 收起时用等高的底部空白补住内容高度，滚动位置才不会被夹到列表末尾
-            Column(
-                Modifier
-                    .padding(start = 45.dp, top = 8.dp)
-                    .onGloballyPositioned { onNestedHeightMeasured(it.size.height) },
-            ) {
-                children.forEach { child ->
-                    NestedReply(
-                        child = child,
-                        inReplyTo = subReplyTo[child.pid],
-                        onReply = { onReplyTo(child) },
-                        onImageClick = onImageClick,
-                        onVideoClick = onVideoClick,
-                        onUserClick = onUserClick,
-                        pageImages = pageImages,
-                        onLongPress = { onLongPress(child) },
-                        onThreadClick = onThreadClick,
-                        highlight = child.pid == highlightChildPid,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * 楼中楼「回复 xx：」前缀里被引用者昵称的最大显示长度。
- *
- * 前缀与正文同段起排后，Text 没法只对其中一段做 Ellipsis，
- * 超长昵称会把首行顶长，因此在此定长截断。
- */
-private const val MAX_REPLY_NICKNAME = 8
-
-/** 楼中楼：头像 22dp、昵称 13sp、正文 14sp，缩进由父容器给出。 */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun NestedReply(
-    child: Post,
-    inReplyTo: String?,
-    onReply: () -> Unit,
-    onImageClick: (List<String>, Int) -> Unit,
-    onVideoClick: ((String) -> Unit)? = null,
-    onUserClick: (String) -> Unit,
-    pageImages: List<String>,
-    onLongPress: () -> Unit,
-    onThreadClick: (String) -> Unit,
-    /** 定位闪烁：从消息提醒跳到本条时柔和闪两下。 */
-    highlight: Boolean = false,
-) {
-    val colors = LocalMtfColors.current
-    val context = LocalContext.current
-    val siteHost = context.container().httpClient.host
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .combinedClickable(onClick = {}, onLongClick = onLongPress)
-            .padding(top = 7.dp, bottom = 7.dp),
-    ) {
-        // 闪烁只覆盖这条消息的内容（昵称 + 正文），不含头像与底栏
-        Column(Modifier.fillMaxWidth().flashHighlight(highlight)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(
-                model = smallImageRequest(child.avatarUrl),
-                contentDescription = null,
-                modifier = Modifier
-                    .size(22.dp)
-                    .clip(CircleShape)
-                    .dimImageInDark()
-                    .userClick(child.authorUid, onUserClick),
-            )
-            Spacer(Modifier.width(8.dp))
-            // 楼中楼同样带楼层号（与顶层楼层一致，便于对照引用关系）
-            if (!child.floorLabel.isNullOrBlank()) {
-                Text(
-                    child.floorLabel,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                    color = colors.textSecondary,
-                    modifier = Modifier.padding(end = 2.dp),
-                )
-            }
-            Text(
-                child.authorName.ifBlank { "匿名" },
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                // 同 ReplyBlock：深色下 bodyTextColor 已压到 69%，不再叠 alpha
-                color = bodyTextColor(),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.userClick(child.authorUid, onUserClick),
-            )
-            if (child.isOp) {
-                Spacer(Modifier.width(6.dp))
-                AuthorBadge("楼主", small = true)
-            }
-            if (!child.editedText.isNullOrBlank()) {
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    child.editedText,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                    color = colors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-        // 「回复 xx：」拼成正文首段的行内前缀：首行紧接正文，折行后回到「回复」的左边缘
-        val replyPrefix = remember(inReplyTo) {
-            if (inReplyTo.isNullOrBlank()) {
-                null
-            } else {
-                // 同段起排后没法对前缀单独 Ellipsis，昵称定长截断，避免首行被顶长
-                val name = if (inReplyTo.length > MAX_REPLY_NICKNAME) {
-                    inReplyTo.take(MAX_REPLY_NICKNAME) + "…"
-                } else {
-                    inReplyTo
-                }
-                buildAnnotatedString {
-                    withStyle(SpanStyle(fontStyle = FontStyle.Italic, fontSize = 12.sp)) {
-                        append("回复 $name：")
-                    }
-                }
-            }
-        }
-        PostContent(
-            html = child.contentHtml,
-            onImageClick = onImageClick,
-            onVideoClick = onVideoClick,
-            pageImages = pageImages,
-            bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 21.sp),
-            inlinePrefix = replyPrefix,
-            modifier = Modifier
-                .padding(start = 30.dp, top = 3.dp)
-                .fillMaxWidth()
-                .combinedClickable(onClick = {}, onLongClick = onLongPress),
-            onLinkClick = { url -> openForumLink(context, url, siteHost, onThreadClick) },
-            selectable = false,
-        )
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 30.dp, top = 4.dp)) {
-            TimeLine(child)
-            Spacer(Modifier.weight(1f))
             Icon(
                 painterResource(com.aazhou.mtforum.R.drawable.ic_reply),
                 contentDescription = "回复",
@@ -2122,16 +1856,16 @@ private fun NestedReply(
 
 /** 「楼主」徽章：淡主色底、主色文字。 */
 @Composable
-private fun AuthorBadge(text: String, small: Boolean = false) {
+private fun AuthorBadge(text: String) {
     Text(
         text,
-        style = MaterialTheme.typography.bodySmall.copy(fontSize = if (small) 9.5.sp else 10.sp),
+        style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
         fontWeight = FontWeight.Bold,
         color = accentTextColor(),
         modifier = Modifier
             .clip(RoundedCornerShape(4.dp))
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-            .padding(horizontal = 5.dp, vertical = if (small) 1.dp else 2.dp),
+            .padding(horizontal = 5.dp, vertical = 2.dp),
     )
 }
 

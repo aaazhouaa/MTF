@@ -6,7 +6,7 @@ import com.aazhou.mtforum.data.download.ThreadArchiveStore
 import com.aazhou.mtforum.data.model.ThreadPage
 import com.aazhou.mtforum.data.model.ThreadSnapshot
 import com.aazhou.mtforum.ui.common.UiState
-import com.aazhou.mtforum.ui.screen.threaddetail.deriveTree
+import com.aazhou.mtforum.ui.common.isWaterReply
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,8 +17,8 @@ import kotlinx.coroutines.withContext
 /**
  * 已下载帖子的只读 ViewModel：从应用内存档读快照，装配成与在线详情同构的一页。
  *
- * 楼中楼树与灌水判定复用在线详情的同一套函数（正序口径），两个入口看到的楼层
- * 归属、折叠规则完全一致。存档只读，没有任何网络与会话态字段。
+ * 灌水折叠判定复用在线详情的同一套规则，两个入口看到的折叠条数一致。
+ * 存档只读，没有任何网络与会话态字段。
  */
 class OfflineThreadViewModel(
     private val tid: String,
@@ -28,14 +28,8 @@ class OfflineThreadViewModel(
     private val _state = MutableStateFlow<UiState<ThreadPage>>(UiState.Loading)
     val state: StateFlow<UiState<ThreadPage>> = _state.asStateFlow()
 
-    private val _tree = MutableStateFlow<ReplyTree?>(null)
-    val tree: StateFlow<ReplyTree?> = _tree.asStateFlow()
-
     private val _waterPids = MutableStateFlow<Set<String>>(emptySet())
     val waterPids: StateFlow<Set<String>> = _waterPids.asStateFlow()
-
-    private val _collapsed = MutableStateFlow<Set<String>>(emptySet())
-    val collapsed: StateFlow<Set<String>> = _collapsed.asStateFlow()
 
     private val _foldExpanded = MutableStateFlow(false)
     val foldExpanded: StateFlow<Boolean> = _foldExpanded.asStateFlow()
@@ -48,21 +42,16 @@ class OfflineThreadViewModel(
                 return@launch
             }
             val page = snapshot.toThreadPage(tid)
-            val (tree, water) = withContext(Dispatchers.Default) { deriveTree(page) }
+            val water = withContext(Dispatchers.Default) {
+                val op = page.posts.firstOrNull { it.isFirstPost } ?: page.posts.firstOrNull()
+                page.posts.filter { it !== op && isWaterReply(it.contentHtml) }.map { it.pid }.toSet()
+            }
             _state.value = UiState.Success(page)
-            _tree.value = tree
             _waterPids.value = water
         }
     }
 
-    fun toggleReplies(pid: String) {
-        _collapsed.value = if (_collapsed.value.contains(pid)) {
-            _collapsed.value - pid
-        } else {
-            _collapsed.value + pid
-        }
-    }
-
+    /** 展开/收起灌水回复。 */
     fun toggleFoldExpanded() {
         _foldExpanded.value = !_foldExpanded.value
     }
