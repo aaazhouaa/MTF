@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.DownloadedThread
 import com.aazhou.mtforum.ui.common.EmptyBox
+import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfConfirmDialog
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.appViewModel
@@ -68,7 +69,7 @@ fun DownloadsScreen(
     val viewModel: DownloadsViewModel = appViewModel {
         DownloadsViewModel(it.downloadStore, it.archiveStore)
     }
-    val items by viewModel.items.collectAsStateWithLifecycle(initialValue = emptyList())
+    val items: List<DownloadedThread>? by viewModel.items.collectAsStateWithLifecycle(initialValue = null)
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var deleteTarget by remember { mutableStateOf<DownloadedThread?>(null) }
@@ -104,42 +105,46 @@ fun DownloadsScreen(
         containerColor = colors.background,
         contentColor = bodyTextColor(),
     ) { padding ->
-        if (items.isEmpty()) {
-            Box(
-                Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier
-                            .size(64.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_download),
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(32.dp),
+        // 注册表是 DataStore 流，首帧还没吐出来：先转圈，别闪一下「暂无下载的帖子」
+        val loaded = items
+        when {
+            loaded == null -> LoadingBox(Modifier.padding(padding))
+            loaded.isEmpty() -> {
+                Box(
+                    Modifier.fillMaxSize().padding(padding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_download),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(32.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            "暂无下载的帖子",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = bodyTextColor(),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "在帖子详情页右上角「更多」菜单中点击「下载」即可离线保存",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
+                            color = colors.textHint,
                         )
                     }
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        "暂无下载的帖子",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = bodyTextColor(),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "在帖子详情页右上角「更多」菜单中点击「下载」即可离线保存",
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
-                        color = colors.textHint,
-                    )
                 }
             }
-        } else {
-            LazyColumn(
+            else -> LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(
@@ -173,7 +178,7 @@ fun DownloadsScreen(
                         )
                         Spacer(Modifier.weight(1f))
                         Text(
-                            "共 ${items.size} 篇",
+                            "共 ${loaded.size} 篇",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -182,7 +187,7 @@ fun DownloadsScreen(
                         )
                     }
                 }
-                items(items, key = { it.tid }) { entry ->
+                items(loaded, key = { it.tid }) { entry ->
                     DownloadedRow(
                         entry = entry,
                         onOpen = { onOpenThread(entry.tid) },
