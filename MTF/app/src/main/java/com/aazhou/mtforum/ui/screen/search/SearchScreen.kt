@@ -53,7 +53,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -266,11 +268,16 @@ fun SearchScreen(
                     Spacer(Modifier.width(10.dp))
 
                     // 搜索按钮
+                    val buttonBackground = MaterialTheme.colorScheme.primary
+                    // 主题预设的夜间色偏亮（薄荷青/珊瑚橙等），白字对比不足；
+                    // 按背景亮度取前景色，浅色主题仍是白字，外观不变
+                    val buttonForeground =
+                        if (buttonBackground.luminance() > 0.5f) Color(0xFF111827) else Color.White
                     Box(
                         modifier = Modifier
                             .height(36.dp)
                             .clip(RoundedCornerShape(18.dp))
-                            .background(MaterialTheme.colorScheme.primary)
+                            .background(buttonBackground)
                             .clickable { performSearch(input) }
                             .padding(horizontal = 14.dp),
                         contentAlignment = Alignment.Center,
@@ -281,7 +288,7 @@ fun SearchScreen(
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                             ),
-                            color = androidx.compose.ui.graphics.Color.White,
+                            color = buttonForeground,
                         )
                     }
                 }
