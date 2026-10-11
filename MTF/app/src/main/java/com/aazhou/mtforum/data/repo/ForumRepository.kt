@@ -68,11 +68,17 @@ private val REWARD_FAIL_PATTERN = Regex(
     "24小时|24 小时|已经评分|已评价|已评分|重复评分|评分失败|积分不足|余额不足|formhash错误|非法操作|没有权限|请先登录",
 )
 
+/** 主题管理（置顶回复等）成功标识。 */
+private val TOPICADMIN_SUCCESS = Regex("管理操作成功")
+
 /** 站点笑脸表地址：CDN 上的 JS 缓存文件，支持 HTTP 条件请求。 */
 private val SMILEY_URL = "${HttpClient.BASE_URL}data/cache/common_smilies_var.js"
 
 /** 表情表的保鲜期：超过这个时间才带 etag 回站确认一次，期内零网络请求。 */
 private const val SMILEY_REVALIDATE_INTERVAL_MS = 12 * 60 * 60 * 1000L
+
+/** 正文里引用已上传附件的标记：`[attachimg]<aid>[/attachimg]`。 */
+private val RE_ATTACHIMG_AID = Regex("""\[attachimg\](\d+)\[/attachimg\]""", RegexOption.IGNORE_CASE)
 
 /** guide 模块里由门户插件出列表的视图：站点把 view=hot 做成门户首页，帖子列表走 AJAX。 */
 private const val GUIDE_VIEW_PORTAL = "hot"
@@ -88,6 +94,10 @@ class ForumRepository(
 
     /** 会话内缓存的表情包：站点不常变，避免每次打开表情面板都拉一次。 */
     private var smileyCache: List<SmileyPack>? = null
+
+    /** 提交正文里引用的附件 id：发新帖与回复都靠它把附件挂到本楼。 */
+    private fun attachAids(message: String): List<String> =
+        RE_ATTACHIMG_AID.findAll(message).map { it.groupValues[1] }.distinct().toList()
 
 
     /** 发帖页的 formhash（新版帖接口必需）。 */
@@ -227,6 +237,9 @@ class ForumRepository(
         )
         if (!noticeAuthor.isNullOrBlank()) params["noticeauthor"] = noticeAuthor
         if (!noticeTrimStr.isNullOrBlank()) params["noticetrimstr"] = noticeTrimStr
+        // 站点只把 attachnew 里列出的 aid 挂到本楼并渲染 [attachimg]；漏了它就静默丢弃标签，
+        // 表现为「发送成功但只有文字」
+        for (aid in attachAids(message)) params["attachnew[$aid][description]"] = ""
         val body = http.post(url, params, referer = "https://bbs.binmt.cc/thread-$tid-1-1.html")
         val result = ForumParser.parseReplyResult(body)
         // 未拿到 XML 回执（无 succeedhandle_/errorhandle_，如会话过期被重定向到登录页）时一律判
@@ -577,6 +590,7 @@ class ForumRepository(
             "pid" to pid,
         )
         if (!subject.isNullOrBlank()) params["subject"] = subject
+        for (aid in attachAids(message)) params["attachnew[$aid][description]"] = ""
         val body = http.post(
             url,
             params,
@@ -605,6 +619,35 @@ class ForumRepository(
         // 未真正删除时编辑页仍返回完整表单，以此区分「已删除」与「服务端拒删却 200」
         val stillForm = DELETE_FORM_ACTION.containsMatchIn(body) && DELETE_FORM_SUBMIT.containsMatchIn(body)
         body.isNotBlank() && !stillForm
+    }
+
+    /**
+     * 置顶/解除置顶某条回复（楼主权限）。站点 stickreply 走两步：先回确认表单，
+     * 客户端自己确认，故直接打带 modsubmit 的第二步。
+     *
+     * 置顶后站点把该楼提到首帖之后，楼层号位置换成「置顶」标记，需重拉本页才能上屏。
+     */
+    suspend fun stickReply(
+        tid: String,
+        fid: String,
+        formhash: String,
+        pid: String,
+        stick: Boolean,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val params = mapOf(
+            "formhash" to formhash,
+            "fid" to fid,
+            "tid" to tid,
+            "page" to "1",
+            "reason" to "手机版主题操作",
+            "topiclist[]" to pid,
+            "stickreply" to if (stick) "1" else "0",
+        )
+        val url = http.url(
+            "forum.php?mod=topicadmin&action=stickreply&modsubmit=yes&modclick=yes&mobile=2&inajax=1",
+        )
+        val body = http.post(url, params, referer = "https://bbs.binmt.cc/thread-$tid-1-1.html")
+        TOPICADMIN_SUCCESS.containsMatchIn(body)
     }
 
     /**

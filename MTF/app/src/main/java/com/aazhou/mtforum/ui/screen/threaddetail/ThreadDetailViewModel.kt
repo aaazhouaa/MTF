@@ -746,6 +746,35 @@ class ThreadDetailViewModel(
         }
     }
 
+    /**
+     * 置顶/解除置顶某条回复（楼主权限）。站点把该楼提到首帖之后，本地页码已对不上，
+     * 成功后把已拉过的每条序列的第 1 页重拉一遍合入楼层池。
+     */
+    fun stickReply(pid: String, stick: Boolean) {
+        val data = (_state.value as? UiState.Success)?.data ?: return
+        val fid = data.fid
+        if (!repository.isLoggedIn() || data.formhash.isNullOrBlank() || fid.isNullOrBlank()) {
+            _actionMessage.value = "请先登录"
+            return
+        }
+        viewModelScope.launch {
+            val ok = runCatching {
+                repository.stickReply(tid, fid, data.formhash, pid, stick)
+            }.getOrDefault(false)
+            if (!ok) {
+                _actionMessage.value = if (stick) "置顶失败，站点可能不允许" else "取消置顶失败"
+                return@launch
+            }
+            _actionMessage.value = if (stick) "已置顶该回复" else "已取消置顶"
+            for (seq in viewProgress.keys.toList()) {
+                val fresh = fetchPageOrNull(seq, 1) ?: continue
+                mergeIntoPool(seq, 1, fresh)
+                recordProgress(seq, 1, fresh.totalPages)
+            }
+            publish()
+        }
+    }
+
     /** 删除自己的回复。 */
     fun deleteReply(pid: String) {
         val data = (_state.value as? UiState.Success)?.data ?: return

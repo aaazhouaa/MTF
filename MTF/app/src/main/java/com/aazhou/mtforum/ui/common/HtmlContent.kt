@@ -382,10 +382,25 @@ private class BlocksBuilder {
         spans.clear()
     }
 
+/**
+ * 引用块的被引正文。
+ *
+ * 站点在引用块最前面烘一条「作者 发表于 时间」的元信息，它不是被引内容：解析器没把
+ * 该块收成 PostQuote 时（快照为空、结构不匹配），这一行会残在正文里原样显示。
+ * 元信息以第一个 <br> 为界，切不切只认那一段里有没有「发表于」。
+ */
+private fun quoteBodyText(element: Element): String {
+    val html = element.html()
+    val br = RE_BR_TAG.find(html) ?: return element.text().trim()
+    if (!html.substring(0, br.range.first).contains("发表于")) return element.text().trim()
+    return Jsoup.parseBodyFragment(html.substring(br.range.last + 1)).body().text().trim()
+}
+
+private val RE_BR_TAG = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
     private fun appendElement(element: Element, style: InlineStyle) {
         if (element.hasClass("comiis_quote")) {
             flushText()
-            val quote = element.text().trim()
+            val quote = quoteBodyText(element)
             if (quote.isNotEmpty()) blocks.add(ContentBlock.Quote(quote))
             return
         }
@@ -415,7 +430,7 @@ private class BlocksBuilder {
                 else appendList(element, style, ordered = element.tagName() == "ol")
             "blockquote" -> {
                 flushText()
-                val quote = element.text().trim()
+                val quote = quoteBodyText(element)
                 if (quote.isNotEmpty()) blocks.add(ContentBlock.Quote(quote))
             }
             else -> appendContainer(element, style)

@@ -51,6 +51,11 @@ object NoticeNotifier {
         NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
     }
 
+    /** 消息已看过：撤掉通知，别在通知栏留着一条数不对的「N 条新消息提醒」。 */
+    fun cancel(context: Context) {
+        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+    }
+
     private fun createChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val channel = NotificationChannel(

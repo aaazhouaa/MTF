@@ -575,4 +575,24 @@ class HtmlContentTest {
         val video = parseContentBlocks(html).filterIsInstance<ContentBlock.Video>().single()
         assertEquals("https://cdn.binmt.cc/att.mp4", video.url)
     }
+
+    @Test
+    fun residualQuoteBlockDropsPublishedByMetaLine() {
+        // 引用块没被收成 PostQuote 时整块留在正文里，开头「作者 发表于 时间」不是被引内容
+        val html = "<div class=\"comiis_quote\"><blockquote>" +
+            "<font size=\"2\">回复</font> <font color=\"#999999\">heidong4686 发表于 1 分钟前</font><br>" +
+            "频道里面是你的账号被封了</blockquote></div>我自己的正文"
+        val blocks = parseContentBlocks(html)
+        val quote = blocks.filterIsInstance<ContentBlock.Quote>().single()
+        assertEquals("频道里面是你的账号被封了", quote.text)
+        assertEquals("我自己的正文", blocks.filterIsInstance<ContentBlock.Text>().single().text)
+    }
+
+    @Test
+    fun residualQuoteBlockKeepsBodyWithoutMetaLine() {
+        // 开头不是「发表于」元信息时整块都是被引正文，一个字符都不能少
+        val html = "<blockquote>只有被引正文<br>第二行</blockquote>"
+        val quote = parseContentBlocks(html).filterIsInstance<ContentBlock.Quote>().single()
+        assertEquals("只有被引正文 第二行", quote.text)
+    }
 }

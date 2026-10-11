@@ -17,7 +17,7 @@ class NoticeChecker(
     suspend fun check(): List<Notice> {
         val notices = repository.notices().notices
         if (notices.isEmpty()) return emptyList()
-        val fresh = unreadStore.onPolled(notices.map { it.id })
-        return if (fresh.isEmpty()) emptyList() else notices
+        val freshIds = unreadStore.onPolled(notices.map { it.id }).toSet()
+        return notices.filter { it.id in freshIds }
     }
 }

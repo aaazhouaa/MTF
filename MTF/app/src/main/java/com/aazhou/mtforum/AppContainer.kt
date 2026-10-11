@@ -123,6 +123,8 @@ class AppContainer(application: Application) {
     /** 看过消息页：把 [ids] 记为已读，红点随之灭掉。 */
     fun markNoticesRead(ids: List<String>) {
         appScope.launch { noticeUnreadStore.markRead(ids) }
+        // 看过消息页即没有待看的新消息，通知栏那条提醒随之撤掉（autoCancel 只在点通知时生效）
+        NoticeNotifier.cancel(appContext)
     }
 
     /** 拉取并缓存当前登录用户资料；未登录时清空。失败则保留旧值，不清空已有资料。 */

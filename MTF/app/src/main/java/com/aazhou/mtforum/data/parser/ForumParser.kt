@@ -104,6 +104,9 @@ object ForumParser {
     /** 引用块时间是否为绝对日期（站点对新鲜被引楼层渲染的是「N 分钟前」这类相对时间）。 */
     private val RE_ABS_DATE = Regex("\\d{4}-\\d{1,2}-\\d{1,2}")
 
+    /** 正文里的 BBCode 引用块：`[quote]…[/quote]`。 */
+    private val RE_QUOTE_BLOCK = Regex("""\[quote\][\s\S]*?\[/quote\]""", RegexOption.IGNORE_CASE)
+
     /** 「本帖最后由 X 于 2026-10-5 12:39 编辑」里的时间，用于「时间 编辑」小字。 */
     private val RE_EDIT_TIME = Regex("\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}\\s+\\d{1,2}:\\d{2}(?::\\d{2})?")
 
@@ -357,6 +360,8 @@ object ForumParser {
             val explicit = floorNumberOf(label)
             val floor = when {
                 post.isFirstPost -> 0
+                // 置顶楼层没有楼层号，站点只给「置顶」标记，别按锚点推一个错号出来
+                post.sticky -> null
                 // 站点给了楼层标签（「沙发」「11#」）就直接换算成楼层号
                 explicit != null -> explicit
                 // 第 1 页整页没标签时按页内序号推：站点第一条回复恒为沙发（2 楼）
@@ -523,6 +528,8 @@ object ForumParser {
             quote = quote,
             editedText = editedBadge(editedText),
             hasHiddenContent = hiddenNodes.isNotEmpty(),
+            // 置顶后站点把楼层号换成「置顶」标记，位置就在楼层号那个 span 里
+            sticky = li.selectFirst("span.f_d.y span.f_g")?.text()?.contains("置顶") == true,
         )
     }
 
@@ -1602,8 +1609,24 @@ object ForumParser {
         val textarea = document.selectFirst("textarea[name=message], textarea#message")
             ?: document.selectFirst("textarea")
         val raw = textarea?.wholeText().orEmpty()
-        if (raw.isNotBlank()) return raw
-        return document.selectFirst("input[name=message]")?.attr("value").orEmpty()
+        val text = if (raw.isNotBlank()) raw else document.selectFirst("input[name=message]")?.attr("value").orEmpty()
+        // 站点把引用回复的 [quote] 块一起存进正文，原样回填会让用户改完保存后把被引
+        // 内容再烘回楼层里。编辑只该动自己的话，故先摘掉这些块
+        return stripQuoteBlocks(text)
+    }
+
+    /**
+     * 剥掉正文里的 `[quote]…[/quote]` 块，保留块外自己的话。
+     *
+     * 逐轮替换到稳定：块与块相邻、块内含块时单次非贪婪匹配会留下残段。
+     */
+    private fun stripQuoteBlocks(text: String): String {
+        var result = text
+        while (true) {
+            val next = RE_QUOTE_BLOCK.replace(result, "")
+            if (next.length == result.length) return result.trim('\n', ' ', '\t', '\r')
+            result = next
+        }
     }
 
     /**

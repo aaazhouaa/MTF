@@ -231,9 +231,11 @@ private fun InfoCard(
                 .background(colors.surface)
                 .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
-            // 顶部一行：左侧留空给突出头像，右上角放置典雅的登录/退出小胶囊
+            // 顶部一行：固定 38.dp 占位（与访客主页资料卡的顶部留空一致），左侧留空给突出头像，右上角放置典雅的登录/退出小胶囊
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(38.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -243,8 +245,6 @@ private fun InfoCard(
                     onClick = onAccountAction,
                 )
             }
-
-            Spacer(Modifier.height(8.dp))
 
             // 主体行：左侧用户名与 UID，右侧三个统计指标
             Row(
@@ -266,7 +266,7 @@ private fun InfoCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(Modifier.height(3.dp))
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         if (loggedIn && !profile?.uid.isNullOrBlank()) "UID: ${profile?.uid}" else " ",
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),

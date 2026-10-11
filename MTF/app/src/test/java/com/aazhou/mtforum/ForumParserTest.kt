@@ -1343,4 +1343,59 @@ class ForumParserTest {
         assertEquals(false, res.success)
         assertEquals("抱歉，您两次发表间隔少于 15 秒", res.message)
     }
+
+    @Test
+    fun editMessageDropsQuoteBlockButKeepsOwnText() {
+        val html = """
+            <html><head><title>编辑</title></head><body>
+            <form id="postform">
+              <input type="hidden" name="formhash" value="abc123">
+              <textarea name="message">[quote][size=2][url=forum.php?mod=redirect&amp;goto=findpost&amp;pid=11947918&amp;ptid=174032][color=#999999]heidong4686 发表于 1 分钟前[/color][/url][/size]
+频道里面是你的账号被封了[/quote]
+我自己的正文</textarea>
+            </form>
+            </body></html>
+        """.trimIndent()
+        val data = ForumParser.parseEditPostInit(html)
+        assertEquals("我自己的正文", data.message)
+    }
+
+    @Test
+    fun editMessageKeepsTextWhenThereIsNoQuote() {
+        val html = """
+            <html><head><title>编辑</title></head><body>
+            <form id="postform">
+              <textarea name="message">第一段
+
+第二段</textarea>
+            </form>
+            </body></html>
+        """.trimIndent()
+        val data = ForumParser.parseEditPostInit(html)
+        assertEquals("第一段\n\n第二段", data.message)
+    }
+
+    @Test
+    fun stickyReplyIsFlaggedAndGetsNoFloorNumber() {
+        val html = """
+            <html><head><title>帖子</title></head><body>
+            <div class="comiis_postli" id="pid11947918">
+              <div class="comiis_postli_top b_t"></div>
+              <div class="comiis_a"><span class="f_d y"><span class="f_g">置顶</span> 来自#</span>被置顶的正文</div>
+            </div>
+            <div class="comiis_postli" id="pid11910144">
+              <div class="comiis_postli_top b_t"></div>
+              <div class="comiis_a"><span class="f_d y">2<sup>#</sup></span>普通回复</div>
+            </div>
+            </body></html>
+        """.trimIndent()
+        val posts = ForumParser.parseThreadPage(html, 1).posts
+        val sticky = posts.single { it.pid == "11947918" }
+        assertTrue(sticky.sticky)
+        assertNull(sticky.floor)
+        assertNull(sticky.floorLabel)
+        val normal = posts.single { it.pid == "11910144" }
+        assertTrue(!normal.sticky)
+        assertEquals(2, normal.floor)
+    }
 }

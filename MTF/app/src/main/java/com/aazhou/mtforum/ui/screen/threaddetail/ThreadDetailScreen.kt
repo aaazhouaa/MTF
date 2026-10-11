@@ -920,6 +920,8 @@ fun ThreadDetailScreen(
 
     actionTarget?.let { target ->
         val isOwn = myUid.isNotBlank() && myUid == target.authorUid
+        // 置顶是楼主对帖内评论的管理权限，站点只给楼主这个入口
+        val canStick = myUid.isNotBlank() && myUid == page?.opUid
         MtfContentDialog(
             title = "${target.authorName.ifBlank { "匿名" }} · 评论操作",
             onDismissRequest = { actionTarget = null },
@@ -956,6 +958,12 @@ fun ThreadDetailScreen(
                 MenuAction("举报") {
                     actionTarget = null
                     if (requireLogin(LOGIN_HINT_REPORT)) reportTarget = ReportTarget(target.pid)
+                }
+            }
+            if (canStick) {
+                MenuAction(if (target.sticky) "取消置顶" else "置顶") {
+                    actionTarget = null
+                    viewModel.stickReply(target.pid, !target.sticky)
                 }
             }
         }
@@ -1392,7 +1400,7 @@ private fun MoreMenu(
             containerColor = colors.surface,
             shadowElevation = 6.dp,
             border = if (isDark) androidx.compose.foundation.BorderStroke(0.5.dp, colors.divider) else null,
-            modifier = Modifier.width(118.dp),
+            modifier = Modifier.width(104.dp),
         ) {
             val itemStyle = MaterialTheme.typography.bodyMedium.copy(
                 fontSize = 14.sp,
@@ -1401,7 +1409,7 @@ private fun MoreMenu(
             val itemPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
             if (canEditThread) {
                 DropdownMenuItem(
-                    text = { Text("编辑本帖", style = itemStyle, color = bodyTextColor()) },
+                    text = { Text("编辑", style = itemStyle, color = bodyTextColor()) },
                     contentPadding = itemPadding,
                     leadingIcon = {
                         Icon(
@@ -1773,6 +1781,14 @@ internal fun ReplyBlock(
             // 闪烁只覆盖这条消息的内容（昵称 + 正文），不含头像与底栏
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (reply.sticky) {
+                        Text(
+                            "置顶",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(end = 2.dp),
+                        )
+                    }
                     if (!reply.floorLabel.isNullOrBlank()) {
                         Text(
                             reply.floorLabel,

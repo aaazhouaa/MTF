@@ -114,6 +114,8 @@ data class Post(
     val editedText: String? = null,
     /** 首帖是否含「回复可见」隐藏内容（处于锁定态，需回复后解锁）。 */
     val hasHiddenContent: Boolean = false,
+    /** 是否被楼主置顶：站点把它提到首帖之后，楼层号位置换成「置顶」标记。 */
+    val sticky: Boolean = false,
 )
 
 /**
