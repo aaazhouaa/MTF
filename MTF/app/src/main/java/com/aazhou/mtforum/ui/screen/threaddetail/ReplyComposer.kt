@@ -897,7 +897,9 @@ internal fun SmileyOverlay(
     val ranges = remember(source, smileyByCode) { smileyRangesOf(source, smileyByCode) }
     if (ranges.isEmpty()) return
     val density = LocalDensity.current
-    Box(Modifier.fillMaxSize()) {
+    // 只撑宽不撑高：这一层可能被放在可滚动容器里（编辑页正文），取无限高度约束会直接崩；
+    // 贴图用 absoluteOffset 定位，超出自身边界的部分照常绘制，由外层裁剪到视口
+    Box(Modifier.fillMaxWidth()) {
         ranges.forEach { (range, code) ->
             val smiley = smileyByCode[code] ?: return@forEach
             if (range.first >= layout.layoutInput.text.length) return@forEach

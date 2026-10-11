@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -708,12 +709,13 @@ fun PostEditScreen(
                         )
                         Spacer(Modifier.height(12.dp))
 
-                        // 正文输入框与表情 Overlay
+                        // 正文输入框与表情 Overlay：正文自己内部滚动，Overlay 与输入框同在一个滚动容器里，表情不会停在屏幕原位
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f)
-                                .heightIn(min = 80.dp),
+                                .heightIn(min = 80.dp)
+                                .verticalScroll(rememberScrollState()),
                         ) {
                             BasicTextField(
                                 value = message,
@@ -727,7 +729,7 @@ fun PostEditScreen(
                                 visualTransformation = smileyVisualTransformation,
                                 onTextLayout = { textLayout = it },
                                 modifier = Modifier
-                                    .fillMaxSize()
+                                    .fillMaxWidth()
                                     .focusRequester(messageFocusRequester)
                                     .onFocusChanged { if (it.isFocused) switchToKeyboard(focusMessage = false) },
                                 decorationBox = { innerTextField ->
