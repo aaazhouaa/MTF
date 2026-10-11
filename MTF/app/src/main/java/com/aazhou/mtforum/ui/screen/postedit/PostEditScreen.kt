@@ -98,6 +98,7 @@ import com.aazhou.mtforum.ui.screen.threaddetail.MinKeyboardHeight
 import com.aazhou.mtforum.ui.screen.threaddetail.STABLE_KEYBOARD_FRAMES
 import com.aazhou.mtforum.ui.screen.threaddetail.SmileyOverlay
 import com.aazhou.mtforum.ui.screen.threaddetail.SmileyPanel
+import com.aazhou.mtforum.ui.screen.threaddetail.wrapSelectionOrInsert
 import com.aazhou.mtforum.ui.screen.threaddetail.HANDOFF_GIVEUP_FRAMES
 import com.aazhou.mtforum.ui.screen.threaddetail.atTokenAt
 import com.aazhou.mtforum.ui.screen.threaddetail.filterAtUsers
@@ -472,15 +473,40 @@ fun PostEditScreen(
                     } else if (panel == PostComposerPanel.Insert) {
                         InsertPanel(
                             onPick = { kind ->
-                                val selectedText = if (!message.selection.collapsed) {
-                                    val min = minOf(message.selection.start, message.selection.end)
-                                    val max = maxOf(message.selection.start, message.selection.end)
-                                    message.text.substring(min, max)
-                                } else ""
-                                inlineUrlInput = selectedText
-                                inlineTitleInput = ""
-                                activeInsertKind = kind
-                                panel = PostComposerPanel.None
+                                val start = minOf(message.selection.start, message.selection.end)
+                                val end = maxOf(message.selection.start, message.selection.end)
+                                val selected = if (end > start) message.text.substring(start, end) else ""
+                                val isTextFormat = kind in listOf(
+                                    InsertKind.Bold,
+                                    InsertKind.Italic,
+                                    InsertKind.Underline,
+                                    InsertKind.Strikethrough,
+                                    InsertKind.Quote,
+                                    InsertKind.Code,
+                                )
+                                if (selected.isNotEmpty() && isTextFormat) {
+                                    // 有选中文本时直接套标签，跟评论面板一致，不再弹内联条问一遍
+                                    val tag = when (kind) {
+                                        InsertKind.Bold -> "b"
+                                        InsertKind.Italic -> "i"
+                                        InsertKind.Underline -> "u"
+                                        InsertKind.Strikethrough -> "s"
+                                        InsertKind.Quote -> "quote"
+                                        InsertKind.Code -> "code"
+                                        else -> ""
+                                    }
+                                    viewModel.onMessageChange(
+                                        message.wrapSelectionOrInsert("[$tag]", "[/$tag]"),
+                                    )
+                                    panel = PostComposerPanel.None
+                                    messageFocusRequester.requestFocus()
+                                    keyboard?.show()
+                                } else {
+                                    inlineUrlInput = selected
+                                    inlineTitleInput = ""
+                                    activeInsertKind = kind
+                                    panel = PostComposerPanel.None
+                                }
                             },
                             modifier = Modifier
                                 .fillMaxWidth()

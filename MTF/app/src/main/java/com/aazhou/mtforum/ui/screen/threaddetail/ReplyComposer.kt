@@ -1020,7 +1020,7 @@ internal fun filterAtUsers(users: List<String>, keyword: String): List<String> {
  * 包装当前选区，或在光标处插入带前缀/后缀的模板；
  * 若无选区，光标自动停在 [prefix] 之后供用户立即输入。
  */
-private fun TextFieldValue.wrapSelectionOrInsert(
+internal fun TextFieldValue.wrapSelectionOrInsert(
     prefix: String,
     suffix: String,
 ): TextFieldValue {
