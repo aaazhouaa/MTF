@@ -292,8 +292,8 @@ fun ThreadDetailScreen(
                 dismissComposer()
                 AppToast.show("回复成功")
                 viewModel.consumeReplyState()
-                // 只重拉第 1 页并合并，保留已加载的后续页，不整页回退
-                viewModel.refreshFirstPage()
+                // 重拉当前序列第 1 页与末页后合并，保留已加载的其余页，不整页回退
+                viewModel.refreshAfterReply()
             }
             is ThreadDetailViewModel.ReplyState.Error -> {
                 AppToast.show(r.message)
@@ -920,8 +920,9 @@ fun ThreadDetailScreen(
 
     actionTarget?.let { target ->
         val isOwn = myUid.isNotBlank() && myUid == target.authorUid
-        // 置顶是楼主对帖内评论的管理权限，站点只给楼主这个入口
-        val canStick = myUid.isNotBlank() && myUid == page?.opUid
+        // 置顶入口只给「自己的帖子里、自己的评论」：站点同样只对楼主开放，且管的是
+        // 自己发出去的那几条，别借楼主身份把别人的评论也管了
+        val canStick = isOwn && myUid.isNotBlank() && myUid == page?.opUid
         MtfContentDialog(
             title = "${target.authorName.ifBlank { "匿名" }} · 评论操作",
             onDismissRequest = { actionTarget = null },

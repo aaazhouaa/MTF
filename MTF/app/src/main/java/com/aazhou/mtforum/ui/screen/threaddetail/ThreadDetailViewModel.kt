@@ -678,6 +678,44 @@ class ThreadDetailViewModel(
     }
 
     /**
+     * 回复成功后的刷新：重拉当前序列的第 1 页与最后一页。
+     *
+     * 只重拉第 1 页在正序下什么都不会变——正序第 1 页是最旧的评论，新回复追加在
+     * 末页之内；倒序第 1 页恰是全帖最新的评论，所以那边看着是好的。两页都拉才与
+     * 排序无关。末页同时兜住「站点计数变了但总页数没变」的情况，按 pid 去重不会重复。
+     */
+    fun refreshAfterReply() {
+        if (_state.value !is UiState.Success && pool.isEmpty()) {
+            load(1)
+            return
+        }
+        val seq = currentSequence
+        val generation = dataGeneration
+        viewModelScope.launch {
+            val pages = linkedSetOf(1)
+            progressOf(seq).let { p ->
+                val last = maxOf(p.totalPages, p.maxPage).coerceAtLeast(1)
+                if (last > 1) pages += last
+            }
+            for (pageNo in pages) {
+                val fresh = try {
+                    repository.threadPage(tid, pageNo, seq.orderType, seq.authorId)
+                } catch (e: Exception) {
+                    if (generation == dataGeneration) {
+                        _actionMessage.value = friendlyError(e, "刷新失败")
+                    }
+                    return@launch
+                }
+                if (generation != dataGeneration) return@launch
+                mergeIntoPool(seq, pageNo, fresh)
+                recordProgress(seq, pageNo, fresh.totalPages)
+                adoptMeta(fresh)
+            }
+            publish()
+        }
+    }
+
+    /**
      * 三档分段（楼主/正序/倒序）一次切换：先改状态、再统一走一遍加载。
      * 避免 onOpOnly(false)+onOrder(x) 两个回调各触发一次 load 造成竞态与重复请求。
      * [anchor] 是新楼层上屏后界面要恢复到的位置；切正序/倒序时传评论区顶部，倒序的

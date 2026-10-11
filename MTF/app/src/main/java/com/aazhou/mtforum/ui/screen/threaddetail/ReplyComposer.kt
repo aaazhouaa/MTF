@@ -113,6 +113,7 @@ import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -161,20 +162,37 @@ internal fun ReplyComposer(
     var panel by remember { mutableStateOf(ComposerPanel.None) }
     var uploading by remember { mutableStateOf(false) }
 
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(MAX_UPLOAD_IMAGES),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
         uploading = true
         scope.launch {
+            var done = 0
+            var failed = 0
             try {
-                val file = prepareUploadFile(context, uri)
-                val aid = onUploadImage(file)
-                if (aid != null) {
-                    onValueChange(value.insertAtSelection("[attachimg]$aid[/attachimg]"))
-                } else {
-                    AppToast.show("上传失败，可能超出大小限制或凭据已过期")
+                for (uri in uris) {
+                    try {
+                        val file = prepareUploadFile(context, uri)
+                        val aid = onUploadImage(file)
+                        if (aid != null) {
+                            onValueChange(value.insertAtSelection("[attachimg]$aid[/attachimg]"))
+                            done++
+                        } else {
+                            failed++
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // 单张失败不打断整批：剩下的图照传，末尾一并告知
+                        failed++
+                    }
                 }
-            } catch (e: Exception) {
-                AppToast.show(e.message ?: "上传失败")
+                when {
+                    failed == 0 -> Unit
+                    done == 0 -> AppToast.show("上传失败，可能超出大小限制或凭据已过期")
+                    else -> AppToast.show("$done 张已插入，$failed 张上传失败")
+                }
             } finally {
                 uploading = false
             }
@@ -1587,6 +1605,9 @@ private fun ContentResolver.openImageStream(uri: Uri): InputStream? {
 private const val MAX_UPLOAD_BYTES = 1024 * 1024L
 private const val MAX_UPLOAD_EDGE = 1500
 private const val MIN_UPLOAD_QUALITY = 15
+
+/** 一次最多选几张：站点对单帖附件数有上限，取一个保守值。 */
+private const val MAX_UPLOAD_IMAGES = 9
 
 /** 取选中图读取流的重试次数与间隔：provider 重启后再取通常就好了。 */
 private const val OPEN_URI_ATTEMPTS = 3
