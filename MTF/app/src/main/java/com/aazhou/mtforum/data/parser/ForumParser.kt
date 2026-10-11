@@ -848,6 +848,9 @@ object ForumParser {
     /** 提醒行里指向具体楼层的链接：goto=findpost&pid=PID。 */
     private val RE_NOTICE_PID = Regex("""[?&]pid=(\d+)""")
 
+    /** 分页器里指向某一页的链接：do=notice&view=X&page=N。 */
+    private val RE_NOTICE_PAGE = Regex("""[?&]page=(\d+)""")
+
     /** 提醒里帖子标题的最大显示长度，超出部分用省略号代替。 */
     private const val NOTICE_TITLE_MAX = 8
 
@@ -859,10 +862,6 @@ object ForumParser {
         val m = RE_THREAD_PAGE.find(url) ?: return 1
         return (m.groupValues[1].ifEmpty { m.groupValues[2] }).toIntOrNull()?.coerceAtLeast(1) ?: 1
     }
-
-    /** 楼层正文的纯文本摘要（提醒列表里显示回复内容用）：去标签、压空白。 */
-    fun plainText(html: String): String =
-        doc(html).text().replace(Regex("""\s+"""), " ").trim()
 
     /**
      * 「我的」→「消息提醒」的某个类别页（home.php?mod=space&do=notice&view=…）。
@@ -897,7 +896,30 @@ object ForumParser {
             rows = document.select("li").filter { RE_NOTICE_TIME.containsMatchIn(it.text()) }
         }
         val notices = rows.mapIndexedNotNull { index, li -> noticeFromItem(li, index) }
-        return NoticePage(loggedOut = loggedOut, notices = notices)
+        return NoticePage(
+            loggedOut = loggedOut,
+            notices = notices,
+            totalPages = parseNoticeTotalPages(document),
+        )
+    }
+
+    /**
+     * 站点分页器（div.comiis_page）给出的总页数。
+     *
+     * 页码在 select#dumppage 的 option 上；取不到就退到「下一页」链接带的 page
+     * 参数。两者都没有说明只有一页。
+     */
+    private fun parseNoticeTotalPages(document: Document): Int {
+        val pager = document.selectFirst("div.comiis_page") ?: return 1
+        pager.select("select option")
+            .mapNotNull { it.attr("value").trim().toIntOrNull() }
+            .maxOrNull()
+            ?.let { return it.coerceAtLeast(1) }
+        return pager.select("a[href]")
+            .mapNotNull { RE_NOTICE_PAGE.find(it.attr("href"))?.groupValues?.get(1)?.toIntOrNull() }
+            .maxOrNull()
+            ?.coerceAtLeast(1)
+            ?: 1
     }
 
     /** 单个 li 转成提醒：正文取 .ntc_body（没有则整行），时间取 h2 里的时间段。 */

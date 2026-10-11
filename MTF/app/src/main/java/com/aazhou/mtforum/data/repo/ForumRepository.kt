@@ -410,13 +410,13 @@ class ForumRepository(
         NoticePage(notices = merged.distinctBy { it.id })
     }
 
-    /** 单个分类下的消息提醒（mypost / interactive / system / app）。 */
-    suspend fun noticesByView(view: String): NoticePage = withContext(Dispatchers.IO) {
-        val page = ForumParser.parseNotices(
-            http.get(http.url("home.php?mod=space&do=notice&view=$view&mobile=2")),
+    /** 单个分类下的消息提醒（mypost / interactive / system / app）；站点每页 30 条。 */
+    suspend fun noticesByView(view: String, page: Int = 1): NoticePage = withContext(Dispatchers.IO) {
+        val parsed = ForumParser.parseNotices(
+            http.get(http.url("home.php?mod=space&do=notice&view=$view&page=$page&mobile=2")),
         )
-        if (page.loggedOut) return@withContext NoticePage(loggedOut = true)
-        NoticePage(notices = page.notices.distinctBy { it.id })
+        if (parsed.loggedOut) return@withContext NoticePage(loggedOut = true)
+        NoticePage(notices = parsed.notices.distinctBy { it.id }, totalPages = parsed.totalPages)
     }
 
     /** 我的消息（私信列表）。 */
@@ -452,43 +452,6 @@ class ForumRepository(
         }.getOrNull() ?: return@withContext null
         ForumParser.pageFromThreadUrl(target)
     }
-
-    /**
-     * 一批提醒指向的楼层正文摘要（pid -> 纯文本）。
-     *
-     * 站点提醒页只给「谁 回复了您的帖子 标题」，没有回复内容；要显示内容得按
-     * 楼层链接找到所在页再摘出该楼层。走 [HttpClient.getWithFinalUrl]：中转地址
-     * 302 到的那一页就是内容来源，且与其它请求同一套 WAF 处理。已经取回来的页里
-     * 若已含目标楼层就不再取（同帖多条提醒通常落在同一页）。
-     */
-    suspend fun noticeReplyTexts(items: List<Pair<String, String>>): Map<String, String> =
-        withContext(Dispatchers.IO) {
-            val result = HashMap<String, String>()
-            // 最终地址 -> 已解析的那一页（同一页只解析一次）
-            val pages = HashMap<String, ThreadPage>()
-            for ((tid, pid) in items) {
-                if (result.containsKey(pid)) continue
-                val page = pages.values.firstOrNull { it.posts.any { post -> post.pid == pid } }
-                    ?: run {
-                        val fetched = runCatching {
-                            http.getWithFinalUrl(
-                                http.url("forum.php?mod=redirect&goto=findpost&ptid=$tid&pid=$pid"),
-                            )
-                        }.getOrNull() ?: continue
-                        pages.getOrPut(fetched.first) {
-                            ForumParser.parseThreadPage(
-                                fetched.second,
-                                ForumParser.pageFromThreadUrl(fetched.first),
-                            )
-                        }
-                    }
-                val post = page.posts.firstOrNull { it.pid == pid } ?: continue
-                ForumParser.plainText(post.contentHtml)
-                    .takeIf { it.isNotBlank() }
-                    ?.let { result[pid] = it }
-            }
-            result
-        }
 
     /** 指定用户的个人中心（他人主页）。 */
     suspend fun userProfile(uid: String): UserProfile = withContext(Dispatchers.IO) {

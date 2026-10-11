@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -100,6 +101,8 @@ fun NoticeScreen(
     val currentCategory by viewModel.category.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+    val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
+    val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
@@ -250,9 +253,9 @@ fun NoticeScreen(
                                                 notices = target.items,
                                                 onUserClick = onUserClick,
                                                 onThreadClick = onThreadClick,
-                                                onVisibleChanged = { visible ->
-                                                    viewModel.ensureContents(visible)
-                                                },
+                                                hasNext = hasNext,
+                                                loadingMore = loadingMore,
+                                                onLoadMore = { viewModel.loadMore() },
                                             )
                                         }
                                         is NoticeContentState.PrivateMessages -> {
@@ -447,8 +450,21 @@ private fun NoticeListView(
     notices: List<Notice>,
     onUserClick: (String) -> Unit,
     onThreadClick: (tid: String, pid: String?) -> Unit,
-    onVisibleChanged: (List<Notice>) -> Unit,
+    hasNext: Boolean,
+    loadingMore: Boolean,
+    onLoadMore: () -> Unit,
 ) {
+    // 滑到接近末尾时自动追加下一页
+    val shouldLoadMore by remember(notices) {
+        derivedStateOf {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val total = listState.layoutInfo.totalItemsCount
+            total > 0 && last >= total - 3
+        }
+    }
+    LaunchedEffect(shouldLoadMore, hasNext) {
+        if (shouldLoadMore && hasNext) onLoadMore()
+    }
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
@@ -463,14 +479,16 @@ private fun NoticeListView(
                 },
             )
         }
-    }
-    val visibleNotices by remember(notices) {
-        derivedStateOf {
-            listState.layoutInfo.visibleItemsInfo.mapNotNull { notices.getOrNull(it.index) }
+        if (loadingMore) {
+            item(key = "notice-loading-more") {
+                Box(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(Modifier.size(22.dp))
+                }
+            }
         }
-    }
-    LaunchedEffect(visibleNotices) {
-        onVisibleChanged(visibleNotices)
     }
 }
 
@@ -694,17 +712,6 @@ private fun NoticeRow(notice: Notice, onUserClick: (String) -> Unit, onClick: ()
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val content = notice.content
-                if (!content.isNullOrBlank()) {
-                    Text(
-                        content,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
-                        color = colors.textSecondary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 3.dp),
-                    )
-                }
                 if (!notice.timeText.isNullOrBlank()) {
                     Text(
                         notice.timeText,

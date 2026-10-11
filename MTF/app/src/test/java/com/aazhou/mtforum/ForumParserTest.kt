@@ -909,6 +909,50 @@ class ForumParserTest {
     }
 
     @Test
+    fun noticeTotalPagesReadFromPager() {
+        // 站点分页器 div.comiis_page：页码在 select#dumppage 的 option 上（真实结构）
+        val withOptions = """
+            <html><body>
+            <div class="comiis_notices_box"><div class="comiis_notice_list"><ul>
+              <li class="b_b bg_f cl">
+                <div class="ntc_body"><a href="space-uid-1.html">someone</a> 回复了您的帖子
+                  <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=1&amp;pid=2">短标题</a></div>
+                <h2 class="f_d">今天 10:00</h2>
+              </li>
+            </ul></div></div>
+            <div class="cl"><div class="comiis_page bg_f">
+              <a href="javascript:;" class="bg_f b_ok f_d">上一页</a>
+              <a id="select_a" class="bg_f b_ok"><select id="dumppage">
+                <option value="1" selected="">第1页</option>
+                <option value="2">第2页</option>
+                <option value="3">第3页</option>
+              </select>第 1 页</a>
+              <a href="home.php?mod=space&amp;do=notice&amp;view=mypost&amp;page=2" class="bg_f b_ok">下一页</a>
+            </div></div>
+            </body></html>
+        """.trimIndent()
+        assertEquals(3, ForumParser.parseNotices(withOptions).totalPages)
+
+        // 没有 select 时退到「下一页」链接带的 page 参数
+        val onlyNextLink = withOptions.replace(Regex("""<select id="dumppage">[\s\S]*?</select>"""), "")
+        assertEquals(2, ForumParser.parseNotices(onlyNextLink).totalPages)
+
+        // 连分页器都没有（单页）记为 1 页
+        val noPager = """
+            <html><body>
+            <div class="comiis_notices_box"><div class="comiis_notice_list"><ul>
+              <li class="b_b bg_f cl">
+                <div class="ntc_body"><a href="space-uid-1.html">someone</a> 回复了您的帖子
+                  <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=1&amp;pid=2">短标题</a></div>
+                <h2 class="f_d">今天 10:00</h2>
+              </li>
+            </ul></div></div>
+            </body></html>
+        """.trimIndent()
+        assertEquals(1, ForumParser.parseNotices(noPager).totalPages)
+    }
+
+    @Test
     fun threadPageParsedFromResolvedUrl() {
         // redirect 中转地址 302 到带页码的帖子页，页码从这里取
         assertEquals(

@@ -285,8 +285,6 @@ data class Notice(
     val tid: String? = null,
     /** 提醒指向的楼层 pid（「回复了您的帖子」这类提醒有），用于跳转到对应楼层。 */
     val pid: String? = null,
-    /** 该楼层正文的纯文本摘要（按需拉取，用于列表里显示回复内容）。 */
-    val content: String? = null,
     /** 该条提醒关联用户的头像地址（系统类提醒没有用户头像，为 null）。 */
     val avatarUrl: String? = null,
     /** 该条提醒关联用户的 uid；点头像进入其个人主页，为 null 时不可点。 */
@@ -297,6 +295,8 @@ data class Notice(
 data class NoticePage(
     val loggedOut: Boolean = false,
     val notices: List<Notice> = emptyList(),
+    /** 站点分页器给出的总页数；没有分页器（单页）为 1。 */
+    val totalPages: Int = 1,
 )
 
 /**

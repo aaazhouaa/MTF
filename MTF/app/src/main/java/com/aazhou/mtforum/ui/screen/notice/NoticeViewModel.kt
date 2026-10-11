@@ -19,12 +19,14 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.Calendar
 
-/** 提醒类列表只保留最新 20 条。 */
-private const val NOTICE_LIMIT = 20
-
 /** 页面支持的三种内容承载形式。 */
 sealed interface NoticeContentState {
-    data class Notices(val items: List<Notice>) : NoticeContentState
+    data class Notices(
+        val items: List<Notice>,
+        /** 已加载到的页码；从 1 开始。 */
+        val page: Int = 1,
+        val hasNext: Boolean = false,
+    ) : NoticeContentState
     data class PrivateMessages(val items: List<PrivateMessage>) : NoticeContentState
     data class Followers(val items: List<FollowerUser>) : NoticeContentState
 
@@ -60,14 +62,15 @@ class NoticeViewModel(
     /** 当前加载 Job，切换分类时取消前一个。 */
     private var loadJob: Job? = null
 
-    /** 已问过内容的楼层 pid：滚动时重复可见不重复请求。 */
-    private val contentAsked = mutableSetOf<String>()
+    private val _loadingMore = MutableStateFlow(false)
+    val loadingMore: StateFlow<Boolean> = _loadingMore.asStateFlow()
 
-    /** 列表一上来就为其取摘要的条数（约一屏）；其余由滚动可见时再取。 */
-    private val eagerContentCount = 6
+    /** 是否还有下一页：站点每页 30 条，总页数见分页器。 */
+    private val _hasNext = MutableStateFlow(false)
+    val hasNext: StateFlow<Boolean> = _hasNext.asStateFlow()
 
-    /** 已取到的楼层正文摘要：pid -> 纯文本。 */
-    private val contentText = mutableMapOf<String, String>()
+    /** 追加下一页的 Job，与 [loadJob] 分开：翻页途中切分类不该把首屏加载一起取消。 */
+    private var loadMoreJob: Job? = null
 
     init {
         // 初次进入清除未读红点基线
@@ -89,16 +92,19 @@ class NoticeViewModel(
     /** 加载指定分类数据。 */
     fun loadCategory(cat: NoticeCategory) {
         loadJob?.cancel()
+        loadMoreJob?.cancel()
+        _loadingMore.value = false
+        _hasNext.value = false
         loadJob = viewModelScope.launch {
             // 内存缓存优先
             val mem = memoryStateCache[cat]
             if (mem != null) {
-                _state.value = UiState.Success(mem)
+                publish(mem)
             } else {
                 // 尝试读磁盘缓存
                 val diskCached = readDiskCache(cat)
                 if (diskCached != null) {
-                    _state.value = UiState.Success(diskCached)
+                    publish(diskCached)
                 } else if (_state.value !is UiState.Success) {
                     _state.value = UiState.Loading
                 }
@@ -107,9 +113,11 @@ class NoticeViewModel(
         }
     }
 
-    /** 下拉刷新当前分类。 */
+    /** 下拉刷新当前分类：回到第 1 页，已追加的页一并作废。 */
     fun refresh() {
         if (_refreshing.value) return
+        loadMoreJob?.cancel()
+        _loadingMore.value = false
         _refreshing.value = true
         viewModelScope.launch {
             reloadNetwork(_category.value)
@@ -140,11 +148,13 @@ class NoticeViewModel(
                         _state.value = UiState.Error("请先登录后查看消息提醒")
                         return
                     }
-                    val sorted = page.notices.sortedByDescending { noticeRecency(it) }.take(NOTICE_LIMIT)
-                    val content = NoticeContentState.Notices(sorted)
+                    val sorted = page.notices.sortedByDescending { noticeRecency(it) }
+                    val content = NoticeContentState.Notices(
+                        items = sorted,
+                        page = 1,
+                        hasNext = 1 < page.totalPages,
+                    )
                     updateContent(cat, content)
-                    republishWithContents()
-                    ensureContents(sorted.take(eagerContentCount))
                 }
             }
         } catch (e: Exception) {
@@ -157,9 +167,41 @@ class NoticeViewModel(
     private suspend fun updateContent(cat: NoticeCategory, content: NoticeContentState) {
         memoryStateCache[cat] = content
         if (_category.value == cat) {
-            _state.value = UiState.Success(content)
+            publish(content)
         }
         writeDiskCache(cat, content)
+    }
+
+    /** 上屏当前分类的内容，并同步翻页状态（缓存命中时也要能继续翻页）。 */
+    private fun publish(content: NoticeContentState) {
+        _state.value = UiState.Success(content)
+        _hasNext.value = (content as? NoticeContentState.Notices)?.hasNext ?: false
+    }
+
+    /** 滑到接近末尾时追加下一页；站点同页条目不重复，仍按 id 去重。 */
+    fun loadMore() {
+        if (_loadingMore.value || !_hasNext.value) return
+        val current = (_state.value as? UiState.Success)?.data as? NoticeContentState.Notices ?: return
+        _loadingMore.value = true
+        loadMoreJob = viewModelScope.launch {
+            val next = current.page + 1
+            runCatching { repository.noticesByView(_category.value.viewKey ?: "mypost", next) }
+                .onSuccess { page ->
+                    if (page.loggedOut) {
+                        _hasNext.value = false
+                        return@onSuccess
+                    }
+                    val updated = NoticeContentState.Notices(
+                        items = (current.items + page.notices).distinctBy { it.id }
+                            .sortedByDescending { noticeRecency(it) },
+                        page = next,
+                        hasNext = next < page.totalPages,
+                    )
+                    updateContent(_category.value, updated)
+                }
+                .onFailure { _hasNext.value = false }
+            _loadingMore.value = false
+        }
     }
 
     private suspend fun readDiskCache(cat: NoticeCategory): NoticeContentState? {
@@ -179,7 +221,8 @@ class NoticeViewModel(
             NoticeCategory.SYSTEM,
             NoticeCategory.APP -> {
                 contentCache.read(CacheKeys.notice(cat.name), CacheKeys.LIST_TTL, allowExpired = true) {
-                    NoticeContentState.Notices(cacheJson.decodeFromString<CachedNotices>(it).notices)
+                    val cached = cacheJson.decodeFromString<CachedNotices>(it)
+                    NoticeContentState.Notices(cached.notices, cached.page, cached.hasNext)
                 }
             }
         }
@@ -191,7 +234,7 @@ class NoticeViewModel(
                 contentCache.write(
                     key = CacheKeys.notice(cat.name),
                     ttlMillis = CacheKeys.LIST_TTL,
-                    value = CachedNotices(content.items),
+                    value = CachedNotices(content.items, content.page, content.hasNext),
                     encode = { cacheJson.encodeToString(CachedNotices.serializer(), it) },
                 )
             }
@@ -213,47 +256,14 @@ class NoticeViewModel(
             }
         }
     }
-
-    /** 给可见的帖子提醒补上楼层正文摘要。 */
-    fun ensureContents(visible: List<Notice>) {
-        val pending = visible.filter { !it.pid.isNullOrBlank() && contentAsked.add(it.pid!!) }
-        if (pending.isEmpty()) return
-        viewModelScope.launch {
-            val texts = runCatching {
-                repository.noticeReplyTexts(
-                    pending.mapNotNull { notice ->
-                        val tid = notice.tid ?: return@mapNotNull null
-                        val pid = notice.pid ?: return@mapNotNull null
-                        tid to pid
-                    },
-                )
-            }.getOrNull().orEmpty()
-            if (texts.isEmpty()) return@launch
-            contentText.putAll(texts)
-            republishWithContents()
-        }
-    }
-
-    private suspend fun republishWithContents() {
-        val current = _state.value as? UiState.Success ?: return
-        val noticesContent = current.data as? NoticeContentState.Notices ?: return
-        if (contentText.isEmpty()) return
-        val merged = noticesContent.items.map { notice ->
-            val text = notice.pid?.let { contentText[it] } ?: return@map notice
-            if (notice.content == text) notice else notice.copy(content = text)
-        }
-        if (merged == noticesContent.items) return
-        val updated = NoticeContentState.Notices(merged)
-        memoryStateCache[_category.value] = updated
-        _state.value = UiState.Success(updated)
-        writeDiskCache(_category.value, updated)
-    }
 }
 
 /** 消息提醒的缓存内容。 */
 @Serializable
 private data class CachedNotices(
     val notices: List<Notice> = emptyList(),
+    val page: Int = 1,
+    val hasNext: Boolean = false,
 )
 
 /** 站点提醒页实际出现的时间文本：相对时间、相对日词加钟点、绝对日期、当年月日。 */
