@@ -561,7 +561,7 @@ fun ChatScreen(
                             .fillMaxSize()
                             .padding(padding),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(messages, key = { it.id }) { message ->
                             ChatBubbleItem(

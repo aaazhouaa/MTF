@@ -113,12 +113,12 @@ fun ForumListScreen(
                     LazyColumn(
                         state = listState,
                         contentPadding = PaddingValues(
-                            top = 10.dp,
+                            top = 8.dp,
                             bottom = bottomBarContentPadding() + 16.dp,
-                            start = 12.dp,
-                            end = 12.dp,
+                            start = 6.dp,
+                            end = 6.dp,
                         ),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         items(current.data, key = { it.name }) { group ->

@@ -181,7 +181,7 @@ fun UserProfileScreen(
                         },
                     )
 
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(8.dp))
 
                     UserActionList(
                         isSelf = isSelf,

@@ -57,7 +57,7 @@ fun RankCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 5.dp)
+            .padding(horizontal = 6.dp, vertical = 2.5.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(colors.surface)
             .padding(horizontal = 10.dp, vertical = 10.dp),

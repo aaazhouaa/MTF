@@ -218,7 +218,7 @@ fun UserPostsScreen(
                     }
                     LazyColumn(
                         state = listState,
-                        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+                        contentPadding = PaddingValues(top = 2.5.dp, bottom = 24.dp),
                         modifier = Modifier.fillMaxSize().padding(padding),
                     ) {
                         items(threads, key = { it.tid }) { thread ->

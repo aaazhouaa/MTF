@@ -223,7 +223,7 @@ private fun ForumThreadList(
                 LazyColumn(
                     state = listState,
                     // 发帖入口已移到顶栏，底部只留普通收尾留白
-                    contentPadding = PaddingValues(bottom = 24.dp),
+                    contentPadding = PaddingValues(top = 2.5.dp, bottom = 24.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     if (data.announcements.isNotEmpty()) {

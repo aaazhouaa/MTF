@@ -570,7 +570,7 @@ private fun PrivateMessageListView(
                             touid?.let(onUserClick)
                         }
                     }
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(42.dp)) {
@@ -655,7 +655,7 @@ private fun NoticeRow(notice: Notice, onUserClick: (String) -> Unit, onClick: ()
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .padding(horizontal = 16.dp, vertical = 4.dp)
             .then(
                 if (clickable) Modifier.clickable(onClick = onClick) else Modifier,
             ),

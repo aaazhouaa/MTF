@@ -364,7 +364,7 @@ private fun HomeTabRow(selectedIndex: Int, scrollFraction: Float, onSelect: (Int
         Box(
             Modifier
                 .align(Alignment.BottomStart)
-                .padding(bottom = 8.dp)
+                .padding(bottom = 2.5.dp)
                 .offset { IntOffset(indicatorOffset.roundToPx(), 0) }
                 .width(indicatorWidth)
                 .height(2.dp)

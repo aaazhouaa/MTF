@@ -461,7 +461,7 @@ fun SearchScreen(
                             }
                             LazyColumn(
                                 state = listStates[page],
-                                contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                                contentPadding = PaddingValues(top = 2.5.dp, bottom = bottomBarContentPadding()),
                                 modifier = Modifier.fillMaxSize(),
                             ) {
                                 items(result.threads, key = { it.tid }) { thread ->

@@ -153,7 +153,7 @@ fun DownloadsScreen(
                     top = 10.dp,
                     bottom = bottomBarContentPadding(),
                 ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 item(key = "location-note") {
                     Row(

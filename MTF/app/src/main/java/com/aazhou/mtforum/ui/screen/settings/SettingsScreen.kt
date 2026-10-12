@@ -161,7 +161,7 @@ fun SettingsScreen(
                 .padding(padding)
                 .verticalScroll(scrollState)
                 .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // 分组 1：主题与显示
             SettingsSection(title = "主题与显示") {

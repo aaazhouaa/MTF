@@ -170,7 +170,7 @@ fun ProfileContent(
             },
         )
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(2.dp))
 
         // 功能入口卡片：横向排布「我的帖子」、「我的收藏」、「我的好友」、「草稿箱」、「离线缓存」
         val downloadCount by context.container().downloadStore.items
