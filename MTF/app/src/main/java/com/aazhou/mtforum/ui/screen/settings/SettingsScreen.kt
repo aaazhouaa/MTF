@@ -1,7 +1,6 @@
 package com.aazhou.mtforum.ui.screen.settings
 
 import android.graphics.Color as AndroidColor
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,7 +48,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -79,10 +77,9 @@ import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.common.scrollToTop
-import com.aazhou.mtforum.ui.theme.DefaultThemeIndex
+import com.aazhou.mtforum.ui.theme.DefaultPrimaryDay
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
-import com.aazhou.mtforum.ui.theme.ThemePresets
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -98,7 +95,6 @@ fun SettingsScreen(
     val container = context.container()
     val themeStore = container.themeStore
     val scope = rememberCoroutineScope()
-    val themeIndex by themeStore.themeIndex.collectAsStateWithLifecycle(initialValue = DefaultThemeIndex)
     val customArgb by themeStore.customColor.collectAsStateWithLifecycle(initialValue = null)
     val darkOverride by themeStore.darkOverride.collectAsStateWithLifecycle(initialValue = null)
     val dimImagesInDark by themeStore.dimImagesInDark
@@ -169,10 +165,13 @@ fun SettingsScreen(
         ) {
             // 分组 1：主题与显示
             SettingsSection(title = "主题与显示") {
-                Column(
+                // 「自定义」与标题同行靠右：文字直接取当前生效的主题色，整行点开取色盘
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(14.dp),
+                        .clickable { colorPickerOpen = true }
+                        .padding(horizontal = 14.dp, vertical = 14.dp),
                 ) {
                     Text(
                         "主题色彩",
@@ -182,36 +181,15 @@ fun SettingsScreen(
                         ),
                         color = bodyTextColor(),
                     )
-                    Spacer(Modifier.height(14.dp))
-                    // 末尾多一格「自定义」：预设与自定义色二选一，故预设的选中态要排除自定义色生效中
-                    val cellCount = ThemePresets.size + 1
-                    (0 until cellCount).chunked(3).forEachIndexed { rowIndex, rowIndices ->
-                        if (rowIndex > 0) Spacer(Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            rowIndices.forEach { index ->
-                                if (index < ThemePresets.size) {
-                                    ThemeColorCell(
-                                        name = ThemePresets[index].name,
-                                        color = ThemePresets[index].primaryDay,
-                                        selected = customArgb == null && index == themeIndex,
-                                        onClick = { scope.launch { themeStore.setThemeIndex(index) } },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                } else {
-                                    CustomThemeColorCell(
-                                        color = customArgb?.let { Color(it) },
-                                        selected = customArgb != null,
-                                        onClick = { colorPickerOpen = true },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                }
-                            }
-                            repeat(3 - rowIndices.size) { Box(Modifier.weight(1f)) }
-                        }
-                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "自定义",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.5.sp,
+                        ),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
 
                 HorizontalDivider(color = colors.divider.copy(alpha = 0.6f), thickness = 0.5.dp)
@@ -336,9 +314,8 @@ fun SettingsScreen(
     }
 
     if (colorPickerOpen) {
-        // 取色盘从当前生效的主题色起手：自定义色，或预设的日间主色
-        val initial = customArgb?.let { Color(it) }
-            ?: ThemePresets.getOrElse(themeIndex) { ThemePresets[DefaultThemeIndex] }.primaryDay
+        // 取色盘从当前生效的主题色起手：自定义色，或内置默认色的日间档
+        val initial = customArgb?.let { Color(it) } ?: DefaultPrimaryDay
         ColorPickerDialog(
             initialColor = initial,
             onDismiss = { colorPickerOpen = false },
@@ -476,58 +453,6 @@ private fun SettingsActionRow(
     }
 }
 
-@Composable
-private fun ThemeColorCell(
-    name: String,
-    color: Color,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = LocalMtfColors.current
-    val scale by animateFloatAsState(if (selected) 1.05f else 1.0f, label = "color_scale")
-
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(46.dp)
-                .scale(scale)
-                .then(
-                    if (selected) Modifier.border(2.5.dp, color.copy(alpha = 0.35f), CircleShape)
-                    else Modifier
-                )
-                .padding(3.dp)
-                .clip(CircleShape)
-                .background(color),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (selected) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_check),
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
-        Text(
-            text = name,
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontSize = 11.5.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            ),
-            color = if (selected) color else colors.textSecondary,
-            modifier = Modifier.padding(top = 6.dp),
-        )
-    }
-}
-
 /** 取色盘的色相条渐变：每 10 度一个色标、饱和度拉满，色标太少会刷出可见色带。 */
 private val HueSweep = List(37) { Color.hsv(it * 10f, 1f, 1f) }
 
@@ -542,70 +467,6 @@ private val PickerSwatches = listOf(
     Color(0xFF16A34A),
     Color(0xFF475569),
 )
-
-/**
- * 自定义主题色格子：[color] 为空表示还没自定过，圆点铺彩虹渐变当取色盘入口；
- * 非空则显示当前自定义色，选中态与预设格一致。
- */
-@Composable
-private fun CustomThemeColorCell(
-    color: Color?,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = LocalMtfColors.current
-    val scale by animateFloatAsState(if (selected) 1.05f else 1.0f, label = "color_scale")
-
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(46.dp)
-                .scale(scale)
-                .then(
-                    if (selected && color != null) {
-                        Modifier.border(2.5.dp, color.copy(alpha = 0.35f), CircleShape)
-                    } else {
-                        Modifier
-                    }
-                )
-                .padding(3.dp)
-                .clip(CircleShape)
-                .then(
-                    if (color != null) {
-                        Modifier.background(color)
-                    } else {
-                        Modifier.background(Brush.horizontalGradient(HueSweep), CircleShape)
-                    }
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (selected) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_check),
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
-        Text(
-            text = "自定义",
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontSize = 11.5.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            ),
-            color = if (selected && color != null) color else colors.textSecondary,
-            modifier = Modifier.padding(top = 6.dp),
-        )
-    }
-}
 
 /**
  * 点按取落点、按住拖动连续取色。

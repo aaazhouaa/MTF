@@ -29,26 +29,24 @@ private fun containerOf(primary: Color, darkTheme: Boolean = false) = if (darkTh
 }
 
 /**
- * 自定义主题色在深色模式下的提亮量：深色底上原样拿来对比度不足，与预设另给一个
- * 更亮的 primaryNight 同思路。
+ * 自定义主题色在深色模式下的提亮量：深色底上原样拿来对比度不足，与内置默认色另给一个
+ * 更亮的 DefaultPrimaryNight 同思路。
  */
 private const val CustomColorNightLift = 0.18f
 
 @Composable
 fun MtfTheme(
-    themeIndex: Int = DefaultThemeIndex,
-    /** 自定义主题色（ARGB）；非空时覆盖预设。 */
+    /** 自定义主题色（ARGB）；非空时覆盖内置默认色。 */
     customColor: Int? = null,
     darkTheme: Boolean = isSystemInDarkTheme(),
     /** 深色模式是否压暗内容图片，取自设置；缺省压暗。 */
     dimImagesInDark: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    val preset = ThemePresets.getOrElse(themeIndex) { ThemePresets[DefaultThemeIndex] }
     val colors = if (darkTheme) DarkMtfColors else LightMtfColors
     val primary = customColor?.let { Color(it) }?.let { custom ->
         if (darkTheme) lerp(custom, Color.White, CustomColorNightLift) else custom
-    } ?: if (darkTheme) preset.primaryNight else preset.primaryDay
+    } ?: if (darkTheme) DefaultPrimaryNight else DefaultPrimaryDay
     // 深色下正文前景统一压低（见 DarkBrightTextAlpha）：onSurface 是所有不显式着色的
     // Text/Icon/TextField 的默认色，在这里压一次，新页面不写 color 也自动跟上。
     // 同时仍沿用 textPrimary 的语义色值，浅色模式完全不受影响。

@@ -15,7 +15,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aazhou.mtforum.ui.nav.AppRoot
-import com.aazhou.mtforum.ui.theme.DefaultThemeIndex
 import com.aazhou.mtforum.ui.theme.MtfTheme
 import kotlinx.coroutines.launch
 
@@ -32,9 +31,7 @@ class MainActivity : ComponentActivity() {
         val themeStore = (application as MtfApp).container.themeStore
         setContent {
             val scope = rememberCoroutineScope()
-            val themeIndex by themeStore.themeIndex
-                .collectAsStateWithLifecycle(initialValue = DefaultThemeIndex)
-            // 自定义主题色（ARGB）：非空时覆盖预设
+            // 自定义主题色（ARGB）：非空时覆盖内置默认色
             val customColor by themeStore.customColor
                 .collectAsStateWithLifecycle(initialValue = null)
             // darkOverride 为 null 时跟随系统
@@ -46,7 +43,6 @@ class MainActivity : ComponentActivity() {
             // 造成「刚到顶/底就反向滑」不动；置空工厂即彻底关闭该效果。
             CompositionLocalProvider(LocalOverscrollFactory provides null) {
                 MtfTheme(
-                    themeIndex = themeIndex,
                     customColor = customColor,
                     darkTheme = darkTheme,
                     dimImagesInDark = dimImagesInDark,
