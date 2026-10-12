@@ -42,8 +42,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -78,9 +76,7 @@ import com.aazhou.mtforum.image.ImageAspectCache
 import com.aazhou.mtforum.image.imageAspectRatio
 import com.aazhou.mtforum.image.postImageRequest
 import com.aazhou.mtforum.image.smallImageRequest
-import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
-import com.aazhou.mtforum.ui.theme.DarkBrightTextAlpha
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 import com.aazhou.mtforum.ui.theme.accentTextColor
@@ -88,40 +84,6 @@ import com.aazhou.mtforum.ui.theme.MtfColors
 
 /** 行内表情的显示尺寸，与正文行高匹配。 */
 private val SmileySize = 20.sp
-
-/** 站点自带文字颜色与底色的对比度下限，低于该值即视为「看不清」。 */
-private const val MinSiteTextContrast = 2.5f
-
-/** WCAG 相对对比度：[a]/[b] 亮者在前，返回 >=1 的比值。 */
-private fun contrastRatio(a: Color, b: Color): Float {
-    val la = a.luminance() + 0.05f
-    val lb = b.luminance() + 0.05f
-    return if (la >= lb) la / lb else lb / la
-}
-
-/**
- * 校正站点内联文字颜色的可读性。
- *
- * 站点把 UBB 编辑器选的颜色直接烘进 `<font color>` 里（按浅色网页选的），
- * 深色主题下深灰/近黑字会糊进深色底里看不见。对比度不足时保持色相、
- * 朝反色方向（深色主题趋白、浅色主题趋黑）逐级插值到达标为止。
- *
- * 深色主题下最终还要按 [DarkBrightTextAlpha] 压低，故这里按压暗后的合成色算对比度，
- * 否则会「先达标再压暗」反而跌破下限。
- */
-private fun readableSiteColor(color: Color, background: Color, darkTheme: Boolean): Color {
-    val target = if (darkTheme) color.copy(alpha = DarkBrightTextAlpha) else color
-    if (contrastRatio(target, background) >= MinSiteTextContrast) return color
-    val anchor = if (darkTheme) Color.White else Color.Black
-    var step = 0.1f
-    while (step < 1f) {
-        val candidate = lerp(color, anchor, step)
-        val rendered = if (darkTheme) candidate.copy(alpha = DarkBrightTextAlpha) else candidate
-        if (contrastRatio(rendered, background) >= MinSiteTextContrast) return candidate
-        step += 0.1f
-    }
-    return anchor
-}
 
 /** 渲染帖子正文，图文按原顺序展示；图片/视频/链接点击回调交给上层处理。 */
 @Composable
@@ -165,7 +127,6 @@ private fun PostContentBody(
 ) {
     val blocks = remember(html) { parseContentBlocks(html) }
     val colors = LocalMtfColors.current
-    val darkTheme = LocalIsDarkTheme.current
     Column(modifier) {
         if (quote != null && quote.text.isNotBlank()) QuoteCard(quote)
         for (block in blocks) {
@@ -198,8 +159,6 @@ private fun PostContentBody(
                             block.spans,
                             linkColor,
                             codeBg,
-                            colors.background,
-                            darkTheme,
                         ) {
                             buildBodyText(
                                 text = text,
@@ -208,8 +167,6 @@ private fun PostContentBody(
                                 baseFontSize = style.fontSize,
                                 linkColor = linkColor,
                                 codeBackground = codeBg,
-                                background = colors.background,
-                                darkTheme = darkTheme,
                                 onLinkClick = linkClick,
                             )
                         }
@@ -260,8 +217,6 @@ internal fun buildBodyText(
     baseFontSize: TextUnit,
     linkColor: Color,
     codeBackground: Color,
-    background: Color,
-    darkTheme: Boolean,
     onLinkClick: ((url: String) -> Unit)? = null,
 ): AnnotatedString {
     if (spans.isEmpty()) return text.toAnnotatedString(smiles)
@@ -293,12 +248,6 @@ internal fun buildBodyText(
                 background = if (span.code) codeBackground else Color.Unspecified,
             )
             if (spanStyle != SpanStyle()) addStyle(spanStyle, start, end)
-            span.colorArgb?.let { raw ->
-                val siteColor = readableSiteColor(Color(raw), background, darkTheme)
-                // 深色下与正文统一压低（readableSiteColor 已按压暗后的合成色算过对比度）
-                val rendered = if (darkTheme) siteColor.copy(alpha = DarkBrightTextAlpha) else siteColor
-                addStyle(SpanStyle(color = rendered), start, end)
-            }
             span.linkUrl?.let { url ->
                 addLink(
                     LinkAnnotation.Url(

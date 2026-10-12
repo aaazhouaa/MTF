@@ -364,8 +364,85 @@ class HtmlContentTest {
         assertTrue(spanOf('粗').bold)
         assertTrue(spanOf('斜').italic)
         assertTrue(spanOf('码').code)
-        assertEquals(0xFFFF0000L, spanOf('红').colorArgb)
+        // font color 不产出任何 span：站点颜色一律不采用，见 siteInlineColorIsNotApplied
+        val redIndex = text.text.indexOf('红')
+        assertTrue(
+            "font color 不应产出 span: ${text.spans}",
+            text.spans.none { it.start == redIndex && it.end == redIndex + 1 },
+        )
         assertEquals("https://bbs.binmt.cc/x", spanOf('链').linkUrl)
+    }
+
+    @Test
+    fun blockBoundaryBecomesLineBreak() {
+        // 站点把每行烘成 <div align="left">，块与块之间连空白都没有（实测 </div><div align="left">）；
+        // 网页按块边界换行，解析器必须补上同一个换行，否则整段粘成一行
+        val text = parseContentBlocks(
+            "<div align=\"left\">软件特点</div>" +
+                "<div align=\"left\">第三方开发的酷安桌面客户端，把移动端社区搬上电脑大屏。</div>" +
+                "<div align=\"left\">支持浏览帖子、查看评论、点赞收藏等操作，日常刷酷安够用。</div>",
+        ).filterIsInstance<ContentBlock.Text>().single().text
+        assertEquals(
+            "软件特点\n" +
+                "第三方开发的酷安桌面客户端，把移动端社区搬上电脑大屏。\n" +
+                "支持浏览帖子、查看评论、点赞收藏等操作，日常刷酷安够用。",
+            text,
+        )
+    }
+
+    @Test
+    fun blockBoundaryWithWhitespaceStillOneBreak() {
+        // 块之间有空白（空格或 &nbsp;）时也不能多出一个空行：网页上仍是一行一句
+        val text = parseContentBlocks("<div>甲</div>&nbsp;&nbsp;<div>乙</div>  <div>丙</div>")
+            .filterIsInstance<ContentBlock.Text>().single().text
+        assertEquals("甲\n乙\n丙", text)
+    }
+
+    @Test
+    fun paragraphBoundaryBecomesLineBreak() {
+        val text = parseContentBlocks("<p>甲</p><p>乙</p>")
+            .filterIsInstance<ContentBlock.Text>().single().text
+        assertEquals("甲\n乙", text)
+    }
+
+    @Test
+    fun blankBlockDoesNotProduceBlankLine() {
+        // 模板空块（只有空白/&nbsp;/<br> 的 div）不能凭空撑出空行
+        val text = parseContentBlocks("<div>甲</div><div>&nbsp;</div><div><br><br></div><div>乙</div>")
+            .filterIsInstance<ContentBlock.Text>().single().text
+        assertEquals("甲\n乙", text)
+    }
+
+    @Test
+    fun imagesInBlockContainersStillGroup() {
+        // 每张图各占一个 div 时仍要相邻成组，块边界不能把它们拆散
+        val blocks = parseContentBlocks(
+            "<div>" + img("https://a/1.png") + "</div><div>" + img("https://a/2.png") + "</div>",
+        )
+        assertEquals(2, blocks.filterIsInstance<ContentBlock.ImageGroup>().single().urls.size)
+        assertTrue(blocks.none { it is ContentBlock.Text })
+    }
+
+    @Test
+    fun siteInlineColorIsNotApplied() {
+        // 站点 UBB 编辑器挑的彩虹字/荧光字一律按正文字色显示（tid=174566 的 12# 评论实例）
+        val text = parseContentBlocks(
+            "随便涨涨到1波万，嘿嘿，" +
+                "<font color=\"#FF0000\">我</font><font color=\"#00FF00\">有</font><font color=\"#0000FF\">了</font>" +
+                "，早买早享受，再拖说不定还得涨，",
+        ).filterIsInstance<ContentBlock.Text>().single()
+        assertEquals("随便涨涨到1波万，嘿嘿，我有了，早买早享受，再拖说不定还得涨，", text.text)
+        assertTrue("font color 不应产出任何 span: ${text.spans}", text.spans.isEmpty())
+    }
+
+    @Test
+    fun siteInlineColorWithSizeKeepsSizeOnly() {
+        // 同一个 font 上的 size 仍要生效，只是颜色被丢掉
+        val text = parseContentBlocks("<font color=\"#FF0000\" size=\"5\">标题</font>正文")
+            .filterIsInstance<ContentBlock.Text>().single()
+        assertEquals("标题正文", text.text)
+        assertEquals(1, text.spans.size)
+        assertEquals(1.3f, text.spans.single().fontSizeScale)
     }
 
     @Test
@@ -382,8 +459,6 @@ class HtmlContentTest {
             baseFontSize = base,
             linkColor = Color.Unspecified,
             codeBackground = Color.White,
-            background = Color.White,
-            darkTheme = false,
         )
         assertEquals(1, body.spanStyles.size)
         val heading = body.spanStyles.single()
@@ -404,8 +479,6 @@ class HtmlContentTest {
             baseFontSize = base,
             linkColor = Color.Unspecified,
             codeBackground = Color.White,
-            background = Color.White,
-            darkTheme = false,
         )
         assertEquals(base * 1.3f, body.spanStyles.single().item.fontSize)
     }
@@ -422,8 +495,6 @@ class HtmlContentTest {
             baseFontSize = 17.sp,
             linkColor = Color.Unspecified,
             codeBackground = Color.White,
-            background = Color.White,
-            darkTheme = false,
         )
         assertEquals(1, body.spanStyles.size)
         assertTrue(body.spanStyles.all { it.item.fontSize == TextUnit.Unspecified })

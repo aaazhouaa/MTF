@@ -97,7 +97,6 @@ data class StyleSpan(
     val code: Boolean = false,
     val headingLevel: Int = 0,
     val fontSizeScale: Float = 1f,
-    val colorArgb: Long? = null,
     val align: CellAlign? = null,
     val linkUrl: String? = null,
 )
@@ -111,7 +110,6 @@ private data class InlineStyle(
     val code: Boolean = false,
     val headingLevel: Int = 0,
     val fontSizeScale: Float = 1f,
-    val colorArgb: Long? = null,
     val align: CellAlign? = null,
     val linkUrl: String? = null,
 )
@@ -234,6 +232,20 @@ private fun dropEdgeBlankBlocks(blocks: List<ContentBlock>): List<ContentBlock> 
 }
 
 /**
+ * 块级标签：网页在它们的边界换行，解析器必须补上同一个换行。
+ *
+ * 站点正文的行既可能是 `<br>`，也可能是每行一个 div/p（编辑器回车、从网页粘贴），
+ * 后者在源码里常常紧邻无空白，只有显式认块边界才与网页一致。内联元素
+ * （span/font/a/strong/em/code 等）不在其列，行内样式仍由 [InlineStyle] 承载。
+ */
+private val BLOCK_TAGS = setOf(
+    "address", "article", "aside", "blockquote", "center", "dd", "details", "dialog", "div",
+    "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4",
+    "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "summary",
+    "table", "td", "th", "tr", "ul",
+)
+
+/**
  * 压掉模板空块，并把 3 个以上连续换行压成一个空行。
 
  * 两个连续 <br> 是作者的分段（网页上就是一空行），必须原样留下；
@@ -307,6 +319,17 @@ private class BlocksBuilder {
         appendText("\n", style)
     }
 
+    /**
+     * 块级元素边界的换行：与 [appendBreak] 的区别是只补「还没有换行」的情况。
+     *
+     * 块与块之间本来就没有分隔符，进块与出块各补一次会变成两个换行（一个空行），
+     * 故缓冲为空或已在行尾就直接跳过——既补上行边界，又不凭空造出空行。
+     */
+    private fun appendBlockBreak(style: InlineStyle) {
+        if (text.isEmpty() || text[text.length - 1] == '\n') return
+        appendText("\n", style)
+    }
+
     private fun appendSmiley(url: String, style: InlineStyle) {
         val placeholder = smiles.getOrPut(url) {
             (SMILEY_CHAR_BASE + smiles.size).toChar()
@@ -345,7 +368,6 @@ private class BlocksBuilder {
                     code = open.style.code,
                     headingLevel = open.style.headingLevel,
                     fontSizeScale = open.style.fontSizeScale,
-                    colorArgb = open.style.colorArgb,
                     align = open.style.align,
                     linkUrl = open.linkUrl,
                 ),
@@ -412,6 +434,11 @@ private fun quoteBodyText(element: Element): String {
             codeLinesOf(element)?.let { blocks.add(ContentBlock.CodeBlock(it)) }
             return
         }
+        // 站点把正文每行烘成 div/p（编辑器回车即一个块），网页上块的边界就是换行；
+        // 当内联容器展开会把相邻两行粘进同一段，而实测源码里块与块之间常常连空白都
+        // 没有（</div><div align="left">），于是行与行之间连个空格都不留
+        val blockBoundary = element.tagName() in BLOCK_TAGS
+        if (blockBoundary) appendBlockBreak(style)
         when (element.tagName()) {
             "script", "style" -> Unit
             "video", "embed", "object" -> appendVideoElement(element, style)
@@ -438,6 +465,7 @@ private fun quoteBodyText(element: Element): String {
             }
             else -> appendContainer(element, style)
         }
+        if (blockBoundary) appendBlockBreak(style)
     }
 
     /**
@@ -479,10 +507,9 @@ private fun quoteBodyText(element: Element): String {
             "u" -> style.copy(underline = true)
             "s", "strike", "del" -> style.copy(strikethrough = true)
             "code", "kbd", "samp" -> style.copy(code = true)
-            "font" -> style.copy(
-                colorArgb = parseColor(element.attr("color")) ?: style.colorArgb,
-                fontSizeScale = fontSizeScale(element.attr("size")) ?: style.fontSizeScale,
-            )
+            // font 只认 size：站点 UBB 编辑器挑的颜色（彩虹字、荧光字）一律不采用，
+            // 统一按正文字色显示，链接另有主题链接色
+            "font" -> style.copy(fontSizeScale = fontSizeScale(element.attr("size")) ?: style.fontSizeScale)
             else -> style.copy(align = parseAlign(element) ?: style.align)
         }
         appendNodes(element.childNodes().toList(), childStyle)
@@ -625,41 +652,6 @@ private fun detectBareLinks(raw: String, start: Int, end: Int, spans: MutableLis
         if (spans.any { it.linkUrl != null && it.start < to && from < it.end }) continue
         spans.add(StyleSpan(start = from, end = to, linkUrl = url))
     }
-}
-
-private val HEX_COLOR = Regex("#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})")
-private val RGB_COLOR = Regex("rgb\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\)")
-
-private fun parseColor(value: String): Long? {
-    val raw = value.trim()
-    if (raw.isEmpty()) return null
-    HEX_COLOR.matchEntire(raw)?.let { match ->
-        val hex = match.groupValues[1]
-        val full = if (hex.length == 3) hex.map { "$it$it" }.joinToString("") else hex
-        return parseHex(full)
-    }
-    RGB_COLOR.matchEntire(raw)?.let { match ->
-        val r = match.groupValues[1].toIntOrNull() ?: return null
-        val g = match.groupValues[2].toIntOrNull() ?: return null
-        val b = match.groupValues[3].toIntOrNull() ?: return null
-        return ((r.coerceIn(0, 255).toLong() shl 16) or (g.coerceIn(0, 255).toLong() shl 8) or b.toLong())
-    }
-    return when (raw.lowercase()) {
-        "black" -> 0xFF000000L
-        "red" -> 0xFFFF0000L
-        "green" -> 0xFF008000L
-        "blue" -> 0xFF0000FFL
-        "white" -> 0xFFFFFFFFL
-        "orange" -> 0xFFFFA500L
-        "purple" -> 0xFF800080L
-        "gray", "grey" -> 0xFF808080L
-        else -> null
-    }
-}
-
-private fun parseHex(hex: String): Long? {
-    val value = hex.toLongOrNull(16) ?: return null
-    return if (hex.length == 8) value else 0xFF000000L or value
 }
 
 /** 从 align 属性或内联 text-align 样式解析水平对齐。 */
