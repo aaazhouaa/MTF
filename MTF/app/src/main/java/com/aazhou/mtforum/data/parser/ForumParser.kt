@@ -104,6 +104,17 @@ object ForumParser {
     /** 引用块时间是否为绝对日期（站点对新鲜被引楼层渲染的是「N 分钟前」这类相对时间）。 */
     private val RE_ABS_DATE = Regex("\\d{4}-\\d{1,2}-\\d{1,2}")
 
+    /**
+     * 引用块内的行边界：<br>，或块级元素（div/p）的开闭标签。
+     *
+     * 站点回复路径用 <br> 分隔 meta 与正文；编辑提交后烘回来的是 PC 版结构，两者各占
+     * 一个 div、没有 <br>。两种都要能切开。
+     */
+    private val RE_QUOTE_LINE_BREAK = Regex(
+        """<br\s*/?>|</?(?:div|p|li|tr|h[1-6]|blockquote|table|ul|ol)\b[^>]*>""",
+        RegexOption.IGNORE_CASE,
+    )
+
 
     /** 「本帖最后由 X 于 2026-10-5 12:39 编辑」里的时间，用于「时间 编辑」小字。 */
     private val RE_EDIT_TIME = Regex("\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}\\s+\\d{1,2}:\\d{2}(?::\\d{2})?")
@@ -563,8 +574,12 @@ object ForumParser {
      */
     private fun parseQuote(quote: Element): PostQuote? {
         val pid = RE_QUOTE_PID.find(quote.html())?.groupValues?.get(1)
+        // 站点有两套引用排版：回复路径把 meta 与正文用 <br> 分开，编辑路径（PC 版
+        // quote 块烘回来）两者各占一个块级元素、没有 <br>。只按 <br> 切会把整块当成
+        // 一行，meta 与正文粘在一起、被引正文取空，引用卡于是整块不渲染。
+        // 故按块级边界一并切分，<br> 仍算边界
         val lines = quote.html()
-            .split(RE_BR)
+            .split(RE_QUOTE_LINE_BREAK)
             .map { Jsoup.parse(it).text().trim() }
             .filter { it.isNotEmpty() }
         val metaLine = lines.firstOrNull()?.removePrefix("回复")?.trim().orEmpty()

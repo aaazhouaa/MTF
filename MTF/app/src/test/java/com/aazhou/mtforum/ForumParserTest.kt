@@ -1443,4 +1443,45 @@ class ForumParserTest {
         assertEquals("Shiray", convo.targetName)
         assertNull(convo.targetOnline)
     }
+
+    @Test
+    fun quoteWithBlockLevelSeparatorStillParses() {
+        // 编辑提交后站点烘回来的是 PC 版结构：meta 与正文各占一个 div、没有 <br>。
+        // 只按 <br> 切会把两者粘成一行、被引正文取空，引用卡整块不渲染、引用还会从正文里消失
+        val html = """
+            <html><head><title>帖子</title></head><body>
+            <div class="comiis_postli" id="pid1">
+              <div class="comiis_a">
+                <div class="comiis_quote"><blockquote>
+                  <div><a href="x"><font color="#999999">username123 发表于 7 天前</font></a></div>
+                  <div>由于降低了请求频率2</div>
+                </blockquote></div>
+                我的正文
+              </div>
+            </div></body></html>
+        """.trimIndent()
+        val post = ForumParser.parseThreadPage(html, 1).posts.single()
+        assertEquals("username123", post.quote?.author)
+        assertEquals("由于降低了请求频率2", post.quote?.text)
+        // 引用块要收进 quote 字段，不能残在正文里
+        assertTrue(post.contentHtml.contains("我的正文"))
+        assertTrue(!post.contentHtml.contains("comiis_quote"))
+        assertTrue(!post.contentHtml.contains("发表于"))
+    }
+
+    @Test
+    fun quoteWithBrSeparatorStillParses() {
+        val html = """
+            <html><head><title>帖子</title></head><body>
+            <div class="comiis_postli" id="pid1"><div class="comiis_a">
+              <div class="comiis_quote"><blockquote><font size="2">回复</font> <font color="#999999">秋枫Mod 发表于 5 秒前</font><br>
+              不是，怎么还有我的事。</blockquote></div><br>
+              你住论坛了</div></div>
+            </body></html>
+        """.trimIndent()
+        val post = ForumParser.parseThreadPage(html, 1).posts.single()
+        assertEquals("秋枫Mod", post.quote?.author)
+        assertEquals("不是，怎么还有我的事。", post.quote?.text)
+        assertTrue(post.contentHtml.contains("你住论坛了"))
+    }
 }
