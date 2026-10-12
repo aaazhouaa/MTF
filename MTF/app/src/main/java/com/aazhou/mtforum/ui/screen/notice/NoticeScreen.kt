@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -112,11 +114,33 @@ fun NoticeScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
+    // 五个分类与 Pager 页一一对应，左右滑动即可切 tab
+    val categories = NoticeCategory.entries.toList()
+    val pagerState = rememberPagerState(initialPage = categories.indexOf(currentCategory)) { categories.size }
+    val currentCategoryIndex = categories.indexOf(currentCategory)
+    // tab 高亮跟手：页码滑过中点就翻转，不等停稳，否则「页面过去了 tab 慢一拍」。
+    // 数据仍按停稳后的分类走（见下面 settledPage），所以高亮可能比内容早半拍
+    val selectedCategory = categories.getOrElse(pagerState.currentPage) { currentCategory }
+
+    // 点分类项：滚到对应页，数据由下面的停稳回调加载
+    LaunchedEffect(currentCategory) {
+        if (currentCategoryIndex >= 0 &&
+            pagerState.currentPage != currentCategoryIndex &&
+            pagerState.targetPage != currentCategoryIndex
+        ) {
+            pagerState.animateScrollToPage(currentCategoryIndex)
+        }
+    }
+    // 左右滑动切 tab：停稳后才切换分类，滑动途中不换数据
+    LaunchedEffect(pagerState.settledPage) {
+        val cat = categories[pagerState.settledPage]
+        if (cat != currentCategory) viewModel.selectCategory(cat)
+    }
+
     // 申请通知权限
     val context = LocalContext.current
     val container = context.container()
-    val isLoggedIn = container.httpClient.isLoggedIn()
-    var showLoginDialog by remember { mutableStateOf(!isLoggedIn) }
+    var showLoginDialog by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
@@ -158,129 +182,144 @@ fun NoticeScreen(
         ) {
             // 顶部五个分类入口：整齐排成一排，紧凑精致
             NoticeCategoryBar(
-                selected = currentCategory,
+                selected = selectedCategory,
                 onSelect = { cat ->
                     viewModel.selectCategory(cat)
                     scope.launch { listState.scrollToTop() }
                 },
             )
 
-            // 下方随选中的分类展示对应列表
-            Box(
+            // 下方随选中的分类展示对应列表：外层 Pager 提供左右滑动切 tab，
+            // 只有当前分类那一页渲染内容——列表状态是页面级共享的，
+            // 两页同时渲染等于两个 LazyColumn 持同一个 LazyListState
+            HorizontalPager(
+                state = pagerState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .background(colors.background),
-            ) {
-                when (val current = state) {
-                    is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
-                    is UiState.Error -> {
-                        if (!container.httpClient.isLoggedIn() || current.message.contains("登录")) {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                                    modifier = Modifier
-                                        .padding(horizontal = 32.dp)
-                                        .widthIn(max = 320.dp)
-                                        .clip(RoundedCornerShape(20.dp))
-                                        .background(colors.quoteBackground)
-                                        .padding(horizontal = 24.dp, vertical = 28.dp),
+                    .weight(1f),
+            ) { page ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(colors.background),
+                ) {
+                    if (page == currentCategoryIndex) {
+                        when (val current = state) {
+                        is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
+                        is UiState.Error -> {
+                            if (!container.isLoggedIn() || current.message.contains("登录")) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center,
                                 ) {
-                                    Box(
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(16.dp),
                                         modifier = Modifier
-                                            .size(52.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
-                                        contentAlignment = Alignment.Center,
+                                            .padding(horizontal = 32.dp)
+                                            .widthIn(max = 320.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(colors.quoteBackground)
+                                            .padding(horizontal = 24.dp, vertical = 28.dp),
                                     ) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.ic_lock_outline),
-                                            contentDescription = null,
-                                            tint = accentTextColor(),
-                                            modifier = Modifier.size(26.dp),
-                                        )
-                                    }
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(
-                                            text = "需要登录账号",
-                                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                            color = bodyTextColor(),
-                                        )
-                                        Spacer(Modifier.height(4.dp))
-                                        Text(
-                                            text = "请先登录后查看消息提醒与互动通知",
-                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
-                                            color = colors.textSecondary,
-                                        )
-                                    }
-                                    androidx.compose.material3.Button(
-                                        onClick = { showLoginDialog = true },
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.fillMaxWidth().height(40.dp),
-                                    ) {
-                                        Text("立即登录", fontWeight = FontWeight.SemiBold)
+                                        Box(
+                                            modifier = Modifier
+                                                .size(52.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                painter = painterResource(R.drawable.ic_lock_outline),
+                                                contentDescription = null,
+                                                tint = accentTextColor(),
+                                                modifier = Modifier.size(26.dp),
+                                            )
+                                        }
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text(
+                                                text = "需要登录账号",
+                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = bodyTextColor(),
+                                            )
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                text = "请先登录后查看消息提醒与互动通知",
+                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
+                                                color = colors.textSecondary,
+                                            )
+                                        }
+                                        androidx.compose.material3.Button(
+                                            onClick = { showLoginDialog = true },
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.fillMaxWidth().height(40.dp),
+                                        ) {
+                                            Text("立即登录", fontWeight = FontWeight.SemiBold)
+                                        }
                                     }
                                 }
+                            } else {
+                                ErrorBox(
+                                    message = current.message,
+                                    onRetry = { viewModel.loadCategory(currentCategory) },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
                             }
-                        } else {
-                            ErrorBox(
-                                message = current.message,
-                                onRetry = { viewModel.loadCategory(currentCategory) },
-                                modifier = Modifier.fillMaxSize(),
-                            )
                         }
-                    }
-                    is UiState.Success -> {
-                        val content = current.data
-                        if (content.isEmpty()) {
-                            val emptyText = when (currentCategory) {
-                                NoticeCategory.PRIVATE_PM -> "暂无私信消息"
-                                NoticeCategory.ANNOUNCE_PM -> "暂无公共消息"
-                                NoticeCategory.MY_POST -> "暂无帖子提醒"
-                                NoticeCategory.INTERACTIVE -> "暂无互动提醒"
-                                NoticeCategory.SYSTEM -> "暂无系统提醒"
-                            }
-                            EmptyBox(emptyText, Modifier.fillMaxSize())
-                        } else {
-                            PullToRefreshBox(
-                                isRefreshing = refreshing,
-                                onRefresh = {
-                                    viewModel.refresh()
-                                    // 刷新会把列表换回第 1 页：不复位滚动位置的话，
-                                    // 原先停在很后面的视口会被钳到新列表末尾，而新提醒
-                                    // 按时间倒序排在最前面，正好被推到视口外看不见
-                                    scope.launch { listState.scrollToTop() }
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                            ) {
-                                Crossfade(targetState = content, label = "notice_content") { target ->
-                                    when (target) {
-                                        is NoticeContentState.Notices -> {
-                                            NoticeListView(
-                                                listState = listState,
-                                                notices = target.items,
-                                                onUserClick = onUserClick,
-                                                onThreadClick = onThreadClick,
-                                                hasNext = hasNext,
-                                                loadingMore = loadingMore,
-                                                onLoadMore = { viewModel.loadMore() },
-                                            )
-                                        }
-                                        is NoticeContentState.PrivateMessages -> {
-                                            PrivateMessageListView(
-                                                listState = listState,
-                                                items = target.items,
-                                                onUserClick = onUserClick,
-                                                onChatClick = onChatClick,
-                                            )
+                        is UiState.Success -> {
+                            val content = current.data
+                            if (content.isEmpty()) {
+                                val emptyText = when (currentCategory) {
+                                    NoticeCategory.PRIVATE_PM -> "暂无私信消息"
+                                    NoticeCategory.ANNOUNCE_PM -> "暂无公共消息"
+                                    NoticeCategory.MY_POST -> "暂无帖子提醒"
+                                    NoticeCategory.INTERACTIVE -> "暂无互动提醒"
+                                    NoticeCategory.SYSTEM -> "暂无系统提醒"
+                                }
+                                EmptyBox(emptyText, Modifier.fillMaxSize())
+                            } else {
+                                PullToRefreshBox(
+                                    isRefreshing = refreshing,
+                                    onRefresh = {
+                                        viewModel.refresh()
+                                        // 刷新会把列表换回第 1 页：不复位滚动位置的话，
+                                        // 原先停在很后面的视口会被钳到新列表末尾，而新提醒
+                                        // 按时间倒序排在最前面，正好被推到视口外看不见
+                                        scope.launch { listState.scrollToTop() }
+                                    },
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    Crossfade(targetState = content, label = "notice_content") { target ->
+                                        when (target) {
+                                            is NoticeContentState.Notices -> {
+                                                NoticeListView(
+                                                    listState = listState,
+                                                    notices = target.items,
+                                                    onUserClick = onUserClick,
+                                                    onThreadClick = onThreadClick,
+                                                    hasNext = hasNext,
+                                                    loadingMore = loadingMore,
+                                                    onLoadMore = { viewModel.loadMore() },
+                                                )
+                                            }
+                                            is NoticeContentState.PrivateMessages -> {
+                                                PrivateMessageListView(
+                                                    listState = listState,
+                                                    items = target.items,
+                                                    onUserClick = onUserClick,
+                                                    onChatClick = onChatClick,
+                                                )
+                                            }
                                         }
                                     }
                                 }
                             }
+                        }
+                        }
+                    } else {
+                        // 滑过来的那一页数据还没切过来：给个加载态，不留一片空白
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(26.dp))
                         }
                     }
                 }

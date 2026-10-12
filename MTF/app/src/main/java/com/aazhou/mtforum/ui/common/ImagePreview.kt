@@ -48,6 +48,8 @@ import androidx.compose.ui.window.PopupProperties
 import coil.compose.AsyncImage
 import com.aazhou.mtforum.ui.theme.dimImageInDark
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /** 手势可缩放的上限。 */
@@ -179,6 +181,8 @@ fun ImagePreview(
  * 仅在「多指」或「已放大」时才消费事件：原始比例下的单指拖动不消费，交给 Pager 翻页。
  * 单击关闭前先判断触点是否落在图片实际绘制区域内（见 [tapInsideImage]），
  * 点到 ContentScale.Fit 留下的黑边不关闭；加载中/失败时没有可用矩形，维持点到即关。
+ * 长按在手指仍按住时触发：手指完全静止后系统不再派发指针事件，只在事件循环里判
+ * 时间会一直等到松手才触发，故另起协程计时。
  */
 @Composable
 private fun ZoomableImage(
@@ -200,53 +204,69 @@ private fun ZoomableImage(
             .onSizeChanged { boxSize = it }
             .pointerInput(model, active) {
                 if (!active) return@pointerInput
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val startedZoomed = scale > 1.01f
-                    var moved = false
-                    var longPressed = false
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pointers = event.changes.count { it.pressed }
-                        val zoom = event.calculateZoom()
-                        val pan = event.calculatePan()
-                        val zooming = pointers > 1 || scale > 1.01f
-                        if (zooming && (zoom != 1f || pan != Offset.Zero)) {
-                            val newScale = (scale * zoom).coerceIn(1f, MAX_SCALE)
-                            val maxX = boxSize.width * (newScale - 1f) / 2f
-                            val maxY = boxSize.height * (newScale - 1f) / 2f
-                            scale = newScale
-                            offset = Offset(
-                                (offset.x + pan.x).coerceIn(-maxX, maxX),
-                                (offset.y + pan.y).coerceIn(-maxY, maxY),
-                            )
-                            event.changes.forEach { if (it.positionChanged()) it.consume() }
-                        }
-                        if (event.changes.any { it.positionChanged() }) {
-                            moved = true
-                        }
-                        // 长按保存：单指静止超过系统长按阈值即触发；多指（缩放）或已拖动不触发
-                        if (!longPressed && !moved && pointers <= 1) {
-                            val change = event.changes.firstOrNull { it.id == down.id }
-                            if (change != null &&
-                                change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis
-                            ) {
+                // 长按要另起协程计时，而 pointerInput 块自身不是 CoroutineScope，
+                // awaitEachGesture 的 lambda 又是受限挂起作用域、起不了 coroutineScope，
+                // 故在这一层包一层
+                coroutineScope {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val startedZoomed = scale > 1.01f
+                        var moved = false
+                        var longPressed = false
+                        // 当前按下的手指数：多指（缩放）时不触发长按
+                        var livePointers = 1
+                        // 长按计时：手指按住不动时系统不再派发指针事件，只在事件循环里判
+                        // 时间会一直等到松手才触发；这里起协程计时，按住即触发
+                        val longPressJob = launch {
+                            delay(viewConfiguration.longPressTimeoutMillis)
+                            if (!moved && !longPressed && livePointers <= 1) {
                                 longPressed = true
                                 onLongPress()
                             }
                         }
-                        if (event.changes.none { it.pressed }) {
-                            val upPos = event.changes.firstOrNull { it.id == down.id }?.position
-                                ?: down.position
-                            val isTap = !moved && !longPressed &&
-                                (upPos - down.position).getDistance() < TAP_SLOP
-                            if (isTap && (failed || tapInsideImage(upPos, boxSize, intrinsic, scale, offset))) {
-                                onTap()
-                            } else if (startedZoomed && scale <= 1.01f) {
-                                // 拖到图片边界外回弹：复位位移
-                                offset = Offset.Zero
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val pointers = event.changes.count { it.pressed }
+                                livePointers = pointers
+                                val zoom = event.calculateZoom()
+                                val pan = event.calculatePan()
+                                val zooming = pointers > 1 || scale > 1.01f
+                                if (zooming && (zoom != 1f || pan != Offset.Zero)) {
+                                    val newScale = (scale * zoom).coerceIn(1f, MAX_SCALE)
+                                    val maxX = boxSize.width * (newScale - 1f) / 2f
+                                    val maxY = boxSize.height * (newScale - 1f) / 2f
+                                    scale = newScale
+                                    offset = Offset(
+                                        (offset.x + pan.x).coerceIn(-maxX, maxX),
+                                        (offset.y + pan.y).coerceIn(-maxY, maxY),
+                                    )
+                                    event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                }
+                                // 位移按按下以来的累计距离与 touchSlop 比较：逐事件判 positionChanged
+                                // 会被手指必然存在的微小抖动触发，长按便永不生效
+                                val downChange = event.changes.firstOrNull { it.id == down.id }
+                                if (downChange != null &&
+                                    (downChange.position - down.position).getDistance() > viewConfiguration.touchSlop
+                                ) {
+                                    moved = true
+                                }
+                                if (event.changes.none { it.pressed }) {
+                                    val upPos = event.changes.firstOrNull { it.id == down.id }?.position
+                                        ?: down.position
+                                    val isTap = !moved && !longPressed &&
+                                        (upPos - down.position).getDistance() < TAP_SLOP
+                                    if (isTap && (failed || tapInsideImage(upPos, boxSize, intrinsic, scale, offset))) {
+                                        onTap()
+                                    } else if (startedZoomed && scale <= 1.01f) {
+                                        // 拖到图片边界外回弹：复位位移
+                                        offset = Offset.Zero
+                                    }
+                                    break
+                                }
                             }
-                            break
+                        } finally {
+                            longPressJob.cancel()
                         }
                     }
                 }

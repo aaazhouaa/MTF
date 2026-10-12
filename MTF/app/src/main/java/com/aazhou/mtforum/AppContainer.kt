@@ -127,6 +127,15 @@ class AppContainer(application: Application) {
         NoticeNotifier.cancel(appContext)
     }
 
+    /**
+     * 登录态判据：全 App 只认这一份。
+     *
+     * 不能改回查 cookie 里的 _auth：站点侧会话失效、冷启动时持久化 cookie 已恢复而资料
+     * 尚未就绪，cookie 都还在，界面却已按未登录渲染，于是出现「界面显示未登录、操作却放行」。
+     * 需要随登录态实时重绘的页面（如他人主页）请直接 collect [currentUser]。
+     */
+    fun isLoggedIn(): Boolean = currentUser.value?.isLoggedIn == true
+
     /** 拉取并缓存当前登录用户资料；未登录时清空。失败则保留旧值，不清空已有资料。 */
     suspend fun refreshCurrentUser() {
         if (!httpClient.isLoggedIn()) {

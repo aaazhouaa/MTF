@@ -335,77 +335,88 @@ fun ChatScreen(
             )
         },
         bottomBar = {
+            // 输入框窗口：增加顶部圆角与描边
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                     .background(colors.topBar)
+                    .border(
+                        width = 0.5.dp,
+                        color = colors.divider,
+                        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+                    )
                     .navigationBarsPadding(),
             ) {
-                HorizontalDivider(color = colors.divider)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
                 ) {
-                    // 输入区：圆角框实底 + 描边，两行以上多行平滑扩展
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 42.dp, max = 120.dp)
-                            .background(colors.surface, RoundedCornerShape(16.dp))
-                            .border(
-                                width = 1.dp,
-                                color = if (inputFocused) MaterialTheme.colorScheme.primary else colors.divider,
-                                shape = RoundedCornerShape(16.dp),
-                            )
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    // 输入框改为一条 0.5dp 主题色细线
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        BasicTextField(
-                            value = inputText,
-                            onValueChange = { next ->
-                                // 退格删到表情码/成对标签边界时一次删掉整组，点表情中间
-                                // 则把光标挪到码两侧，别落进码里把码拆坏
-                                inputText = (inputText.composerDeletionResult(next) ?: next)
-                                    .snapSelectionOutOfSmiley(smileyByCode)
-                            },
-                            textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp, lineHeight = 21.sp),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                            visualTransformation = smileyVisualTransformation,
-                            onTextLayout = { inputLayout = it },
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .focusRequester(inputFocusRequester)
-                                // 用户直接点输入栏想打字而表情面板还开着：同样走交接，键盘升起来
-                                // 把面板接替掉，底部槽高度不变
-                                .onFocusChanged {
-                                    inputFocused = it.isFocused
-                                    if (it.isFocused && smileyPanelVisible) keyboardHandoff = true
-                                }
-                                .onSizeChanged { inputFieldHeight = it.height },
-                            maxLines = 5,
-                            decorationBox = { innerTextField ->
-                                Box(Modifier.fillMaxWidth()) {
-                                    SmileyOverlay(
-                                        text = inputText.text,
-                                        layout = inputLayout,
-                                        smileyByCode = smileyByCode,
-                                        scrollOffset = inputScrollOffset,
-                                        modifier = Modifier.matchParentSize().clipToBounds(),
-                                    )
-                                    if (inputText.text.isEmpty()) {
-                                        Text(
-                                            "发送私信消息...",
-                                            color = colors.textHint,
-                                            fontSize = 14.5.sp,
-                                        )
+                                .heightIn(min = 38.dp, max = 120.dp)
+                                .padding(horizontal = 2.dp, vertical = 6.dp),
+                        ) {
+                            BasicTextField(
+                                value = inputText,
+                                onValueChange = { next ->
+                                    // 退格删到表情码/成对标签边界时一次删掉整组，点表情中间
+                                    // 则把光标挪到码两侧，别落进码里把码拆坏
+                                    inputText = (inputText.composerDeletionResult(next) ?: next)
+                                        .snapSelectionOutOfSmiley(smileyByCode)
+                                },
+                                textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp, lineHeight = 21.sp),
+                                cursorBrush = SolidColor(primaryColor),
+                                visualTransformation = smileyVisualTransformation,
+                                onTextLayout = { inputLayout = it },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(inputFocusRequester)
+                                    // 用户直接点输入栏想打字而表情面板还开着：同样走交接，键盘升起来
+                                    // 把面板接替掉，底部槽高度不变
+                                    .onFocusChanged {
+                                        inputFocused = it.isFocused
+                                        if (it.isFocused && smileyPanelVisible) keyboardHandoff = true
                                     }
-                                    innerTextField()
-                                }
-                            },
+                                    .onSizeChanged { inputFieldHeight = it.height },
+                                maxLines = 5,
+                                decorationBox = { innerTextField ->
+                                    Box(Modifier.fillMaxWidth()) {
+                                        SmileyOverlay(
+                                            text = inputText.text,
+                                            layout = inputLayout,
+                                            smileyByCode = smileyByCode,
+                                            scrollOffset = inputScrollOffset,
+                                            modifier = Modifier.matchParentSize().clipToBounds(),
+                                        )
+                                        if (inputText.text.isEmpty()) {
+                                            Text(
+                                                "发送私信消息...",
+                                                color = colors.textHint,
+                                                fontSize = 14.5.sp,
+                                            )
+                                        }
+                                        innerTextField()
+                                    }
+                                },
+                            )
+                        }
+
+                        // 一条 0.5dp 主题色细线
+                        HorizontalDivider(
+                            thickness = 0.5.dp,
+                            color = primaryColor,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
 
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
 
                     // 下方独立操作栏：左侧表情与图片，右侧发送按钮
                     Row(

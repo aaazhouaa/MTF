@@ -30,6 +30,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.aazhou.mtforum.ui.common.container
+import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.GlobalToastHost
 import com.aazhou.mtforum.ui.common.maskAccessibility
 import com.aazhou.mtforum.ui.screen.forumlist.ForumListScreen
@@ -107,7 +108,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
 
     // 点了新消息通知：直达消息页（未登录仍留在首页，消息页要登录态才能看）
     LaunchedEffect(openNotice) {
-        if (openNotice && container.httpClient.isLoggedIn()) {
+        if (openNotice && container.isLoggedIn()) {
             navController.navigate(Routes.NOTICE)
         }
     }
@@ -169,6 +170,15 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
             // 消费这个 backdrop，挂了也只是逐帧把全屏内容录进一个没人读取的图层
             .then(if (showBottomBar) Modifier.layerBackdrop(backdrop) else Modifier),
         ) {
+            // 未登录状态点击别人的信息不跳转到对方的主页，只弹出轻提示
+            val navigateToUser: (String) -> Unit = { uid ->
+                if (container.isLoggedIn()) {
+                    navController.navigate(Routes.user(uid))
+                } else {
+                    AppToast.show("你喜欢匿名偷窥？")
+                }
+            }
+
             composable(Routes.HOME) {
                 HomeScreen(
                     onSearch = { navController.navigate(Routes.SEARCH) },
@@ -176,7 +186,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onSettings = { navController.navigate(Routes.SETTINGS) },
                     // 未登录时顶栏左侧是登录图标，点击进登录页
                     onLogin = { navController.navigate(Routes.LOGIN) },
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                     // 消息提醒：未登录时进入也会跳出登录弹窗
                     onMessages = {
                         navController.navigate(Routes.NOTICE)
@@ -184,7 +194,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onForumClick = { fid, name -> navController.navigate(Routes.forum(fid, name)) },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     // 顶栏头像进个人主页（自己的空间页）
-                    onProfileClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onProfileClick = navigateToUser,
                     scrollToTopTick = homeScrollTopTick,
                 )
             }
@@ -192,9 +202,6 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 ForumListScreen(
                     onForumClick = { fid, name ->
                         navController.navigate(Routes.forum(fid, name))
-                    },
-                    onSearch = {
-                        navController.navigate(Routes.SEARCH)
                     },
                     onSettings = { navController.navigate(Routes.SETTINGS) },
                     onMessages = { navController.navigate(Routes.NOTICE) },
@@ -206,22 +213,22 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onDownloads = { navController.navigate(Routes.DOWNLOADS) },
                     onDrafts = { navController.navigate(Routes.DRAFTS) },
                     onMyPosts = {
-                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_POSTS)
+                        if (container.isLoggedIn()) navController.navigate(Routes.MY_POSTS)
                         else navController.navigate(Routes.LOGIN)
                     },
                     onMyFavorites = {
-                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_FAVORITES)
+                        if (container.isLoggedIn()) navController.navigate(Routes.MY_FAVORITES)
                         else navController.navigate(Routes.LOGIN)
                     },
                     onMyFriends = {
-                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_FRIENDS)
+                        if (container.isLoggedIn()) navController.navigate(Routes.MY_FRIENDS)
                         else navController.navigate(Routes.LOGIN)
                     },
                     onFollowList = { type ->
-                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.followList(type))
+                        if (container.isLoggedIn()) navController.navigate(Routes.followList(type))
                         else navController.navigate(Routes.LOGIN)
                     },
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                     onSettings = { navController.navigate(Routes.SETTINGS) },
                     onMessages = { navController.navigate(Routes.NOTICE) },
                 )
@@ -230,7 +237,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 SearchScreen(
                     onBack = { navController.popBackStack() },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                     onForumClick = { fid, name -> navController.navigate(Routes.forum(fid, name)) },
                 )
             }
@@ -270,7 +277,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onBack = { navController.popBackStack() },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     // 消息里的头像进对应用户的个人主页
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                     onChatClick = { uid, name -> navController.navigate(Routes.chat(uid, name)) },
                 )
             }
@@ -287,7 +294,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 DownloadedThreadScreen(
                     tid = entry.arguments?.getString("tid").orEmpty(),
                     onBack = { navController.popBackStack() },
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                 )
             }
@@ -306,7 +313,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     title = name,
                     onBack = { navController.popBackStack() },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                     onNewPost = { navController.navigate(Routes.post(fid, name)) },
                 )
             }
@@ -320,7 +327,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 ThreadDetailScreen(
                     tid = entry.arguments?.getString("tid").orEmpty(),
                     onBack = { navController.popBackStack() },
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                     // 正文里的站内帖子链接在 App 内继续看帖，不进浏览器
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     // 楼主是自己：进整页编辑（标题 + 正文）
@@ -351,36 +358,46 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
             }
 
             composable(Routes.USER, arguments = listOf(navArgument("uid") { type = NavType.StringType })) { entry ->
-                UserProfileScreen(
-                    uid = entry.arguments?.getString("uid").orEmpty(),
-                    onBack = { navController.popBackStack() },
-                    onChat = { targetUid, targetName ->
-                        navController.navigate(Routes.chat(targetUid, targetName))
-                    },
-                    onPostsClick = { targetUid ->
-                        navController.navigate(Routes.userPosts(targetUid))
-                    },
-                    // 看自己的主页时内容即「我的」页，入口导航与底栏 tab 保持一致
-                    onLogin = { navController.navigate(Routes.LOGIN) },
-                    onDownloads = { navController.navigate(Routes.DOWNLOADS) },
-                    onDrafts = { navController.navigate(Routes.DRAFTS) },
-                    onMyPosts = {
-                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_POSTS)
-                        else navController.navigate(Routes.LOGIN)
-                    },
-                    onMyFavorites = {
-                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_FAVORITES)
-                        else navController.navigate(Routes.LOGIN)
-                    },
-                    onMyFriends = {
-                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.MY_FRIENDS)
-                        else navController.navigate(Routes.LOGIN)
-                    },
-                    onFollowList = { type ->
-                        if (container.httpClient.isLoggedIn()) navController.navigate(Routes.followList(type))
-                        else navController.navigate(Routes.LOGIN)
-                    },
-                )
+                val targetUid = entry.arguments?.getString("uid").orEmpty()
+                // 与 navigateToUser 同一判据：深链或页面重建直接落到本路由时也要挡住未登录态
+                val currentUser by container.currentUser.collectAsStateWithLifecycle()
+                if (currentUser?.isLoggedIn != true) {
+                    LaunchedEffect(Unit) {
+                        AppToast.show("你喜欢匿名偷窥？")
+                        navController.popBackStack()
+                    }
+                } else {
+                    UserProfileScreen(
+                        uid = targetUid,
+                        onBack = { navController.popBackStack() },
+                        onChat = { targetUid, targetName ->
+                            navController.navigate(Routes.chat(targetUid, targetName))
+                        },
+                        onPostsClick = { targetUid ->
+                            navController.navigate(Routes.userPosts(targetUid))
+                        },
+                        // 看自己的主页时内容即「我的」页，入口导航与底栏 tab 保持一致
+                        onLogin = { navController.navigate(Routes.LOGIN) },
+                        onDownloads = { navController.navigate(Routes.DOWNLOADS) },
+                        onDrafts = { navController.navigate(Routes.DRAFTS) },
+                        onMyPosts = {
+                            if (container.isLoggedIn()) navController.navigate(Routes.MY_POSTS)
+                            else navController.navigate(Routes.LOGIN)
+                        },
+                        onMyFavorites = {
+                            if (container.isLoggedIn()) navController.navigate(Routes.MY_FAVORITES)
+                            else navController.navigate(Routes.LOGIN)
+                        },
+                        onMyFriends = {
+                            if (container.isLoggedIn()) navController.navigate(Routes.MY_FRIENDS)
+                            else navController.navigate(Routes.LOGIN)
+                        },
+                        onFollowList = { type ->
+                            if (container.isLoggedIn()) navController.navigate(Routes.followList(type))
+                            else navController.navigate(Routes.LOGIN)
+                        },
+                    )
+                }
             }
 
             composable(
@@ -400,7 +417,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     uid = chatUid,
                     targetName = chatName,
                     onBack = { navController.popBackStack() },
-                    onUserClick = { u -> navController.navigate(Routes.user(u)) },
+                    onUserClick = navigateToUser,
                 )
             }
 
@@ -423,7 +440,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 com.aazhou.mtforum.ui.screen.myposts.MyPostsScreen(
                     onBack = { navController.popBackStack() },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                 )
             }
             composable(
@@ -434,7 +451,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     uid = entry.arguments?.getString("uid").orEmpty(),
                     onBack = { navController.popBackStack() },
                     onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                 )
             }
 
@@ -457,7 +474,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
             composable(Routes.MY_FRIENDS) {
                 com.aazhou.mtforum.ui.screen.myfriends.MyFriendsScreen(
                     onBack = { navController.popBackStack() },
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                 )
             }
 
@@ -474,7 +491,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 com.aazhou.mtforum.ui.screen.follow.FollowListScreen(
                     initialType = type,
                     onBack = { navController.popBackStack() },
-                    onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onUserClick = navigateToUser,
                 )
             }
         }

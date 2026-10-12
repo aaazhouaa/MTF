@@ -67,7 +67,6 @@ import kotlinx.coroutines.launch
 @Composable
 fun ForumListScreen(
     onForumClick: (fid: String, name: String) -> Unit,
-    onSearch: (() -> Unit)? = null,
     onSettings: () -> Unit = {},
     onMessages: () -> Unit = {},
 ) {
@@ -91,7 +90,6 @@ fun ForumListScreen(
         contentColor = bodyTextColor(),
         topBar = {
             ForumListTopBar(
-                onSearch = onSearch,
                 onSettings = onSettings,
                 onMessages = onMessages,
                 onDoubleTap = {
@@ -135,10 +133,9 @@ fun ForumListScreen(
     }
 }
 
-/** 顶栏：版块导航标题 + 搜索入口 + 设置与消息图标。 */
+/** 顶栏：版块导航标题 + 设置与消息图标（已移除搜索图标）。 */
 @Composable
 private fun ForumListTopBar(
-    onSearch: (() -> Unit)?,
     onSettings: () -> Unit,
     onMessages: () -> Unit,
     onDoubleTap: () -> Unit,
@@ -165,24 +162,6 @@ private fun ForumListTopBar(
         )
 
         Spacer(Modifier.weight(1f))
-
-        if (onSearch != null) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onSearch),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_search_new),
-                    contentDescription = "搜索",
-                    tint = colors.iconSecondary,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Spacer(Modifier.width(2.dp))
-        }
 
         TabSecondaryActionIcons(
             onSettings = onSettings,
