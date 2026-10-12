@@ -275,7 +275,7 @@ internal fun ReplyComposer(
 
     // 退格时智能联动删除成对标签（如 [audio]...[/audio]）或整个表情码
     fun onComposerValueChange(next: TextFieldValue) {
-        onValueChange(value.composerDeletionResult(next) ?: next)
+        onValueChange((value.composerDeletionResult(next) ?: next).snapSelectionOutOfSmiley(smileyByCode))
     }
 
     fun pickSmiley(code: String) {
@@ -1053,8 +1053,29 @@ internal fun TextFieldValue.composerDeletionResult(next: TextFieldValue): TextFi
 }
 
 /**
+ * 把落在表情码内部的光标挪到码的边界上。
+ *
+ * 表情码在输入框里是一整段字符，点表情中间落到的是码内部某两个字符之间：接着打字就把
+ * 码拆坏（[酷] 变 [酷d]），整段表情退化成正文字。码是不可拆的整体，光标只该落在它两侧。
+ */
+internal fun TextFieldValue.snapSelectionOutOfSmiley(smileyByCode: Map<String, Smiley>): TextFieldValue {
+    if (smileyByCode.isEmpty() || !selection.collapsed) return this
+    val cursor = selection.start
+    for ((range, _) in smileyRangesOf(text, smileyByCode)) {
+        if (cursor > range.first && cursor <= range.last) {
+            // 靠左半挪到码首、右半挪到码尾，光标落在点中的那一侧
+            val end = range.last + 1
+            val target = if (cursor - range.first <= end - cursor) range.first else end
+            return copy(selection = TextRange(target))
+        }
+    }
+    return this
+}
+
+/**
  * 表情码占位的字距补偿（em）：码按正文字号占宽，通常是一个表情的两三倍宽，
- * 负字距把它收回到一个表情宽（约 1.2em），表情之间才不留大空隙。
+ * 负字距把它收回到一个表情宽再多留点呼吸（约 1.8em），表情之间才不留大空隙
+ * 也不挤成一团。
  *
  * 按码的构成估算原宽：方括号约 0.4em、中文全角 1em、其余半角约 0.55em。估算偏大偏小
  * 只影响槽宽的零点几 em，表情仍居中在槽内，不会压住相邻字符。
@@ -1067,7 +1088,7 @@ internal fun smileySlotSpacing(code: String): TextUnit {
             else -> 0.55
         }
     }.toFloat()
-    return ((1.2f - naturalEm) / code.length).em
+    return ((1.8f - naturalEm) / code.length).em
 }
 
 @Composable

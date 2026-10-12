@@ -2,10 +2,13 @@ package com.aazhou.mtforum
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.TextUnit
 import com.aazhou.mtforum.data.parser.Smiley
 import com.aazhou.mtforum.ui.screen.threaddetail.formatRichComposerText
 import com.aazhou.mtforum.ui.screen.threaddetail.smileySlotSpacing
+import com.aazhou.mtforum.ui.screen.threaddetail.snapSelectionOutOfSmiley
 import com.aazhou.mtforum.ui.theme.LightMtfColors
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -17,6 +20,9 @@ import org.junit.Test
  * 但它同时决定所在行的行盒高度：字号一缩到远小于正文，整行只有这个 span 的纯表情行
  * 行盒就被压矮，贴图按行盒夹紧后跟着缩成一点；混排行有正文撑着所以看不出差别
  * （[#呵呵] 的占位曾被缩到 10sp，纯表情行的表情只剩一点点大）。
+ *
+ * 横向槽宽由负 letterSpacing 单独收窄，行盒高度不受影响；光标则不允许落进码内部，
+ * 否则一打字就把码拆坏成正文。
  */
 class ComposerEmojiSpanTest {
 
@@ -35,13 +41,33 @@ class ComposerEmojiSpanTest {
     }
 
     @Test
-    fun smileySlotSpacedToOneEmojiWidth() {
-        // 方括号约 0.4em、全角 1em：[呵呵] 原宽 2.8em，收回到一个表情宽 1.2em
-        assertEquals(-0.4f, smileySlotSpacing("[呵呵]").value, 0.001f)
-        // [酷] 原宽 1.8em，按 3 个字符摊到 -0.2em
-        assertEquals(-0.2f, smileySlotSpacing("[酷]").value, 0.001f)
+    fun smileySlotLeavesBreathingRoom() {
+        // 方括号约 0.4em、全角 1em：[呵呵] 原宽 2.8em，收回到 1.8em
+        assertEquals(-0.25f, smileySlotSpacing("[呵呵]").value, 0.001f)
+        // [酷] 原宽正好 1.8em，无需补偿
+        assertEquals(0f, smileySlotSpacing("[酷]").value, 0.001f)
         // 带 # 的码：# 按半角 0.55em 计，原宽 3.35em，摊到 5 个字符
-        assertEquals(-0.43f, smileySlotSpacing("[#滑稽]").value, 0.001f)
+        assertEquals(-0.31f, smileySlotSpacing("[#滑稽]").value, 0.001f)
+    }
+
+    @Test
+    fun cursorNeverLandsInsideSmileyCode() {
+        val smiles = mapOf("[酷]" to Smiley(code = "[酷]", url = "https://x/y.png"))
+        // 光标落在 [酷] 内部（第 1~3 字符之间）：靠左半归位到码首
+        val inside = TextFieldValue("a[酷]b", TextRange(2))
+            .snapSelectionOutOfSmiley(smiles)
+        assertEquals(1, inside.selection.start)
+        // 靠右半归位到码尾
+        val insideRight = TextFieldValue("a[酷]b", TextRange(3))
+            .snapSelectionOutOfSmiley(smiles)
+        assertEquals(4, insideRight.selection.start)
+        // 本来就落在边界上不动
+        val onBoundary = TextFieldValue("a[酷]b", TextRange(4))
+            .snapSelectionOutOfSmiley(smiles)
+        assertEquals(4, onBoundary.selection.start)
+        // 普通文字上的光标不受影响
+        val plain = TextFieldValue("abc", TextRange(2)).snapSelectionOutOfSmiley(smiles)
+        assertEquals(2, plain.selection.start)
     }
 
     @Test

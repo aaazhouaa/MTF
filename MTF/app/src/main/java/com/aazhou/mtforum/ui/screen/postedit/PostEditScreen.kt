@@ -104,6 +104,7 @@ import com.aazhou.mtforum.ui.screen.threaddetail.STABLE_KEYBOARD_FRAMES
 import com.aazhou.mtforum.ui.screen.threaddetail.SmileyOverlay
 import com.aazhou.mtforum.ui.screen.threaddetail.SmileyPanel
 import com.aazhou.mtforum.ui.screen.threaddetail.composerDeletionResult
+import com.aazhou.mtforum.ui.screen.threaddetail.snapSelectionOutOfSmiley
 import com.aazhou.mtforum.ui.screen.threaddetail.wrapSelectionOrInsert
 import com.aazhou.mtforum.ui.screen.threaddetail.HANDOFF_GIVEUP_FRAMES
 import com.aazhou.mtforum.ui.screen.threaddetail.atTokenAt
@@ -342,7 +343,7 @@ fun PostEditScreen(
         } ?: 0f
 
     fun onComposerMessageChange(next: TextFieldValue) {
-        viewModel.onMessageChange(message.composerDeletionResult(next) ?: next)
+        viewModel.onMessageChange((message.composerDeletionResult(next) ?: next).snapSelectionOutOfSmiley(smileyByCode))
     }
 
     Box(

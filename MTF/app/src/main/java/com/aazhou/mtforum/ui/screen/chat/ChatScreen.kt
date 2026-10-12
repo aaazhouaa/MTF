@@ -99,6 +99,7 @@ import com.aazhou.mtforum.ui.screen.threaddetail.composerDeletionResult
 import com.aazhou.mtforum.ui.screen.threaddetail.formatRichComposerText
 import com.aazhou.mtforum.ui.screen.threaddetail.insertAtSelection
 import com.aazhou.mtforum.ui.screen.threaddetail.prepareUploadFile
+import com.aazhou.mtforum.ui.screen.threaddetail.snapSelectionOutOfSmiley
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -369,8 +370,10 @@ fun ChatScreen(
                         BasicTextField(
                             value = inputText,
                             onValueChange = { next ->
-                                // 退格删到表情码/成对标签边界时一次删掉整组，不是一个字符一个字符啃
-                                inputText = inputText.composerDeletionResult(next) ?: next
+                                // 退格删到表情码/成对标签边界时一次删掉整组，点表情中间
+                                // 则把光标挪到码两侧，别落进码里把码拆坏
+                                inputText = (inputText.composerDeletionResult(next) ?: next)
+                                    .snapSelectionOutOfSmiley(smileyByCode)
                             },
                             textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp, lineHeight = 20.sp),
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
