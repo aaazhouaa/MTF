@@ -18,7 +18,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -56,7 +55,6 @@ import com.aazhou.mtforum.ui.common.SwipeTabIndicator
 import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
-import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
@@ -113,6 +111,15 @@ fun ThreadListScreen(
                             )
                         }
                     },
+                    actions = {
+                        IconButton(onClick = onNewPost) {
+                            Icon(
+                                painterResource(R.drawable.ic_new_thread),
+                                contentDescription = "发帖",
+                                tint = bodyTextColor(),
+                            )
+                        }
+                    },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = colors.topBar,
                         titleContentColor = bodyTextColor(),
@@ -150,14 +157,6 @@ fun ThreadListScreen(
                         )
                     }
                 }
-            }
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = onNewPost) {
-                Icon(
-                    painterResource(R.drawable.ic_post_edit),
-                    contentDescription = "发帖",
-                )
             }
         },
     ) { padding ->
@@ -220,7 +219,8 @@ private fun ForumThreadList(
                 }
                 LazyColumn(
                     state = listState,
-                    contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                    // 发帖入口已移到顶栏，底部只留普通收尾留白
+                    contentPadding = PaddingValues(bottom = 24.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     if (data.announcements.isNotEmpty()) {
