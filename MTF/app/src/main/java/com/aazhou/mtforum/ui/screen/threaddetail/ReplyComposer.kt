@@ -89,7 +89,6 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.geometry.Offset
@@ -107,7 +106,9 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
@@ -274,26 +275,7 @@ internal fun ReplyComposer(
 
     // 退格时智能联动删除成对标签（如 [audio]...[/audio]）或整个表情码
     fun onComposerValueChange(next: TextFieldValue) {
-        val shrunkByOne = next.text.length == value.text.length - 1 &&
-            next.selection.collapsed && value.selection.collapsed
-        if (shrunkByOne) {
-            // 1. 优先检查成对 BBCode 标签：按删除键一体化全删两边的代码
-            val tagPairResult = handleTagPairDeletion(value, next)
-            if (tagPairResult != null) {
-                onValueChange(tagPairResult)
-                return
-            }
-
-            // 2. 检查表情码：退格一次删掉整个表情
-            val codeStart = smileyCodeStartBefore(value.text, value.selection.start)
-            if (codeStart >= 0) {
-                val codeEnd = value.text.indexOf(']', codeStart) + 1
-                val text = value.text.removeRange(codeStart, codeEnd)
-                onValueChange(value.copy(text = text, selection = TextRange(codeStart)))
-                return
-            }
-        }
-        onValueChange(next)
+        onValueChange(value.composerDeletionResult(next) ?: next)
     }
 
     fun pickSmiley(code: String) {
@@ -460,17 +442,7 @@ internal fun ReplyComposer(
                     BasicTextField(
                         value = value,
                         onValueChange = ::onComposerValueChange,
-                        textStyle = TextStyle(
-                            color = bodyTextColor(),
-                            fontSize = 15.sp,
-                            lineHeight = 22.sp,
-                            // 单行正文走的是 Compose 的 LineHeightStyleSpan「首行即末行」提前返回
-                            // 分支，段级 lineHeight 不生效，行盒只剩各字号自身的度量：纯表情行
-                            // 的表情码被缩成小字号占位，行盒只剩十几 dp，贴图按行盒夹紧后跟着
-                            // 缩成一点；混排普通文字的行盒有 15sp 撑着就正常。显式打开
-                            // includeFontPadding 改走 LineHeightSpan，每行都按 22sp 出行盒
-                            platformStyle = PlatformTextStyle(includeFontPadding = true),
-                        ),
+                        textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp, lineHeight = 22.sp),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         visualTransformation = smileyVisualTransformation,
                         onTextLayout = { textLayout = it },
@@ -884,14 +856,17 @@ internal fun formatRichComposerText(
         }
 
         // 1. 表情码染成透明色（图片在 Overlay 层绘制）
-        // 关键优化：整段表情码统一按 (40f / len).sp 缩放，使多字符表情码总测量宽度稳定在约 20~22dp，
-        // 紧贴单表情尺寸，字符平滑横向展开，彻底消除多余空白与重叠。
+        // 占位字号必须跟随正文、不能单独缩小：它同时决定横向占位宽度和所在行的行盒高度。
+        // 一缩到远小于正文，整行只有这个 span 的纯表情行行盒就被压矮，贴图按行盒夹紧后
+        // 跟着缩成一点；混排行有正文 15sp 撑着，行盒够高，所以看不出差别
         if (smileyByCode.isNotEmpty() && source.contains('[')) {
             val smileyRanges = smileyRangesOf(source, smileyByCode)
-            for ((range, _) in smileyRanges) {
-                val len = range.last - range.first + 1
-                val emojiCharSize = (40f / len).coerceIn(6f, 10f).sp
-                addStyle(SpanStyle(color = Color.Transparent, fontSize = emojiCharSize), range.first, range.last + 1)
+            for ((range, code) in smileyRanges) {
+                addStyle(
+                    SpanStyle(color = Color.Transparent, letterSpacing = smileySlotSpacing(code)),
+                    range.first,
+                    range.last + 1,
+                )
             }
         }
 
@@ -1019,10 +994,9 @@ internal fun formatRichComposerText(
 private val RE_ATTACH_TAG_AID = Regex("""\[attachimg\](\d+)\[/attachimg\]""", RegexOption.IGNORE_CASE)
 
 /**
- * 输入框内部滚动量的复刻，更新规则对齐 foundation 的 TextFieldScrollerPosition。
- *
- * 正文比输入框高时字段自行滚动（光标矩形移动才跟进，偏移夹在 0..最大滚动量），贴图层
- * 与字段内部滚动文本是兄弟节点、拿不到字段的滚动状态，只能按同一套规则算一份。
+ * 输入框内部滚动量的复刻，更新规则对齐 foundation 的 TextFieldScrollerPosition：
+ * 光标矩形移动才跟进，偏移夹在 0..最大滚动量。贴图层与字段内部滚动文本是兄弟节点、
+ * 拿不到字段的滚动状态，只能按同一套规则算一份。
  */
 internal class ComposerScrollTracker {
     /** 字段当下的滚动量（px），0 表示没滚。 */
@@ -1057,6 +1031,43 @@ internal class ComposerScrollTracker {
         }
         offset = offset.coerceIn(0f, maximum)
     }
+}
+
+/**
+ * 退格时的联动删除：删到表情码或成对 BBCode 标签边界时一次删掉整组，
+ 而不是一个字符一个字符啃。返回 null 表示这次删除无需特殊处理。
+ */
+internal fun TextFieldValue.composerDeletionResult(next: TextFieldValue): TextFieldValue? {
+    val shrunkByOne = next.text.length == text.length - 1 &&
+        next.selection.collapsed && selection.collapsed
+    if (!shrunkByOne) return null
+    // 1. 优先检查成对 BBCode 标签：按删除键一体化全删两边的代码
+    handleTagPairDeletion(this, next)?.let { return it }
+    // 2. 检查表情码：退格一次删掉整个表情
+    val codeStart = smileyCodeStartBefore(text, selection.start)
+    if (codeStart >= 0) {
+        val codeEnd = text.indexOf(']', codeStart) + 1
+        return copy(text = text.removeRange(codeStart, codeEnd), selection = TextRange(codeStart))
+    }
+    return null
+}
+
+/**
+ * 表情码占位的字距补偿（em）：码按正文字号占宽，通常是一个表情的两三倍宽，
+ * 负字距把它收回到一个表情宽（约 1.2em），表情之间才不留大空隙。
+ *
+ * 按码的构成估算原宽：方括号约 0.4em、中文全角 1em、其余半角约 0.55em。估算偏大偏小
+ * 只影响槽宽的零点几 em，表情仍居中在槽内，不会压住相邻字符。
+ */
+internal fun smileySlotSpacing(code: String): TextUnit {
+    val naturalEm = code.sumOf { ch ->
+        when {
+            ch == '[' || ch == ']' -> 0.4
+            ch.code > 0x2E80 -> 1.0
+            else -> 0.55
+        }
+    }.toFloat()
+    return ((1.2f - naturalEm) / code.length).em
 }
 
 @Composable

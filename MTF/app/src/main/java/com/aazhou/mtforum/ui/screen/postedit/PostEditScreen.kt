@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,19 +56,20 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -91,6 +91,7 @@ import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.screen.threaddetail.AtSuggestionStrip
 import com.aazhou.mtforum.ui.screen.threaddetail.AtUserPickerPage
+import com.aazhou.mtforum.ui.screen.threaddetail.ComposerScrollTracker
 import com.aazhou.mtforum.ui.screen.threaddetail.ComposerSubBarHeight
 import com.aazhou.mtforum.ui.screen.threaddetail.ComposerToolButton
 import com.aazhou.mtforum.ui.screen.threaddetail.DefaultSmileyCodes
@@ -102,15 +103,14 @@ import com.aazhou.mtforum.ui.screen.threaddetail.MinKeyboardHeight
 import com.aazhou.mtforum.ui.screen.threaddetail.STABLE_KEYBOARD_FRAMES
 import com.aazhou.mtforum.ui.screen.threaddetail.SmileyOverlay
 import com.aazhou.mtforum.ui.screen.threaddetail.SmileyPanel
+import com.aazhou.mtforum.ui.screen.threaddetail.composerDeletionResult
 import com.aazhou.mtforum.ui.screen.threaddetail.wrapSelectionOrInsert
 import com.aazhou.mtforum.ui.screen.threaddetail.HANDOFF_GIVEUP_FRAMES
 import com.aazhou.mtforum.ui.screen.threaddetail.atTokenAt
 import com.aazhou.mtforum.ui.screen.threaddetail.filterAtUsers
 import com.aazhou.mtforum.ui.screen.threaddetail.formatRichComposerText
-import com.aazhou.mtforum.ui.screen.threaddetail.handleTagPairDeletion
 import com.aazhou.mtforum.ui.screen.threaddetail.insertAtSelection
 import com.aazhou.mtforum.ui.screen.threaddetail.prepareUploadFile
-import com.aazhou.mtforum.ui.screen.threaddetail.smileyCodeStartBefore
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import kotlinx.coroutines.delay
@@ -187,6 +187,8 @@ fun PostEditScreen(
     val subjectFocusRequester = remember { FocusRequester() }
     val messageFocusRequester = remember { FocusRequester() }
     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val messageScrollTracker = remember { ComposerScrollTracker() }
+    var messageFieldHeight by remember { mutableIntStateOf(0) }
 
     val imeInsets = WindowInsets.ime
     val imeHeight = with(density) { imeInsets.getBottom(density).toDp() }
@@ -205,6 +207,12 @@ fun PostEditScreen(
         panel == PostComposerPanel.Smiley || keyboardHandoff -> smileySlot
         imeHeight > 0.dp -> imeHeight
         else -> 0.dp
+    }
+
+    // 进发帖页就把光标落在正文里：不用先点一下输入框才唤得起键盘；草稿回填后
+    // 光标停在正文末尾，接着写不用先拖到尾
+    LaunchedEffect(Unit) {
+        if (!editing) messageFocusRequester.requestFocus()
     }
 
     // 监控软键盘高度
@@ -324,24 +332,17 @@ fun PostEditScreen(
         }
     }
 
+    // 表情贴图按文本坐标画，而 onTextLayout 的坐标是未滚动的：正文比输入框高时字段
+    // 自行滚动把光标挪进视野，不减掉这个滚动量表情会整体停在原位、漂到输入框外
+    val messageScrollOffset = textLayout
+        ?.takeIf { it.layoutInput.text.text == message.text }
+        ?.let {
+            messageScrollTracker.update(it, message.selection, messageFieldHeight)
+            messageScrollTracker.offset
+        } ?: 0f
+
     fun onComposerMessageChange(next: TextFieldValue) {
-        val shrunkByOne = next.text.length == message.text.length - 1 &&
-            next.selection.collapsed && message.selection.collapsed
-        if (shrunkByOne) {
-            val tagPairResult = handleTagPairDeletion(message, next)
-            if (tagPairResult != null) {
-                viewModel.onMessageChange(tagPairResult)
-                return
-            }
-            val codeStart = smileyCodeStartBefore(message.text, message.selection.start)
-            if (codeStart >= 0) {
-                val codeEnd = message.text.indexOf(']', codeStart) + 1
-                val text = message.text.removeRange(codeStart, codeEnd)
-                viewModel.onMessageChange(message.copy(text = text, selection = TextRange(codeStart)))
-                return
-            }
-        }
-        viewModel.onMessageChange(next)
+        viewModel.onMessageChange(message.composerDeletionResult(next) ?: next)
     }
 
     Box(
@@ -710,13 +711,13 @@ fun PostEditScreen(
                         )
                         Spacer(Modifier.height(12.dp))
 
-                        // 正文输入框与表情 Overlay：正文自己内部滚动，Overlay 与输入框同在一个滚动容器里，表情不会停在屏幕原位
+                        // 正文输入框与表情 Overlay：输入框填满整张卡片，点卡片任意位置都能落光标；
+                        // 正文比卡片高时输入框自己内部滚动，Overlay 跟着同一份滚动量走
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f)
-                                .heightIn(min = 80.dp)
-                                .verticalScroll(rememberScrollState()),
+                                .heightIn(min = 80.dp),
                         ) {
                             BasicTextField(
                                 value = message,
@@ -725,43 +726,40 @@ fun PostEditScreen(
                                     color = bodyTextColor(),
                                     fontSize = 15.sp,
                                     lineHeight = 24.sp,
-                                    // 单行正文走的是 Compose 的 LineHeightStyleSpan「首行即末行」提前返回
-                                    // 分支，段级 lineHeight 不生效，行盒只剩各字号自身的度量：纯表情行
-                                    // 的表情码被缩成小字号占位，行盒只剩十几 dp，贴图按行盒夹紧后跟着
-                                    // 缩成一点。显式打开 includeFontPadding 改走 LineHeightSpan
-                                    platformStyle = PlatformTextStyle(includeFontPadding = true),
                                 ),
                                 cursorBrush = SolidColor(primaryColor),
                                 visualTransformation = smileyVisualTransformation,
                                 onTextLayout = { textLayout = it },
                                 modifier = Modifier
-                                    .fillMaxWidth()
+                                    .fillMaxSize()
                                     .focusRequester(messageFocusRequester)
-                                    .onFocusChanged { if (it.isFocused) switchToKeyboard(focusMessage = false) },
+                                    .onFocusChanged { if (it.isFocused) switchToKeyboard(focusMessage = false) }
+                                    .onSizeChanged { messageFieldHeight = it.height },
+                                // 表情贴图层垫在输入框下面：光标与选区仍由输入框自己画，不会被图片盖住
                                 decorationBox = { innerTextField ->
-                                    if (message.text.isEmpty()) {
-                                        Text(
-                                            "请在这里输入帖子正文，分享你的见解或交流提问…",
-                                            style = TextStyle(
-                                                color = colors.textHint,
-                                                fontSize = 15.sp,
-                                                lineHeight = 24.sp,
-                                            ),
+                                    Box(Modifier.fillMaxSize()) {
+                                        SmileyOverlay(
+                                            text = message.text,
+                                            layout = textLayout,
+                                            smileyByCode = smileyByCode,
+                                            scrollOffset = messageScrollOffset,
+                                            // 与输入框可视区同尺寸：滚出可视区的表情由它裁掉
+                                            modifier = Modifier.matchParentSize().clipToBounds(),
                                         )
+                                        if (message.text.isEmpty()) {
+                                            Text(
+                                                "请在这里输入帖子正文，分享你的见解或交流提问…",
+                                                style = TextStyle(
+                                                    color = colors.textHint,
+                                                    fontSize = 15.sp,
+                                                    lineHeight = 24.sp,
+                                                ),
+                                            )
+                                        }
+                                        innerTextField()
                                     }
-                                    innerTextField()
                                 },
                             )
-
-                            // 贴合表情图层
-                            val layout = textLayout
-                            if (layout != null) {
-                                SmileyOverlay(
-                                    text = message.text,
-                                    layout = layout,
-                                    smileyByCode = smileyByCode,
-                                )
-                            }
                         }
 
                         // 已上传图片附件缩略列表

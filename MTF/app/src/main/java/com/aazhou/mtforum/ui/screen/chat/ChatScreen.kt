@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -27,14 +28,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -42,6 +42,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -50,17 +51,25 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,11 +88,15 @@ import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.container
+import com.aazhou.mtforum.ui.screen.threaddetail.ComposerScrollTracker
 import com.aazhou.mtforum.ui.screen.threaddetail.HANDOFF_GIVEUP_FRAMES
 import com.aazhou.mtforum.ui.screen.threaddetail.KeyboardTracker
 import com.aazhou.mtforum.ui.screen.threaddetail.MinKeyboardHeight
 import com.aazhou.mtforum.ui.screen.threaddetail.STABLE_KEYBOARD_FRAMES
+import com.aazhou.mtforum.ui.screen.threaddetail.SmileyOverlay
 import com.aazhou.mtforum.ui.screen.threaddetail.SmileyPanel
+import com.aazhou.mtforum.ui.screen.threaddetail.composerDeletionResult
+import com.aazhou.mtforum.ui.screen.threaddetail.formatRichComposerText
 import com.aazhou.mtforum.ui.screen.threaddetail.insertAtSelection
 import com.aazhou.mtforum.ui.screen.threaddetail.prepareUploadFile
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
@@ -117,6 +130,17 @@ fun ChatScreen(
     var inputText by remember { mutableStateOf(TextFieldValue("")) }
     var smileyPanelVisible by remember { mutableStateOf(false) }
     val inputFocusRequester = remember { FocusRequester() }
+    var inputLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val inputScrollTracker = remember { ComposerScrollTracker() }
+    var inputFieldHeight by remember { mutableIntStateOf(0) }
+    // 贴图按未滚动的文本坐标画：输入框自己滚动时要减掉这份滚动量，表情才不会停在原位
+    val inputScrollOffset = inputLayout
+        ?.takeIf { it.layoutInput.text.text == inputText.text }
+        ?.let {
+            inputScrollTracker.update(it, inputText.selection, inputFieldHeight)
+            inputScrollTracker.offset
+        } ?: 0f
+    var inputFocused by remember { mutableStateOf(false) }
     val density = LocalDensity.current
     val imeInsets = WindowInsets.ime
     val imeHeight = with(density) { imeInsets.getBottom(density).toDp() }
@@ -130,6 +154,19 @@ fun ChatScreen(
     var smileyPacks by remember { mutableStateOf<List<SmileyPack>>(emptyList()) }
     val recentCodes by context.container().smileyStore.recent
         .collectAsStateWithLifecycle(initialValue = emptyList())
+    // 表情码要染成透明色由贴图层画图：没有这一层，插进来的 [闭嘴] 就只是段文字
+    val smileyByCode = remember(smileyPacks) {
+        smileyPacks.flatMap { it.items }.associateBy { it.code }
+    }
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val smileyVisualTransformation = remember(smileyByCode, colors, primaryColor) {
+        VisualTransformation { text ->
+            TransformedText(
+                formatRichComposerText(text.text, smileyByCode, colors, primaryColor),
+                OffsetMapping.Identity,
+            )
+        }
+    }
     val listState = rememberLazyListState()
 
     LaunchedEffect(Unit) {
@@ -314,39 +351,65 @@ fun ChatScreen(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                         )
                     }
-                    OutlinedTextField(
-                        value = inputText,
-                        onValueChange = { inputText = it },
-                        placeholder = {
-                            Text(
-                                "发送私信消息...",
-                                color = colors.textHint,
-                                fontSize = 14.sp,
-                            )
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = colors.surface,
-                            unfocusedContainerColor = colors.surface,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = colors.divider,
-                            focusedTextColor = bodyTextColor(),
-                            unfocusedTextColor = bodyTextColor(),
-                        ),
-                        shape = RoundedCornerShape(20.dp),
+                    // 输入栏：外框自己画（圆角实底+描边），正文用 BasicTextField，
+                    // 表情贴图层才能垫在同一块区域里按文本坐标贴图
+                    Box(
                         modifier = Modifier
                             .weight(1f)
                             .padding(end = 8.dp)
-                            .focusRequester(inputFocusRequester)
-                            // 用户直接点输入栏想打字而表情面板还开着：同样走交接，键盘升起来
-                            // 把面板接替掉，底部槽高度不变
-                            .onFocusChanged {
-                                if (it.isFocused && smileyPanelVisible) keyboardHandoff = true
+                            .heightIn(min = 42.dp)
+                            .background(colors.surface, RoundedCornerShape(20.dp))
+                            .border(
+                                width = 1.dp,
+                                color = if (inputFocused) MaterialTheme.colorScheme.primary else colors.divider,
+                                shape = RoundedCornerShape(20.dp),
+                            )
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    ) {
+                        BasicTextField(
+                            value = inputText,
+                            onValueChange = { next ->
+                                // 退格删到表情码/成对标签边界时一次删掉整组，不是一个字符一个字符啃
+                                inputText = inputText.composerDeletionResult(next) ?: next
                             },
-                        maxLines = 4,
-                    )
+                            textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp, lineHeight = 20.sp),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            visualTransformation = smileyVisualTransformation,
+                            onTextLayout = { inputLayout = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(inputFocusRequester)
+                                // 用户直接点输入栏想打字而表情面板还开着：同样走交接，键盘升起来
+                                // 把面板接替掉，底部槽高度不变
+                                .onFocusChanged {
+                                    inputFocused = it.isFocused
+                                    if (it.isFocused && smileyPanelVisible) keyboardHandoff = true
+                                }
+                                .onSizeChanged { inputFieldHeight = it.height },
+                            maxLines = 4,
+                            decorationBox = { innerTextField ->
+                                Box(Modifier.fillMaxWidth()) {
+                                    SmileyOverlay(
+                                        text = inputText.text,
+                                        layout = inputLayout,
+                                        smileyByCode = smileyByCode,
+                                        scrollOffset = inputScrollOffset,
+                                        modifier = Modifier.matchParentSize().clipToBounds(),
+                                    )
+                                    if (inputText.text.isEmpty()) {
+                                        Text(
+                                            "发送私信消息...",
+                                            color = colors.textHint,
+                                            fontSize = 14.sp,
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            },
+                        )
+                    }
 
                     val canSend = inputText.text.isNotBlank() && !isSending
-                    val primaryColor = MaterialTheme.colorScheme.primary
 
                     Box(
                         modifier = Modifier

@@ -130,7 +130,8 @@ class PostEditViewModel(
     private fun applyDraft() {
         val draft = draftStore?.items?.value?.firstOrNull { it.fid == fid } ?: return
         _subject.value = draft.subject
-        _message.value = TextFieldValue(draft.message)
+        // 光标落在正文末尾：接着上次写的往下写，不用先拖到尾
+        _message.value = TextFieldValue(draft.message, TextRange(draft.message.length))
         pendingTypeId = draft.typeId
     }
 
