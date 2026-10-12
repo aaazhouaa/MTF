@@ -12,7 +12,8 @@ object CacheKeys {
 
     fun notice(category: String): String = "notice|$category"
 
-    fun forum(fid: String): String = "forum|$fid"
+    /** 版块列表按排序档位分槽：各档位内容不同，共用一个 key 会互相覆盖。 */
+    fun forum(fid: String, sort: String): String = "forum|$fid|$sort"
 
     fun home(): String = "home"
 

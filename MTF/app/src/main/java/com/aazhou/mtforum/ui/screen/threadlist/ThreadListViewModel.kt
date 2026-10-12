@@ -6,12 +6,22 @@ import com.aazhou.mtforum.data.cache.CacheKeys
 import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.model.ForumPage
 import com.aazhou.mtforum.data.repo.ForumRepository
+import com.aazhou.mtforum.data.repo.ForumSort
 import com.aazhou.mtforum.ui.common.UiState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+
+/** 单个排序档位（最新/热门/精华/投票）的列表状态。 */
+data class ForumTabState(
+    val state: UiState<ForumPage> = UiState.Loading,
+    val page: Int = 1,
+    val loadingMore: Boolean = false,
+    val hasNext: Boolean = true,
+)
 
 class ThreadListViewModel(
     private val fid: String,
@@ -19,14 +29,9 @@ class ThreadListViewModel(
     private val contentCache: ContentCache,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow<UiState<ForumPage>>(UiState.Loading)
-    val state: StateFlow<UiState<ForumPage>> = _state.asStateFlow()
-
-    private val _loadingMore = MutableStateFlow(false)
-    val loadingMore: StateFlow<Boolean> = _loadingMore.asStateFlow()
-
-    private val _hasNext = MutableStateFlow(true)
-    val hasNext: StateFlow<Boolean> = _hasNext.asStateFlow()
+    /** 各档位的列表状态，key 为档位；未加载过的档位不在表内。 */
+    private val _tabStates = MutableStateFlow<Map<ForumSort, ForumTabState>>(emptyMap())
+    val tabStates: StateFlow<Map<ForumSort, ForumTabState>> = _tabStates.asStateFlow()
 
     /** 一次性提示（如「新数据获取失败」）；界面展示后调 [consumeActionMessage] 清掉。 */
     private val _actionMessage = MutableStateFlow<String?>(null)
@@ -36,82 +41,104 @@ class ThreadListViewModel(
         _actionMessage.value = null
     }
 
-    var page: Int = 1
-        private set
+    /** 各档位追加下一页的 Job：刷新时取消，避免旧页又拼回新拉的第 1 页后面。 */
+    private val loadMoreJobs = mutableMapOf<ForumSort, Job>()
 
     private val cacheJson = Json { ignoreUnknownKeys = true }
 
-    init {
-        load(1)
+    /**
+     * 首次进入某个档位：命中缓存先上屏，不走全屏 Loading；请求回来原地替换。
+     *
+     * 已加载过的档位直接返回：切 tab 不重新请求，滚动位置与已翻页的数据都留着。
+     */
+    fun load(sort: ForumSort) {
+        if (_tabStates.value.containsKey(sort)) return
+        update(sort) { ForumTabState() }
+        viewModelScope.launch {
+            // 过期也照摆：内容旧一点也好过对着转圈等网络，刷新失败时下面保留旧内容只提示
+            val cached = contentCache.read(
+                CacheKeys.forum(fid, sort.name),
+                CacheKeys.LIST_TTL,
+                allowExpired = true,
+            ) {
+                cacheJson.decodeFromString<ForumPage>(it)
+            }
+            if (cached != null) {
+                update(sort) {
+                    it.copy(
+                        state = UiState.Success(cached),
+                        page = cached.page,
+                        hasNext = cached.hasNext,
+                    )
+                }
+            }
+            reload(sort)
+        }
     }
 
-    fun load(target: Int = page) {
-        page = target
-        _hasNext.value = true
-        viewModelScope.launch {
-            // 命中缓存先上屏，不走全屏 Loading；请求回来原地替换。
-            // 过期也照摆：内容旧一点也好过对着转圈等网络，刷新失败时下面保留旧内容只提示
-            if (target == 1) {
-                val cached = contentCache.read(
-                    CacheKeys.forum(fid),
-                    CacheKeys.LIST_TTL,
-                    allowExpired = true,
-                ) {
-                    cacheJson.decodeFromString<ForumPage>(it)
+    /** 加载失败后的重试：不受「已加载过」限制，直接重拉第一页。 */
+    fun retry(sort: ForumSort) {
+        viewModelScope.launch { reload(sort) }
+    }
+
+    private suspend fun reload(sort: ForumSort) {
+        runCatching { repository.forumPage(fid, 1, sort) }
+            .onSuccess { data ->
+                update(sort) {
+                    it.copy(state = UiState.Success(data), page = 1, hasNext = data.hasNext)
                 }
-                if (cached != null) {
-                    page = cached.page
-                    _state.value = UiState.Success(cached)
-                } else if (_state.value !is UiState.Success) {
-                    _state.value = UiState.Loading
-                }
-            } else if (_state.value !is UiState.Success) {
-                _state.value = UiState.Loading
+                saveToCache(sort)
             }
-            _state.value = try {
-                val data = repository.forumPage(fid, target)
-                page = target
-                saveToCache(data)
-                UiState.Success(data)
-            } catch (e: Exception) {
+            .onFailure { e ->
                 // 有缓存就留着旧内容，只提示这次没拿到新的
-                if (_state.value is UiState.Success) {
+                if (_tabStates.value[sort]?.state is UiState.Success) {
                     _actionMessage.value = "新数据获取失败"
-                    _state.value
                 } else {
-                    UiState.Error(e.message ?: "加载失败")
+                    update(sort) { it.copy(state = UiState.Error(e.message ?: "加载失败")) }
                 }
             }
-        }
     }
 
     /** 滑到底部时追加下一页；公告只保留第 1 页那份（站点每页 HTML 都含置顶公告）。 */
-    fun loadMore() {
-        if (_loadingMore.value || !_hasNext.value) return
-        if (_state.value !is UiState.Success) return
-        _loadingMore.value = true
-        viewModelScope.launch {
-            val next = page + 1
-            runCatching { repository.forumPage(fid, next) }
+    fun loadMore(sort: ForumSort) {
+        val current = _tabStates.value[sort] ?: return
+        if (current.loadingMore || !current.hasNext) return
+        if (current.state !is UiState.Success) return
+        update(sort) { it.copy(loadingMore = true) }
+        loadMoreJobs[sort] = viewModelScope.launch {
+            val next = current.page + 1
+            runCatching { repository.forumPage(fid, next, sort) }
                 .onSuccess { pageData ->
-                    val current = (_state.value as? UiState.Success)?.data
-                    _state.value = UiState.Success(
-                        current?.copy(threads = current.threads + pageData.threads, hasNext = pageData.hasNext)
-                            ?: pageData,
-                    )
-                    page = next
-                    _hasNext.value = pageData.hasNext
-                    saveToCache((_state.value as UiState.Success).data)
+                    val existing = (_tabStates.value[sort]?.state as? UiState.Success)?.data
+                    update(sort) {
+                        it.copy(
+                            state = UiState.Success(
+                                existing?.copy(
+                                    threads = existing.threads + pageData.threads,
+                                    hasNext = pageData.hasNext,
+                                ) ?: pageData,
+                            ),
+                            page = next,
+                            hasNext = pageData.hasNext,
+                        )
+                    }
+                    saveToCache(sort)
                 }
-                .onFailure { _hasNext.value = false }
-            _loadingMore.value = false
+                .onFailure { update(sort) { it.copy(hasNext = false) } }
+            update(sort) { it.copy(loadingMore = false) }
         }
     }
 
+    private fun update(sort: ForumSort, transform: (ForumTabState) -> ForumTabState) {
+        val current = _tabStates.value[sort] ?: ForumTabState()
+        _tabStates.value = _tabStates.value + (sort to transform(current))
+    }
+
     /** 缓存记的是合并后的完整列表与已加载到的页，命中后翻页状态可续上。 */
-    private suspend fun saveToCache(data: ForumPage) {
+    private suspend fun saveToCache(sort: ForumSort) {
+        val data = (_tabStates.value[sort]?.state as? UiState.Success)?.data ?: return
         contentCache.write(
-            key = CacheKeys.forum(fid),
+            key = CacheKeys.forum(fid, sort.name),
             ttlMillis = CacheKeys.LIST_TTL,
             value = data,
             encode = { cacheJson.encodeToString(ForumPage.serializer(), it) },

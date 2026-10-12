@@ -59,6 +59,16 @@ private val DELETE_FORM_SUBMIT = Regex("editsubmit")
 /** 消息提醒的内容类别（默认页只是类别菜单，没有提醒内容）。 */
 private val NOTICE_VIEWS = listOf("mypost", "interactive", "system")
 
+/**
+ * 版块帖子流的排序档位，与站点 forumdisplay 的 filter 参数一一对应；[label] 即顶栏 tab 文案。
+ */
+enum class ForumSort(val label: String) {
+    LATEST("最新"),
+    HOT("热门"),
+    DIGEST("精华"),
+    POLL("投票"),
+}
+
 /** 打赏成功标识。 */
 private val REWARD_SUCCESS_PATTERN =
     Regex("succeedhandle_rate|rate_success|评分成功|打赏成功|评价成功|您已成功评分")
@@ -230,9 +240,18 @@ class ForumRepository(
         }
     }
 
-    suspend fun forumPage(fid: String, page: Int): ForumPage = withContext(Dispatchers.IO) {
-        ForumParser.parseForumPage(http.get(http.url("forum-$fid-$page.html")), page)
-    }
+    suspend fun forumPage(fid: String, page: Int, sort: ForumSort = ForumSort.LATEST): ForumPage =
+        withContext(Dispatchers.IO) {
+            // 最新档走静态地址（其余档位站点只给带 query 的 forumdisplay 地址）；
+            // 翻页参数统一是 page，与站点翻页链接的拼法一致
+            val path = when (sort) {
+                ForumSort.LATEST -> "forum-$fid-$page.html"
+                ForumSort.HOT -> "forum.php?mod=forumdisplay&fid=$fid&filter=heat&orderby=heats&page=$page"
+                ForumSort.DIGEST -> "forum.php?mod=forumdisplay&fid=$fid&filter=digest&digest=1&page=$page"
+                ForumSort.POLL -> "forum.php?mod=forumdisplay&fid=$fid&filter=specialtype&specialtype=poll&page=$page"
+            }
+            ForumParser.parseForumPage(http.get(http.url(path)), page)
+        }
 
     /** 只看楼主（authorid）与排序（ordertype）都需重新请求，站点无客户端侧筛选。 */
     suspend fun threadPage(
