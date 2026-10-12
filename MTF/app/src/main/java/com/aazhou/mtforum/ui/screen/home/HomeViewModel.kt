@@ -59,6 +59,8 @@ class HomeViewModel(
         if (_feeds.value.containsKey(view)) return
         _feeds.value = _feeds.value + (view to FeedState())
         viewModelScope.launch {
+            // 排行快照必须先于帖子流落位：后插入的 item 会被 LazyList 按 key 锚定顶到视口外
+            if (view == HomeTabs.HOT) readHomeCache()?.let { _hot.value = it }
             // 过期也照摆：内容旧一点也好过对着转圈等网络，刷新失败时下面保留旧内容只提示
             val cached = contentCache.read(CacheKeys.guide(view), CacheKeys.LIST_TTL, allowExpired = true) {
                 cacheJson.decodeFromString<CachedFeed>(it)
@@ -96,7 +98,10 @@ class HomeViewModel(
     private suspend fun reload(view: String) {
         if (view == HomeTabs.HOT) {
             // 热帖排行失败不影响主列表
-            runCatching { repository.home() }.onSuccess { _hot.value = it }
+            runCatching { repository.home() }.onSuccess {
+                _hot.value = it
+                saveHomeToCache(it)
+            }
         }
         runCatching { repository.guideFeed(view, 1) }
             .onSuccess { data ->
@@ -158,6 +163,26 @@ class HomeViewModel(
             ttlMillis = CacheKeys.LIST_TTL,
             value = CachedFeed(page = feed.page, threads = threads),
             encode = { cacheJson.encodeToString(CachedFeed.serializer(), it) },
+        )
+    }
+
+    /**
+     * 首页热帖排行的磁盘快照。
+     *
+     * 排行与帖子流不同源：只有它有这份快照，才能在 [load] 里和帖子流一起上屏；
+     * 否则帖子流命中缓存秒出、排行等网络回来，插入时被 LazyList 的 key 锚定顶出首屏。
+     */
+    private suspend fun readHomeCache(): HomeData? =
+        contentCache.read(CacheKeys.home(), CacheKeys.LIST_TTL, allowExpired = true) {
+            cacheJson.decodeFromString<HomeData>(it)
+        }
+
+    private suspend fun saveHomeToCache(data: HomeData) {
+        contentCache.write(
+            key = CacheKeys.home(),
+            ttlMillis = CacheKeys.LIST_TTL,
+            value = data,
+            encode = { cacheJson.encodeToString(HomeData.serializer(), it) },
         )
     }
 }

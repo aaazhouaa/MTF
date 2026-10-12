@@ -64,6 +64,7 @@ import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.RankCard
+import com.aazhou.mtforum.ui.common.RankCollapsedLimit
 import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.accountIconModel
@@ -241,6 +242,19 @@ private fun FeedPage(
     onUserClick: (uid: String) -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
 ) {
+    // 排行折叠态只活在本页组合里：离开热门 tab 或首页即恢复默认折叠
+    var rankExpanded by remember { mutableStateOf(false) }
+    // 兜底：排行快照缺失时帖子流先上屏，后插入的排行卡会被 LazyList 按 key 锚定顶到视口外
+    // （已锚定的首条目留在原处，卡片整个落在视口上方）。只有「这轮才到位」且用户还停在
+    // 顶部时才归位；这里不能用 scrollToTop——它「已在顶部直接返回」会跳过 scrollToItem，
+    // 而锚点正是靠 scrollToItem 才会被忘掉
+    var rankWasMissing by remember { mutableStateOf(rankThreads.isEmpty()) }
+    LaunchedEffect(rankThreads.isNotEmpty()) {
+        if (rankThreads.isNotEmpty() && rankWasMissing && listState.firstVisibleItemIndex <= 1) {
+            listState.scrollToItem(0)
+        }
+        rankWasMissing = rankThreads.isEmpty()
+    }
     when (val current = feed.state) {
         is UiState.Loading -> LoadingBox()
         is UiState.Error -> ErrorBox(current.message, onRetry)
@@ -268,7 +282,14 @@ private fun FeedPage(
                 ) {
                     if (rankThreads.isNotEmpty()) {
                         item(key = "hot-rank") {
-                            RankCard("热帖排行", rankThreads, onThreadClick)
+                            RankCard(
+                                "热帖排行",
+                                rankThreads,
+                                onThreadClick,
+                                collapsedLimit = RankCollapsedLimit,
+                                expanded = rankExpanded,
+                                onToggleExpanded = { rankExpanded = !rankExpanded },
+                            )
                         }
                     }
                     items(current.data, key = { it.tid }) { thread ->

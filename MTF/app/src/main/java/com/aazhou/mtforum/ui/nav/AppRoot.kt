@@ -125,7 +125,7 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
     val tabs = listOf(
         GlassTab("首页", painterResource(R.drawable.ic_home)),
         GlassTab("板块", painterResource(R.drawable.ic_list)),
-        GlassTab("我的", painterResource(R.drawable.ic_me)),
+        GlassTab("我的", painterResource(R.drawable.ic_me_outline)),
     )
     val tabRoutes = listOf(Routes.HOME, Routes.FORUMS, Routes.PROFILE)
     val selectedIndex = tabRoutes.indexOf(currentRoute)

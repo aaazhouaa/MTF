@@ -51,6 +51,7 @@ import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.RankCard
+import com.aazhou.mtforum.ui.common.RankCollapsedLimit
 import com.aazhou.mtforum.ui.common.SwipeTabIndicator
 import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
@@ -198,6 +199,8 @@ private fun ForumThreadList(
     onUserClick: (uid: String) -> Unit,
     onImageClick: (List<String>, Int) -> Unit,
 ) {
+    // 公告折叠态只活在本页组合里：切换档位或离开版块页即恢复默认折叠
+    var announcementExpanded by remember { mutableStateOf(false) }
     when (val current = tab.state) {
         is UiState.Loading -> LoadingBox()
         is UiState.Error -> ErrorBox(current.message, onRetry)
@@ -225,7 +228,14 @@ private fun ForumThreadList(
                 ) {
                     if (data.announcements.isNotEmpty()) {
                         item(key = "announcements") {
-                            RankCard("公告", data.announcements, onThreadClick)
+                            RankCard(
+                                "公告",
+                                data.announcements,
+                                onThreadClick,
+                                collapsedLimit = RankCollapsedLimit,
+                                expanded = announcementExpanded,
+                                onToggleExpanded = { announcementExpanded = !announcementExpanded },
+                            )
                         }
                     }
                     items(data.threads, key = { it.tid }) { thread ->
