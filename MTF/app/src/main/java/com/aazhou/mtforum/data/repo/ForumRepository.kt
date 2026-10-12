@@ -99,6 +99,34 @@ class ForumRepository(
     private fun attachAids(message: String): List<String> =
         RE_ATTACHIMG_AID.findAll(message).map { it.groupValues[1] }.distinct().toList()
 
+    /** 正文里还引用着的附件 id：编辑时据此算出哪些附件被删掉了。 */
+    fun attachAidsIn(message: String): List<String> = attachAids(message)
+
+    /**
+     * 解除附件与楼层的关联（站点编辑器里点图片上的「删除」走的就是这个接口）。
+     *
+     * 注意不是编辑提交表单的参数：站点在提交前单独发一次
+     * `mod=ajax&action=deleteattach&aids[]=<aid>&tid=<tid>&pid=<pid>`，
+     * 编辑表单本身只带 `attachnew[aid][description]`，从不带删除语义的字段。
+     * `up=1` 表示该附件已落库，此时才需要 tid/pid 定位楼层。
+     *
+     * @return 站点回执 CDATA 里的内容（无效 aid 回 "0"）。
+     */
+    suspend fun deleteAttach(
+        tid: String,
+        pid: String,
+        aid: String,
+        formhash: String,
+    ): String = withContext(Dispatchers.IO) {
+        val url = http.url(
+            "forum.php?mod=ajax&action=deleteattach&inajax=yes&formhash=$formhash" +
+                "&aids[]=$aid&tid=$tid&pid=$pid",
+        )
+        val body = http.get(url)
+        val cd = Regex("""<!\[CDATA\[([\s\S]*?)\]\]>""").find(body)
+        cd?.groupValues?.get(1)?.trim().orEmpty()
+    }
+
 
     /** 发帖页的 formhash（新版帖接口必需）。 */
     suspend fun postFormhash(fid: String): String? = withContext(Dispatchers.IO) {

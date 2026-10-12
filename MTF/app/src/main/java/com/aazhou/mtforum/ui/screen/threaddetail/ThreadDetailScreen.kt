@@ -202,6 +202,8 @@ fun ThreadDetailScreen(
     // 正在编辑的楼层（自己的帖子/评论）：编辑面板以此为准，提交成功后由 ViewModel 清空
     val editTarget by viewModel.editTarget.collectAsStateWithLifecycle()
     val editForm by viewModel.editForm.collectAsStateWithLifecycle()
+    // 编辑态已挂在站点上的图片附件：独立于 editForm，那一态要被消费掉
+    val editAttachments by viewModel.editAttachments.collectAsStateWithLifecycle()
     // 编辑面板里的正文：站点原文由 ViewModel 取回后填入，之后由用户改
     var editText by remember { mutableStateOf(TextFieldValue("")) }
     // 最近用过的表情码：落在本地，反复开关输入面板、重启应用都不丢
@@ -320,6 +322,10 @@ fun ThreadDetailScreen(
             }
             else -> Unit
         }
+    }
+    // 编辑目标被清掉就是「保存成功」：面板跟着收起，别留在屏幕上变成空的新回复框
+    LaunchedEffect(editTarget) {
+        if (editTarget == null && composerVisible) dismissComposer()
     }
     // 从「编辑本帖」的整页回来：站点上的正文已经变了，重拉一次让新内容与「编辑」标记上屏。
     // 标志要用 rememberSaveable：编辑页压在上层时本页会离开组合，remember 的值会被重置，
@@ -832,8 +838,7 @@ fun ThreadDetailScreen(
                 recentCodes = recentCodes,
                 onSmileyUsed = { code -> scope.launch { container.smileyStore.addRecent(code) } },
                 uploadCredentials = uploadCredentials,
-                existingAttachments = (editForm as? ThreadDetailViewModel.EditFormState.Ready)
-                    ?.attachments.orEmpty(),
+                existingAttachments = editAttachments,
                 onUploadImage = { file ->
                     // 凭据可能还没到手（登录前抓的页面没有上传表单）：选完图再补取一次
                     val credentials = uploadCredentials ?: viewModel.ensureUploadCredentials()

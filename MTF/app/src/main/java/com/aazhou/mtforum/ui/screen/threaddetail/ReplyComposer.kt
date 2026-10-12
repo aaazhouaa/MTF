@@ -54,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.ripple
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -562,18 +563,26 @@ internal fun ReplyComposer(
                 }
             }
 
+            // 已挂附件只列正文里还带着标记的那些：删标记与点角标于是等价，
+            // 两条路都让缩略图消失，不会出现「标记删了图还在」
+            val visibleExisting = remember(value.text, existingAttachments) {
+                val tagged = RE_ATTACH_TAG_AID.findAll(value.text)
+                    .map { it.groupValues[1] }
+                    .toSet()
+                existingAttachments.filter { it.aid in tagged }
+            }
             // 图片附件缩略条：点图全屏查看，点「删除」把该图的标记从正文里摘掉
-            if (uploaded.isNotEmpty() || existingAttachments.isNotEmpty()) {
+            if (uploaded.isNotEmpty() || visibleExisting.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "图片附件 (${existingAttachments.size + uploaded.size})",
+                    text = "图片附件 (${visibleExisting.size + uploaded.size})",
                     style = MaterialTheme.typography.labelMedium,
                     color = colors.textSecondary,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(6.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    itemsIndexed(existingAttachments, key = { _, it -> it.aid }) { index, item ->
+                    itemsIndexed(visibleExisting, key = { _, it -> it.aid }) { index, item ->
                         Box(
                             Modifier
                                 .size(64.dp)
@@ -589,6 +598,27 @@ internal fun ReplyComposer(
                                     .fillMaxSize()
                                     .clickable { previewUploaded = index },
                             )
+                            // 删除角标：与「从正文里删掉同一段标记」等价，两条路都通向
+                            // 同一个 aid，保存时才能算出该解除哪些附件
+                            Box(
+                                Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(2.dp)
+                                    .size(18.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .clickable {
+                                        onValueChange(value.withoutAttachTag(item.aid))
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_close),
+                                    contentDescription = "删除这张图片",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(11.dp),
+                                )
+                            }
                         }
                     }
                     itemsIndexed(uploaded, key = { _, it -> it.aid }) { index, item ->
@@ -1005,6 +1035,9 @@ internal fun formatRichComposerText(
  * 核实），行内图片只能自己贴。这一层垫在输入框下面：文字已被染成透明色，光标与选区仍由
  * 输入框画在最上层，不会被图片盖住。
  */
+/** 正文里引用已上传附件的标记：`[attachimg]<aid>[/attachimg]`。 */
+private val RE_ATTACH_TAG_AID = Regex("""\[attachimg\](\d+)\[/attachimg\]""", RegexOption.IGNORE_CASE)
+
 @Composable
 internal fun SmileyOverlay(
     text: String,
@@ -1032,13 +1065,18 @@ internal fun SmileyOverlay(
             }
             // 表情码被行尾截断时首末字符不同行：只按首字符那一格画，画不全但不越界
             val box = if (last.top != first.top) first else Rect(first.left, first.top, last.right, last.bottom)
+            val line = layout.getLineForOffset(range.first)
+            val lineTop = layout.getLineTop(line)
+            val lineBottom = layout.getLineBottom(line)
             with(density) {
-                val side = 22.dp.toPx()
+                val wanted = 22.dp.toPx()
+                // 表情必须整个落在本行的行盒里：行盒比表情矮时先缩到行盒高，
+                // 否则会上下溢出压住邻行的字（[attachimg] 这类标记行首当其冲）
+                val side = min(wanted, lineBottom - lineTop)
                 // 表情码被行尾截断时只剩首字符那一格，格宽往往远小于表情本身：居中会让表情往左
-                // 溢出压住前一个字，格高不足时上下也会蹭到邻行。偏移不越出格子，多出来的部分
-                // 留在行尾空白里
+                // 溢出压住前一个字。偏移不越出格子，多出来的部分留在行尾空白里
                 val left = box.left + ((box.width - side) / 2f).coerceAtLeast(0f)
-                val top = box.top + ((box.height - side) / 2f).coerceAtLeast(0f)
+                val top = lineTop + ((lineBottom - lineTop - side) / 2f).coerceAtLeast(0f)
                 key(range.first to code) {
                     AsyncImage(
                         model = smiley.url,

@@ -25,6 +25,22 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** 正文里引用已上传附件的标记：`[attachimg]<aid>[/attachimg]`。 */
+private val RE_ATTACH_TAG_AID = Regex("""\[attachimg\](\d+)\[/attachimg\]""", RegexOption.IGNORE_CASE)
+
+/** 给正文补齐 `[attachimg]<aid>[/attachimg]` 标记：原本没有的按原顺序追加到末尾。 */
+private fun withAttachTags(message: String, aids: List<String>): String {
+    if (aids.isEmpty()) return message
+    val present = RE_ATTACH_TAG_AID.findAll(message).map { it.groupValues[1] }.toSet()
+    val missing = aids.filterNot { it in present }
+    if (missing.isEmpty()) return message
+    val base = message.trimEnd()
+    return buildString {
+        append(base)
+        missing.forEach { append("\n[attachimg]").append(it).append("[/attachimg]") }
+    }
+}
+
 class ThreadDetailViewModel(
     private val tid: String,
     private val repository: ForumRepository,
@@ -1006,9 +1022,16 @@ class ThreadDetailViewModel(
         viewModelScope.launch {
             try {
                 val data = repository.fetchEditPostInit(tid, post.pid)
+                _editAttachments.value = data.attachments
+                // 站点回的正文不一定带着这些标记：没有就把标记补齐再回填，
+                // 正文和缩略图得一一对应，删标记才等于删图
+                val body = withAttachTags(data.message, data.attachments.map { it.aid })
+                // 删除依据取附件列表而不是正文标记：标记会被用户改来改去，
+                // 列表才是站点上此刻真挂着的那些附件
+                editInitialAids = data.attachments.mapTo(HashSet()) { it.aid }
                 _editForm.value = when {
                     data.permissionDenied != null -> EditFormState.Error(data.permissionDenied)
-                    else -> EditFormState.Ready(post.pid, data.message, data.attachments)
+                    else -> EditFormState.Ready(post.pid, body, data.attachments)
                 }
             } catch (e: Exception) {
                 _editForm.value = EditFormState.Error(friendlyError(e, "加载编辑内容失败"))
@@ -1021,10 +1044,30 @@ class ThreadDetailViewModel(
         _editForm.value = EditFormState.Idle
     }
 
+    /**
+     * 正在编辑的楼层已挂在站点上的图片附件。
+     *
+     * 单独一份状态而不随 [editForm] 走：那一态要被界面消费掉（只拉起一次面板），
+     * 附件跟着它一起消失，编辑框旁的缩略图条就永远是空的。
+     */
+    private val _editAttachments = MutableStateFlow<List<EditAttachment>>(emptyList())
+    val editAttachments: StateFlow<List<EditAttachment>> = _editAttachments.asStateFlow()
+
+    /**
+     * 进入编辑时该楼挂着的附件 aid：提交时与正文里还引用的那些对比，差集就是被删掉的图。
+     *
+     * 只从正文摘标记的话图仍挂在帖子上——站点解除附件关联靠的是独立的 deleteattach
+     * 请求，编辑表单本身不带任何删除语义的字段。
+     * 取附件列表而不取正文标记：标记会被用户改来改去，拿它当依据一改就残缺，
+     * 差集算出来是空，删除就静默失效。
+     */
+    private var editInitialAids: Set<String> = emptySet()
+
     /** 放弃编辑：连目标一起清掉，界面据此收起输入面板。 */
     fun cancelEdit() {
         _editForm.value = EditFormState.Idle
         _editTarget.value = null
+        _editAttachments.value = emptyList()
     }
 
     /** 提交编辑；成功后把改后的那一楼取回来上屏。 */
@@ -1044,6 +1087,14 @@ class ThreadDetailViewModel(
         _editForm.value = EditFormState.Loading
         viewModelScope.launch {
             try {
+                // 进入时挂着、现在正文里不再引用的附件，就是这次要删掉的
+                val stillReferenced = repository.attachAidsIn(text).toSet()
+                val deletedAids = editInitialAids - stillReferenced
+                // 删除要先于提交：站点用独立的 deleteattach 请求解除关联，
+                // 编辑表单本身不带任何删除语义的字段
+                for (aid in deletedAids) {
+                    repository.deleteAttach(tid, target.pid, aid, formhash)
+                }
                 val result = repository.editPost(
                     tid = tid,
                     pid = target.pid,
@@ -1055,6 +1106,7 @@ class ThreadDetailViewModel(
                 if (result.success) {
                     _editForm.value = EditFormState.Idle
                     _editTarget.value = null
+                    _editAttachments.value = emptyList()
                     _actionMessage.value = result.message ?: "已保存"
                     refreshEditedFloor(target.pid)
                 } else {
