@@ -51,6 +51,7 @@ import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
+import com.aazhou.mtforum.ui.common.TabSecondaryActionIcons
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.AppToast
@@ -67,6 +68,8 @@ import kotlinx.coroutines.launch
 fun ForumListScreen(
     onForumClick: (fid: String, name: String) -> Unit,
     onSearch: (() -> Unit)? = null,
+    onSettings: () -> Unit = {},
+    onMessages: () -> Unit = {},
 ) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
@@ -89,6 +92,8 @@ fun ForumListScreen(
         topBar = {
             ForumListTopBar(
                 onSearch = onSearch,
+                onSettings = onSettings,
+                onMessages = onMessages,
                 onDoubleTap = {
                     scope.launch { listState.scrollToTop() }
                 },
@@ -130,14 +135,15 @@ fun ForumListScreen(
     }
 }
 
-/** 顶栏：沉浸式标题栏 + 搜索入口胶囊。 */
+/** 顶栏：版块导航标题 + 搜索入口 + 设置与消息图标。 */
 @Composable
 private fun ForumListTopBar(
     onSearch: (() -> Unit)?,
+    onSettings: () -> Unit,
+    onMessages: () -> Unit,
     onDoubleTap: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    val isDark = LocalIsDarkTheme.current
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -147,7 +153,7 @@ private fun ForumListTopBar(
             .statusBarsPadding()
             .height(MtfTopBarHeight)
             .onDoubleTapToTop(onDoubleTap)
-            .padding(horizontal = 16.dp),
+            .padding(start = 16.dp, end = 10.dp),
     ) {
         Text(
             text = "版块导航",
@@ -161,33 +167,27 @@ private fun ForumListTopBar(
         Spacer(Modifier.weight(1f))
 
         if (onSearch != null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+            Box(
                 modifier = Modifier
-                    .height(34.dp)
-                    .clip(RoundedCornerShape(17.dp))
-                    .background(colors.quoteBackground)
-                    .then(
-                        if (isDark) Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(17.dp))
-                        else Modifier
-                    )
-                    .clickable(onClick = onSearch)
-                    .padding(horizontal = 12.dp),
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onSearch),
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_search_new),
                     contentDescription = "搜索",
                     tint = colors.iconSecondary,
-                    modifier = Modifier.size(15.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = "搜索版块/帖子",
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
-                    color = colors.textHint,
+                    modifier = Modifier.size(20.dp),
                 )
             }
+            Spacer(Modifier.width(2.dp))
         }
+
+        TabSecondaryActionIcons(
+            onSettings = onSettings,
+            onMessages = onMessages,
+        )
     }
 }
 

@@ -48,6 +48,7 @@ import coil.compose.AsyncImage
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.image.smallImageRequest
+import com.aazhou.mtforum.ui.common.TabSecondaryActionIcons
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
@@ -67,15 +68,19 @@ fun ProfileScreen(
     onMyFriends: () -> Unit = {},
     onFollowList: (String) -> Unit = {},
     onUserClick: (String) -> Unit = {},
+    onSettings: () -> Unit = {},
+    onMessages: () -> Unit = {},
 ) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(LocalMtfColors.current.background)
             .statusBarsPadding(),
     ) {
         ProfileContent(
-            modifier = Modifier.padding(top = 40.dp, bottom = bottomBarContentPadding()),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 40.dp, bottom = bottomBarContentPadding()),
             onLogin = onLogin,
             onDownloads = onDownloads,
             onDrafts = onDrafts,
@@ -84,6 +89,15 @@ fun ProfileScreen(
             onMyFriends = onMyFriends,
             onFollowList = onFollowList,
             onUserClick = onUserClick,
+        )
+
+        // 仅在右上角悬浮放置「设置」与「消息」图标，不增加任何顶栏
+        TabSecondaryActionIcons(
+            onSettings = onSettings,
+            onMessages = onMessages,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 6.dp, end = 12.dp),
         )
     }
 }

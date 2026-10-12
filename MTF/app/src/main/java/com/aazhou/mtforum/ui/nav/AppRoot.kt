@@ -196,6 +196,8 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     onSearch = {
                         navController.navigate(Routes.SEARCH)
                     },
+                    onSettings = { navController.navigate(Routes.SETTINGS) },
+                    onMessages = { navController.navigate(Routes.NOTICE) },
                 )
             }
             composable(Routes.PROFILE) {
@@ -220,6 +222,8 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                         else navController.navigate(Routes.LOGIN)
                     },
                     onUserClick = { uid -> navController.navigate(Routes.user(uid)) },
+                    onSettings = { navController.navigate(Routes.SETTINGS) },
+                    onMessages = { navController.navigate(Routes.NOTICE) },
                 )
             }
             composable(Routes.SEARCH) {

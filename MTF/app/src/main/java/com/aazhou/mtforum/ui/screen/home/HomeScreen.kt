@@ -71,6 +71,7 @@ import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.scrollToTop
+import com.aazhou.mtforum.ui.common.TopBarActionIcons
 import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.screen.login.LoginDialog
@@ -121,12 +122,6 @@ fun HomeScreen(
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     // 当前登录用户：已登录时顶栏左侧用头像替代「MTF」，点击进个人主页
     val me by container.currentUser.collectAsStateWithLifecycle()
-    // 签到状态与签到管理器
-    val checkInManager = container.checkInManager
-    val hasSigned by checkInManager.hasSigned.collectAsStateWithLifecycle()
-    val isCheckingIn by checkInManager.isCheckingIn.collectAsStateWithLifecycle()
-    // 有没有未读新消息：消息图标上那颗主题色小圆点
-    val hasUnread by container.unreadNotices.collectAsStateWithLifecycle()
 
     // 点击卡片配图一律进内置全屏查看器；urls 为本卡全部配图，便于左右翻页
     var preview by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
@@ -168,9 +163,6 @@ fun HomeScreen(
                 onProfileClick = { me?.uid?.let(onProfileClick) },
                 onLogin = { showLoginDialog = true },
                 onSearch = onSearch,
-                hasSigned = hasSigned,
-                isCheckingIn = isCheckingIn,
-                onCheckIn = { checkInManager.performCheckIn() },
                 onToggleTheme = onToggleTheme,
                 onSettings = onSettings,
                 onMessages = onMessages,
@@ -178,7 +170,6 @@ fun HomeScreen(
                 onDoubleTap = {
                     scope.launch { listStates[pagerState.currentPage].scrollToTop() }
                 },
-                hasUnreadNotices = hasUnread,
             )
         },
     ) { padding ->
@@ -367,15 +358,10 @@ private fun HomeTopBar(
     onProfileClick: () -> Unit,
     onLogin: () -> Unit,
     onSearch: () -> Unit,
-    hasSigned: Boolean,
-    isCheckingIn: Boolean,
-    onCheckIn: () -> Unit,
     onToggleTheme: () -> Unit,
     onSettings: () -> Unit,
     onMessages: () -> Unit,
     onDoubleTap: () -> Unit,
-    /** 有未读新消息：消息图标右上角亮一颗主题色小圆点。 */
-    hasUnreadNotices: Boolean,
 ) {
     val colors = LocalMtfColors.current
     Row(
@@ -441,117 +427,11 @@ private fun HomeTopBar(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(8.dp))
-        val checkInTint = if (hasSigned) colors.textHint else accentTextColor()
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .clickable(
-                    enabled = !isCheckingIn,
-                    onClick = onCheckIn,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
-                Icon(
-                    painter = painterResource(com.aazhou.mtforum.R.drawable.ic_checkin),
-                    contentDescription = if (hasSigned) "已签到" else "签到",
-                    tint = checkInTint,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        }
-        Spacer(Modifier.width(4.dp))
-        val isDarkTheme = LocalIsDarkTheme.current
-        val darkProgress by animateFloatAsState(
-            targetValue = if (isDarkTheme) 1f else 0f,
-            animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
-            label = "ThemeToggleProgress",
+        Spacer(Modifier.width(6.dp))
+        TopBarActionIcons(
+            onToggleTheme = onToggleTheme,
+            onSettings = onSettings,
+            onMessages = onMessages,
         )
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onToggleTheme),
-            contentAlignment = Alignment.Center,
-        ) {
-            val sunAlpha = (1f - darkProgress * 1.6f).coerceIn(0f, 1f)
-            val moonAlpha = ((darkProgress - 0.375f) * 1.6f).coerceIn(0f, 1f)
-
-            if (sunAlpha > 0f) {
-                Icon(
-                    painter = painterResource(com.aazhou.mtforum.R.drawable.ic_theme_sun),
-                    contentDescription = "切换主题",
-                    tint = colors.iconSecondary,
-                    modifier = Modifier
-                        .size(22.dp)
-                        .graphicsLayer {
-                            alpha = sunAlpha
-                            rotationZ = darkProgress * 90f
-                            scaleX = 1f - darkProgress * 0.4f
-                            scaleY = 1f - darkProgress * 0.4f
-                        },
-                )
-            }
-            if (moonAlpha > 0f) {
-                Icon(
-                    painter = painterResource(com.aazhou.mtforum.R.drawable.ic_theme_moon),
-                    contentDescription = "切换主题",
-                    tint = colors.iconSecondary,
-                    modifier = Modifier
-                        .size(22.dp)
-                        .graphicsLayer {
-                            alpha = moonAlpha
-                            rotationZ = (darkProgress - 1f) * 90f
-                            scaleX = 0.6f + darkProgress * 0.4f
-                            scaleY = 0.6f + darkProgress * 0.4f
-                        },
-                )
-            }
-        }
-        Spacer(Modifier.width(4.dp))
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onSettings),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(Modifier.size(22.dp)) {
-                Icon(
-                    painterResource(com.aazhou.mtforum.R.drawable.ic_settings),
-                    contentDescription = "设置",
-                    tint = colors.iconSecondary,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        }
-        Spacer(Modifier.width(4.dp))
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onMessages),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(Modifier.size(22.dp)) {
-                Icon(
-                    painterResource(com.aazhou.mtforum.R.drawable.ic_mail_line),
-                    contentDescription = "消息提醒",
-                    tint = colors.iconSecondary,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (hasUnreadNotices) {
-                    // 小圆点贴在信封图标右上角（6dp，位于 36dp 居中内部，完整不被 clip 裁剪）
-                    Box(
-                        Modifier
-                            .align(Alignment.TopEnd)
-                            .size(6.dp)
-                            .background(MaterialTheme.colorScheme.primary, CircleShape),
-                    )
-                }
-            }
-        }
     }
 }

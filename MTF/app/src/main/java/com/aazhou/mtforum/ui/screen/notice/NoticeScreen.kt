@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -155,8 +156,8 @@ fun NoticeScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            // 固定在顶部的六个分类入口卡片
-            NoticeCategoryGrid(
+            // 顶部五个分类入口：整齐排成一排，紧凑精致
+            NoticeCategoryBar(
                 selected = currentCategory,
                 onSelect = { cat ->
                     viewModel.selectCategory(cat)
@@ -168,7 +169,8 @@ fun NoticeScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .weight(1f)
+                    .background(colors.background),
             ) {
                 when (val current = state) {
                     is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
@@ -299,39 +301,30 @@ fun NoticeScreen(
 }
 
 /**
- * 顶部固定分类区：按行铺开，紧凑精致，与软件设计统一。
+ * 顶部固定分类区：排成一排 5 列，扁平紧凑、圆润雅致，与顶栏自然衔接。
  */
 @Composable
-private fun NoticeCategoryGrid(
+private fun NoticeCategoryBar(
     selected: NoticeCategory,
     onSelect: (NoticeCategory) -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    val isDark = LocalIsDarkTheme.current
+
     Surface(
-        color = colors.surface,
-        shape = RoundedCornerShape(16.dp),
-        shadowElevation = if (isDark) 0.dp else 0.5.dp,
-        border = if (isDark) androidx.compose.foundation.BorderStroke(0.5.dp, colors.divider) else null,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+        color = colors.topBar,
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            // 第一行：私人消息、公共消息、我的帖子
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 CategoryItem(
                     category = NoticeCategory.PRIVATE_PM,
                     iconRes = R.drawable.ic_notice_pm,
-                    iconBgColor = Color(0xFF53BCF5),
                     isSelected = selected == NoticeCategory.PRIVATE_PM,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.PRIVATE_PM) },
@@ -339,7 +332,6 @@ private fun NoticeCategoryGrid(
                 CategoryItem(
                     category = NoticeCategory.ANNOUNCE_PM,
                     iconRes = R.drawable.ic_notice_announce,
-                    iconBgColor = Color(0xFF8C7AE6),
                     isSelected = selected == NoticeCategory.ANNOUNCE_PM,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.ANNOUNCE_PM) },
@@ -347,22 +339,13 @@ private fun NoticeCategoryGrid(
                 CategoryItem(
                     category = NoticeCategory.MY_POST,
                     iconRes = R.drawable.ic_notice_mypost,
-                    iconBgColor = Color(0xFF9DCA06),
                     isSelected = selected == NoticeCategory.MY_POST,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.MY_POST) },
                 )
-            }
-
-            // 第二行：坛友互动、系统提醒
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
                 CategoryItem(
                     category = NoticeCategory.INTERACTIVE,
                     iconRes = R.drawable.ic_notice_interactive,
-                    iconBgColor = Color(0xFFFFB300),
                     isSelected = selected == NoticeCategory.INTERACTIVE,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.INTERACTIVE) },
@@ -370,30 +353,36 @@ private fun NoticeCategoryGrid(
                 CategoryItem(
                     category = NoticeCategory.SYSTEM,
                     iconRes = R.drawable.ic_notice_system,
-                    iconBgColor = Color(0xFFFF6565),
                     isSelected = selected == NoticeCategory.SYSTEM,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.SYSTEM) },
                 )
             }
+            HorizontalDivider(color = colors.divider, thickness = 0.5.dp)
         }
     }
 }
 
-/** 单个分类图标项。 */
+/** 单个分类图标项：选中统一采用主题主色。 */
 @Composable
 private fun CategoryItem(
     category: NoticeCategory,
     iconRes: Int,
-    iconBgColor: Color,
     isSelected: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
-    val actualBg = if (isDark) iconBgColor.copy(alpha = 0.22f) else iconBgColor
-    val iconTint = if (isDark) iconBgColor else Color.White
+    val primaryColor = MaterialTheme.colorScheme.primary
+
+    val itemBg = if (isSelected) {
+        primaryColor.copy(alpha = if (isDark) 0.22f else 0.12f)
+    } else {
+        if (isDark) colors.quoteBackground.copy(alpha = 0.5f) else colors.quoteBackground
+    }
+
+    val iconTint = if (isSelected) primaryColor else colors.iconSecondary
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -406,12 +395,12 @@ private fun CategoryItem(
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(42.dp)
+                .size(38.dp)
                 .clip(CircleShape)
-                .background(actualBg)
+                .background(itemBg)
                 .then(
                     if (isSelected) {
-                        Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                        Modifier.border(1.5.dp, primaryColor, CircleShape)
                     } else {
                         Modifier
                     },
@@ -421,17 +410,17 @@ private fun CategoryItem(
                 painter = painterResource(iconRes),
                 contentDescription = category.title,
                 tint = iconTint,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(20.dp),
             )
         }
         Spacer(Modifier.height(5.dp))
         Text(
             text = category.title,
             style = MaterialTheme.typography.bodySmall.copy(
-                fontSize = 12.sp,
+                fontSize = 11.5.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
             ),
-            color = if (isSelected) accentTextColor() else bodyTextColor(),
+            color = if (isSelected) accentTextColor() else colors.textSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

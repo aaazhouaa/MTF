@@ -29,6 +29,9 @@ class ChatViewModel(
     private val _targetName = MutableStateFlow(initialTargetName?.ifBlank { null } ?: "聊天")
     val targetName: StateFlow<String> = _targetName.asStateFlow()
 
+    private val _targetAvatarUrl = MutableStateFlow<String?>(null)
+    val targetAvatarUrl: StateFlow<String?> = _targetAvatarUrl.asStateFlow()
+
     private val _isSending = MutableStateFlow(false)
     val isSending: StateFlow<Boolean> = _isSending.asStateFlow()
 
@@ -52,6 +55,17 @@ class ChatViewModel(
                 val conversation = repository.chatConversation(touid)
                 conversation.targetName?.takeIf { it.isNotBlank() }?.let {
                     _targetName.value = it
+                }
+                val convAvatar = conversation.messages.firstOrNull { !it.isSelf && !it.avatarUrl.isNullOrBlank() }?.avatarUrl
+                if (!convAvatar.isNullOrBlank()) {
+                    _targetAvatarUrl.value = convAvatar
+                } else if (_targetAvatarUrl.value.isNullOrBlank()) {
+                    launch {
+                        runCatching { repository.userProfile(touid).avatarUrl }
+                            .getOrNull()?.takeIf { it.isNotBlank() }?.let {
+                                _targetAvatarUrl.value = it
+                            }
+                    }
                 }
                 UiState.Success(conversation)
             } catch (e: Exception) {

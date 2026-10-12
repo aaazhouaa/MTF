@@ -124,6 +124,7 @@ fun ChatScreen(
     val isSending by viewModel.isSending.collectAsStateWithLifecycle()
     val isUploading by viewModel.isUploading.collectAsStateWithLifecycle()
     val myAvatar by viewModel.myAvatarUrl.collectAsStateWithLifecycle()
+    val targetAvatar by viewModel.targetAvatarUrl.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -301,11 +302,32 @@ fun ChatScreen(
                 actions = {
                     if (onUserClick != null) {
                         IconButton(onClick = { onUserClick(uid) }) {
-                            Icon(
-                                painterResource(R.drawable.ic_me),
-                                contentDescription = "查看个人主页",
-                                tint = bodyTextColor(),
-                            )
+                            if (!targetAvatar.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = smallImageRequest(targetAvatar),
+                                    contentDescription = "查看对方主页",
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(colors.quoteBackground)
+                                        .dimImageInDark(),
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(colors.quoteBackground),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_me),
+                                        contentDescription = "查看对方主页",
+                                        tint = colors.iconSecondary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                 },
@@ -320,52 +342,23 @@ fun ChatScreen(
                     .navigationBarsPadding(),
             ) {
                 HorizontalDivider(color = colors.divider)
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    ChatToolIcon(R.drawable.ic_smiley, "表情", tint = colors.iconSecondary) {
-                        if (smileyPanelVisible) {
-                            // 切回键盘：底部槽先锁死在面板高度，键盘升稳后才改由 ime 接管，
-                            // 交接期输入栏高度不变
-                            keyboardHandoff = true
-                            inputFocusRequester.requestFocus()
-                            keyboard?.show()
-                        } else {
-                            keyboardHandoff = false
-                            // 捕获这一刻的真实键盘高度：键盘还开着就直接取现值，正在收起或
-                            // 已经收起就退回停稳记录值。这样表情面板与刚才那个键盘严格等高
-                            smileySlot = if (imeHeight > MinKeyboardHeight && imeHeight >= keyboardHeight) {
-                                imeHeight
-                            } else {
-                                keyboardHeight
-                            }
-                            smileyPanelVisible = true
-                            focusManager.clearFocus()
-                            keyboard?.hide()
-                        }
-                    }
-                    ChatToolIcon(R.drawable.ic_image, "图片", tint = colors.iconSecondary) {
-                        imagePicker.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                        )
-                    }
-                    // 输入栏：外框自己画（圆角实底+描边），正文用 BasicTextField，
-                    // 表情贴图层才能垫在同一块区域里按文本坐标贴图
+                    // 输入区：圆角框实底 + 描边，两行以上多行平滑扩展
                     Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 8.dp)
-                            .heightIn(min = 42.dp)
-                            .background(colors.surface, RoundedCornerShape(20.dp))
+                            .fillMaxWidth()
+                            .heightIn(min = 42.dp, max = 120.dp)
+                            .background(colors.surface, RoundedCornerShape(16.dp))
                             .border(
                                 width = 1.dp,
                                 color = if (inputFocused) MaterialTheme.colorScheme.primary else colors.divider,
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(16.dp),
                             )
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                     ) {
                         BasicTextField(
                             value = inputText,
@@ -375,7 +368,7 @@ fun ChatScreen(
                                 inputText = (inputText.composerDeletionResult(next) ?: next)
                                     .snapSelectionOutOfSmiley(smileyByCode)
                             },
-                            textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp, lineHeight = 20.sp),
+                            textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp, lineHeight = 21.sp),
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             visualTransformation = smileyVisualTransformation,
                             onTextLayout = { inputLayout = it },
@@ -389,7 +382,7 @@ fun ChatScreen(
                                     if (it.isFocused && smileyPanelVisible) keyboardHandoff = true
                                 }
                                 .onSizeChanged { inputFieldHeight = it.height },
-                            maxLines = 4,
+                            maxLines = 5,
                             decorationBox = { innerTextField ->
                                 Box(Modifier.fillMaxWidth()) {
                                     SmileyOverlay(
@@ -403,7 +396,7 @@ fun ChatScreen(
                                         Text(
                                             "发送私信消息...",
                                             color = colors.textHint,
-                                            fontSize = 14.sp,
+                                            fontSize = 14.5.sp,
                                         )
                                     }
                                     innerTextField()
@@ -412,34 +405,82 @@ fun ChatScreen(
                         )
                     }
 
-                    val canSend = inputText.text.isNotBlank() && !isSending
+                    Spacer(Modifier.height(6.dp))
 
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(if (canSend) primaryColor else primaryColor.copy(alpha = 0.35f))
-                            .clickable(enabled = canSend) {
-                                val msg = inputText.text
-                                viewModel.sendMessage(msg) {
-                                    inputText = TextFieldValue("")
-                                }
-                            },
-                        contentAlignment = Alignment.Center,
+                    // 下方独立操作栏：左侧表情与图片，右侧发送按钮
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (isSending) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = Color.White,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            ChatToolButton(
+                                iconRes = R.drawable.ic_smiley,
+                                contentDescription = "表情",
+                                isActive = smileyPanelVisible,
+                                onClick = {
+                                    if (smileyPanelVisible) {
+                                        keyboardHandoff = true
+                                        inputFocusRequester.requestFocus()
+                                        keyboard?.show()
+                                    } else {
+                                        keyboardHandoff = false
+                                        smileySlot = if (imeHeight > MinKeyboardHeight && imeHeight >= keyboardHeight) {
+                                            imeHeight
+                                        } else {
+                                            keyboardHeight
+                                        }
+                                        smileyPanelVisible = true
+                                        focusManager.clearFocus()
+                                        keyboard?.hide()
+                                    }
+                                },
                             )
-                        } else {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_send),
-                                contentDescription = "发送",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp),
+                            ChatToolButton(
+                                iconRes = R.drawable.ic_image,
+                                contentDescription = "图片",
+                                isActive = false,
+                                onClick = {
+                                    imagePicker.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                    )
+                                },
                             )
+                        }
+
+                        Spacer(Modifier.weight(1f))
+
+                        val canSend = inputText.text.isNotBlank() && !isSending
+
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(if (canSend) primaryColor else primaryColor.copy(alpha = 0.35f))
+                                .clickable(enabled = canSend) {
+                                    val msg = inputText.text
+                                    viewModel.sendMessage(msg) {
+                                        inputText = TextFieldValue("")
+                                    }
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (isSending) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color.White,
+                                )
+                            } else {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_send),
+                                    contentDescription = "发送",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -637,20 +678,33 @@ private fun ChatBubbleItem(
     }
 }
 
-/** 私聊输入栏的工具图标（表情 / 图片）：与发送按钮同高，无底衬。 */
+/** 私聊输入栏的操作按钮（表情 / 图片）：精致 32dp 触控圆圈，支持激活态与点击反馈。 */
 @Composable
-private fun ChatToolIcon(
+private fun ChatToolButton(
     iconRes: Int,
     contentDescription: String,
-    tint: Color,
+    isActive: Boolean,
     onClick: () -> Unit,
 ) {
-    IconButton(onClick = onClick, modifier = Modifier.size(38.dp)) {
+    val colors = LocalMtfColors.current
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val isDark = LocalIsDarkTheme.current
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .background(
+                if (isActive) primaryColor.copy(alpha = if (isDark) 0.22f else 0.12f)
+                else Color.Transparent,
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
         Icon(
             painter = painterResource(iconRes),
             contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(21.dp),
+            tint = if (isActive) primaryColor else colors.iconSecondary,
+            modifier = Modifier.size(20.dp),
         )
     }
 }
