@@ -6,8 +6,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,6 +44,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +54,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -523,8 +528,20 @@ private fun ThemeColorCell(
     }
 }
 
-/** 取色盘的色相条渐变：按 60 度一档扫过全色相。 */
-private val HueSweep = List(7) { Color.hsv(it * 60f, 0.9f, 1f) }
+/** 取色盘的色相条渐变：每 10 度一个色标、饱和度拉满，色标太少会刷出可见色带。 */
+private val HueSweep = List(37) { Color.hsv(it * 10f, 1f, 1f) }
+
+/** 取色盘里一键点选的常用色：先定个大概，再到板子上微调。 */
+private val PickerSwatches = listOf(
+    Color(0xFF0D9488),
+    Color(0xFF2563EB),
+    Color(0xFF7C3AED),
+    Color(0xFFDB2777),
+    Color(0xFFDC2626),
+    Color(0xFFEA580C),
+    Color(0xFF16A34A),
+    Color(0xFF475569),
+)
 
 /**
  * 自定义主题色格子：[color] 为空表示还没自定过，圆点铺彩虹渐变当取色盘入口；
@@ -591,7 +608,25 @@ private fun CustomThemeColorCell(
 }
 
 /**
- * 取色盘：上面是饱和度/明度板，下面是色相条，均可拖动；确认后回调当前颜色。
+ * 点按取落点、按住拖动连续取色。
+ *
+ * 单用 detectDragGestures 不吃轻点（要先走过 slop 才算拖动），单用 detectTapGestures
+ * 又会把按下消费掉、拖动收不到；故自己合成：按下即取，之后跟随拖动。
+ */
+@Composable
+private fun Modifier.onPickGesture(pick: (Offset) -> Unit): Modifier {
+    val current by rememberUpdatedState(pick)
+    return pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            current(down.position)
+            drag(down.id) { change -> current(change.position) }
+        }
+    }
+}
+
+/**
+ * 取色盘：上面是饱和度/明度板，下面是色相条，均可点按或拖动；确认后回调当前颜色。
  *
  * HSV 三值用手势在控件内的占比直接换算，落点即所得，不需要输入框。
  */
@@ -623,46 +658,62 @@ private fun ColorPickerDialog(
         hue = (position.x / hueBarSize.width * 360f).coerceIn(0f, 360f)
     }
 
+    // 点常用色：整颗色块的颜色直接搬成 HSV 三值
+    fun pickSwatch(swatch: Color) {
+        FloatArray(3).also { AndroidColor.colorToHSV(swatch.toArgb(), it) }.let {
+            hue = it[0]
+            saturation = it[1]
+            brightness = it[2]
+        }
+    }
+
     MtfContentDialog(
         title = "自定义主题色",
-        subtitle = "拖动取色，确认后立即生效",
+        subtitle = "点按或拖动取色，确认后立即生效",
         onDismissRequest = onDismiss,
     ) {
-        // 饱和度/明度板：横向白到纯色相，纵向透明到黑
+        // 饱和度/明度板：横向白到纯色相，纵向透明到黑；光标就是落点
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(148.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .height(152.dp)
+                .clip(RoundedCornerShape(16.dp))
                 .onSizeChanged { padSize = it }
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDragStart = { pickSatValue(it) },
-                        onDrag = { change, _ -> pickSatValue(change.position) },
-                    )
-                },
+                .onPickGesture { pickSatValue(it) },
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawRect(Brush.horizontalGradient(listOf(Color.White, Color.hsv(hue, 1f, 1f))))
                 drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
             }
+            if (padSize.width > 0) {
+                Box(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                (saturation * padSize.width).roundToInt() - 11.dp.roundToPx(),
+                                ((1f - brightness) * padSize.height).roundToInt() - 11.dp.roundToPx(),
+                            )
+                        }
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .padding(3.dp)
+                        .clip(CircleShape)
+                        .background(current),
+                )
+            }
         }
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
 
         // 色相条：滑块是带白边的当前色圆点，位置按色相占比连续算
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(26.dp)
-                .clip(RoundedCornerShape(13.dp))
+                .height(28.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .onSizeChanged { hueBarSize = it }
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDragStart = { pickHue(it) },
-                        onDrag = { change, _ -> pickHue(change.position) },
-                    )
-                },
+                .onPickGesture { pickHue(it) },
             contentAlignment = Alignment.CenterStart,
         ) {
             Canvas(Modifier.fillMaxSize()) {
@@ -673,11 +724,11 @@ private fun ColorPickerDialog(
                     modifier = Modifier
                         .offset {
                             IntOffset(
-                                (hue / 360f * hueBarSize.width).roundToInt() - 10.dp.roundToPx(),
+                                (hue / 360f * hueBarSize.width).roundToInt() - 12.dp.roundToPx(),
                                 0,
                             )
                         }
-                        .size(20.dp)
+                        .size(24.dp)
                         .clip(CircleShape)
                         .background(Color.White)
                         .padding(3.dp)
@@ -689,22 +740,42 @@ private fun ColorPickerDialog(
 
         Spacer(Modifier.height(16.dp))
 
+        // 当前色预览与色值
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(current),
             )
             Spacer(Modifier.width(12.dp))
             Text(
                 text = "#%06X".format(current.toArgb() and 0xFFFFFF),
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
                 ),
                 color = bodyTextColor(),
             )
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // 常用色：一格一个，点一下整套换过去，省得每次从板子上捞
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            PickerSwatches.forEach { swatch ->
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .aspectRatio(1f)
+                        .clip(CircleShape)
+                        .background(swatch)
+                        .clickable { pickSwatch(swatch) },
+                )
+            }
         }
 
         Spacer(Modifier.height(20.dp))
@@ -743,7 +814,8 @@ private fun ColorPickerDialog(
                     text = "确定",
                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                     fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    // 底色可能是接近白色的亮色：白字会整个看不见，按明度换黑字
+                    color = if (current.luminance() > 0.5f) Color.Black else Color.White,
                 )
             }
         }
