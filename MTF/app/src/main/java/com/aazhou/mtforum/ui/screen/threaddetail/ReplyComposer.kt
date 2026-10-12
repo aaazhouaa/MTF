@@ -571,7 +571,8 @@ internal fun ReplyComposer(
                     .toSet()
                 existingAttachments.filter { it.aid in tagged }
             }
-            // 图片附件缩略条：点图全屏查看，点「删除」把该图的标记从正文里摘掉
+            // 图片附件缩略条：与站点编辑器同规格，底部「插入」把标记插进正文，
+            // 右上角「删除」对已挂附件是摘标记（保存时才解除关联），对本次上传的是直接丢掉
             if (uploaded.isNotEmpty() || visibleExisting.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -583,83 +584,31 @@ internal fun ReplyComposer(
                 Spacer(Modifier.height(6.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     itemsIndexed(visibleExisting, key = { _, it -> it.aid }) { index, item ->
-                        Box(
-                            Modifier
-                                .size(64.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(colors.background)
-                                .border(0.6.dp, colors.divider, RoundedCornerShape(8.dp)),
-                        ) {
-                            AsyncImage(
-                                model = item.url,
-                                contentDescription = item.fileName.ifBlank { null },
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clickable { previewUploaded = index },
-                            )
-                            // 删除角标：与「从正文里删掉同一段标记」等价，两条路都通向
+                        AttachThumb(
+                            model = item.url,
+                            contentDescription = item.fileName.ifBlank { null },
+                            onPreview = { previewUploaded = index },
+                            onInsert = {
+                                onValueChange(value.insertAtSelection("[attachimg]${item.aid}[/attachimg]"))
+                            },
+                            // 与「从正文里删掉同一段标记」等价，两条路都通向
                             // 同一个 aid，保存时才能算出该解除哪些附件
-                            Box(
-                                Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(2.dp)
-                                    .size(18.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.Black.copy(alpha = 0.55f))
-                                    .clickable {
-                                        onValueChange(value.withoutAttachTag(item.aid))
-                                    },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_close),
-                                    contentDescription = "删除这张图片",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(11.dp),
-                                )
-                            }
-                        }
+                            onRemove = { onValueChange(value.withoutAttachTag(item.aid)) },
+                        )
                     }
                     itemsIndexed(uploaded, key = { _, it -> it.aid }) { index, item ->
-                        Box(
-                            Modifier
-                                .size(64.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(colors.background)
-                                .border(0.6.dp, colors.divider, RoundedCornerShape(8.dp)),
-                        ) {
-                            AsyncImage(
-                                model = item.uri,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clickable {
-                                        previewUploaded = existingAttachments.size + index
-                                    },
-                            )
-                            Box(
-                                Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .fillMaxWidth()
-                                    .background(Color.Black.copy(alpha = 0.55f))
-                                    .clickable {
-                                        uploaded = uploaded.filterNot { it.aid == item.aid }
-                                        onValueChange(
-                                            value.withoutAttachTag(item.aid),
-                                        )
-                                    }
-                                    .padding(vertical = 1.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    "删除",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White,
-                                )
-                            }
-                        }
+                        AttachThumb(
+                            model = item.uri,
+                            contentDescription = null,
+                            onPreview = { previewUploaded = existingAttachments.size + index },
+                            onInsert = {
+                                onValueChange(value.insertAtSelection("[attachimg]${item.aid}[/attachimg]"))
+                            },
+                            onRemove = {
+                                uploaded = uploaded.filterNot { it.aid == item.aid }
+                                onValueChange(value.withoutAttachTag(item.aid))
+                            },
+                        )
                     }
                 }
             }
@@ -1073,6 +1022,7 @@ internal fun SmileyOverlay(
                 // 表情必须整个落在本行的行盒里：行盒比表情矮时先缩到行盒高，
                 // 否则会上下溢出压住邻行的字（[attachimg] 这类标记行首当其冲）
                 val side = min(wanted, lineBottom - lineTop)
+                if (side <= 0f) return@forEach
                 // 表情码被行尾截断时只剩首字符那一格，格宽往往远小于表情本身：居中会让表情往左
                 // 溢出压住前一个字。偏移不越出格子，多出来的部分留在行尾空白里
                 val left = box.left + ((box.width - side) / 2f).coerceAtLeast(0f)
@@ -1084,7 +1034,7 @@ internal fun SmileyOverlay(
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
                             .absoluteOffset(left.toDp(), top.toDp())
-                            .requiredSize(22.dp),
+                            .requiredSize(side.toDp()),
                     )
                 }
             }
@@ -1117,6 +1067,69 @@ internal fun TextFieldValue.insertAtSelection(
     val merged = this.text.substring(0, start) + text + this.text.substring(end)
     val cursor = start + cursorOffsetInInserted.coerceIn(0, text.length)
     return copy(text = merged, selection = TextRange(cursor))
+}
+
+/**
+ * 图片附件卡片：与站点编辑器同规格——点图全屏查看，底部「插入」把该图的标记插进正文，
+ * 右上角「删除」的语义由调用方定（已挂附件是摘标记，本次上传的是直接丢掉）。
+ */
+@Composable
+private fun AttachThumb(
+    model: Any,
+    contentDescription: String?,
+    onPreview: () -> Unit,
+    onInsert: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    Box(
+        Modifier
+            .size(64.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(colors.background)
+            .border(0.6.dp, colors.divider, RoundedCornerShape(8.dp)),
+    ) {
+        AsyncImage(
+            model = model,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(onClick = onPreview),
+        )
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(2.dp)
+                .size(18.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.55f))
+                .clickable(onClick = onRemove),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_close),
+                contentDescription = "删除这张图片",
+                tint = Color.White,
+                modifier = Modifier.size(11.dp),
+            )
+        }
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.55f))
+                .clickable(onClick = onInsert)
+                .padding(vertical = 3.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "插入",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+            )
+        }
+    }
 }
 
 /** 从正文里摘掉某个 aid 的 `[attachimg]` 标记：删已传的图时用，站点附件本身不动。 */
