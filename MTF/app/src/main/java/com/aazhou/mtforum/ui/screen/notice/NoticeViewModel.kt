@@ -81,18 +81,14 @@ class NoticeViewModel(
     private var loadMoreJob: Job? = null
 
     init {
-        // 初次进入清除未读红点基线
         viewModelScope.launch {
-            runCatching { repository.notices() }.getOrNull()?.let { page ->
-                onRead(page.notices.map { it.id })
-            }
-        }
-        viewModelScope.launch {
-            // 默认分类按五类里最新的一条消息定：五份都取回来再决定落哪页，
-            // 否则先渲染错分类、等网络回来再翻页
-            val initial = resolveInitialCategory()
-            _category.value = initial
-            loadCategory(initial)
+            // 消息页是 NavHost 里的普通 destination：返回再进入会重建 ViewModel，内存缓存
+            // 随之归零。所以先用磁盘快照把首帧顶出来，五类并拉转后台，谁最新落谁
+            val cached = newestCachedCategory()
+            val preferred = cached?.first ?: NoticeCategory.MY_POST
+            _category.value = preferred
+            if (cached != null) publish(cached.second) else _state.value = UiState.Loading
+            resolveInitialCategory(preferred)
         }
     }
 
@@ -140,29 +136,57 @@ class NoticeViewModel(
     }
 
     /**
-     * 五个分类各拉第一页，最新一条消息落在哪类就默认选中哪类。
+     * 磁盘快照里最新的一条落在哪类；五类都没有快照时返回 null。
+     *
+     * 重进消息页时内存缓存已随 ViewModel 一起销毁，这份是首帧唯一能立刻摆出来的内容。
+     */
+    private suspend fun newestCachedCategory(): Pair<NoticeCategory, NoticeContentState>? {
+        val cached = NoticeCategory.entries.mapNotNull { category ->
+            readDiskCache(category)?.let { category to it }
+        }
+        if (cached.isEmpty()) return null
+        // 快照都解析不出时间（异常数据）时退回声明序第一类，总比一直转圈强
+        return cached
+            .filter { (_, content) -> content.latestTimestamp() > Long.MIN_VALUE }
+            .maxByOrNull { (_, content) -> content.latestTimestamp() }
+            ?: cached.first()
+    }
+
+    /**
+     * 五个分类各拉第一页，最新一条消息落在哪类就落到哪类。
      *
      * 站点不给三类提醒做未读标记，时间文本是唯一可比的「新旧」依据；取不到、为空、
-     * 时间解析不出来的分类不参与比较，全不可比时回落「我的帖子」。取回的列表同时入
-     * 内存缓存并记一次未读账：默认分类秒开，切到别的 tab 也不用再要一次。
+     * 时间解析不出来的分类不参与比较，全不可比时用 [preferred]（重进时是磁盘快照里
+     * 最新的那类，首进时是「我的帖子」）。取回的列表同时入内存缓存与磁盘缓存，并记
+     * 一次未读账：默认分类秒开，切到别的 tab 也不用再要一次。
      */
-    private suspend fun resolveInitialCategory(): NoticeCategory {
+    private suspend fun resolveInitialCategory(preferred: NoticeCategory) {
         val loaded = coroutineScope {
             NoticeCategory.entries.map { category ->
                 async { category to runCatching { firstPageOf(category) }.getOrNull() }
             }.awaitAll()
         }
         val latest = mutableMapOf<NoticeCategory, Long>()
+        val readIds = mutableListOf<String>()
         for ((category, content) in loaded) {
             if (content == null) continue
             memoryStateCache[category] = content
+            writeDiskCache(category, content)
             // 五类都记账：没被打开的分类也要能亮圆点
             if (unreadStore.onCategoryPolled(category, content.noticeIds())) {
                 _unreadCategories.value = _unreadCategories.value + category
             }
             latest[category] = content.latestTimestamp()
+            // 首页全局红点：三类提醒的 id 记为已读。原先另打一笔 repository.notices()，
+            // 和这里的三类并拉完全重复，且是串行 3 连发
+            if (category.viewKey != null) readIds += content.noticeIds()
         }
-        return newestNoticeCategory(latest, NoticeCategory.MY_POST)
+        if (readIds.isNotEmpty()) onRead(readIds.distinct())
+        val winner = newestNoticeCategory(latest, preferred)
+        // 这几百毫秒里用户已经手点了别的 tab：尊重他的选择，不跳页
+        if (winner != preferred && _category.value != preferred) return
+        _category.value = winner
+        loadCategory(winner)
     }
 
     /** 某分类的第一页内容；未登录或请求失败返回 null。 */

@@ -61,6 +61,15 @@ class NoticeCategorySelectionTest {
     }
 
     @Test
+    fun fallbackIsCallerProvided() {
+        // 重进消息页时回落的是磁盘快照里那类，不再固定「我的帖子」
+        assertEquals(
+            NoticeCategory.SYSTEM,
+            newestNoticeCategory(emptyMap(), NoticeCategory.SYSTEM),
+        )
+    }
+
+    @Test
     fun tieKeepsDeclarationOrder() {
         // 时间戳相同取先出现的一方：调用方按分类声明序插入，结果稳定可预期
         assertEquals(

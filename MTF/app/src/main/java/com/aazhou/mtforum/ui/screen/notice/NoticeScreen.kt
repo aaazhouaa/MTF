@@ -125,12 +125,20 @@ fun NoticeScreen(
     val selectedCategory = categories.getOrElse(pagerState.currentPage) { currentCategory }
 
     // 点分类项：滚到对应页，数据由下面的停稳回调加载
+    var aligned by remember { mutableStateOf(false) }
     LaunchedEffect(currentCategory) {
         if (currentCategoryIndex >= 0 &&
             pagerState.currentPage != currentCategoryIndex &&
             pagerState.targetPage != currentCategoryIndex
         ) {
-            pagerState.animateScrollToPage(currentCategoryIndex)
+            // 首次对齐走瞬时滚动：进页面时磁盘快照会把 currentCategory 改到真正该停的
+            // 那一页，此刻 animate 会让用户看到 pager 自己滑一下
+            if (aligned) {
+                pagerState.animateScrollToPage(currentCategoryIndex)
+            } else {
+                pagerState.scrollToPage(currentCategoryIndex)
+                aligned = true
+            }
         }
     }
     // 左右滑动切 tab：停稳后才切换分类，滑动途中不换数据
