@@ -144,7 +144,6 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -1945,7 +1944,6 @@ private fun ReplyBar(
                         effects = {
                             vibrancy()
                             blur(16.dp.toPx())
-                            lens(12.dp.toPx(), 16.dp.toPx())
                         },
                         onDrawSurface = { drawRect(glassColor) },
                     )
@@ -1977,7 +1975,6 @@ private fun ReplyBar(
                         effects = {
                             vibrancy()
                             blur(16.dp.toPx())
-                            lens(12.dp.toPx(), 16.dp.toPx())
                         },
                         onDrawSurface = { drawRect(glassColor) },
                     )
