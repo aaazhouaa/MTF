@@ -34,6 +34,9 @@ class MainActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
             val themeIndex by themeStore.themeIndex
                 .collectAsStateWithLifecycle(initialValue = DefaultThemeIndex)
+            // 自定义主题色（ARGB）：非空时覆盖预设
+            val customColor by themeStore.customColor
+                .collectAsStateWithLifecycle(initialValue = null)
             // darkOverride 为 null 时跟随系统
             val darkOverride by themeStore.darkOverride.collectAsStateWithLifecycle(initialValue = null)
             val darkTheme = darkOverride ?: isSystemInDarkTheme()
@@ -44,6 +47,7 @@ class MainActivity : ComponentActivity() {
             CompositionLocalProvider(LocalOverscrollFactory provides null) {
                 MtfTheme(
                     themeIndex = themeIndex,
+                    customColor = customColor,
                     darkTheme = darkTheme,
                     dimImagesInDark = dimImagesInDark,
                 ) {
