@@ -52,6 +52,7 @@ import com.aazhou.mtforum.ui.common.ErrorBox
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.TabSecondaryActionIcons
+import com.aazhou.mtforum.ui.common.TopBarActionsEndPadding
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.AppToast
@@ -150,7 +151,7 @@ private fun ForumListTopBar(
             .statusBarsPadding()
             .height(MtfTopBarHeight)
             .onDoubleTapToTop(onDoubleTap)
-            .padding(start = 16.dp, end = 10.dp),
+            .padding(start = 16.dp, end = TopBarActionsEndPadding),
     ) {
         Text(
             text = "版块导航",

@@ -72,6 +72,7 @@ import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.TopBarActionIcons
+import com.aazhou.mtforum.ui.common.TopBarActionsEndPadding
 import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
 import com.aazhou.mtforum.ui.screen.login.LoginDialog
@@ -373,7 +374,7 @@ private fun HomeTopBar(
             .onDoubleTapToTop { onDoubleTap() }
             .padding(
                 start = 16.dp,
-                end = 12.dp,
+                end = TopBarActionsEndPadding,
                 top = TopBarVerticalPadding,
                 bottom = TopBarVerticalPadding,
             ),

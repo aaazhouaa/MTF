@@ -30,6 +30,13 @@ import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
 
 /**
+ * 顶栏右侧动作图标的统一几何：首页、板块、我的三个 tab 共用同一组数值，
+ * 切换 tab 时「设置」「消息」两枚图标才能停在同一位置不动（以首页为基准）。
+ */
+val TopBarActionsEndPadding = 12.dp
+val TopBarActionsIconSpacing = 3.dp
+
+/**
  * 首页专用四图标快捷栏：签到、主题、设置、消息。
  */
 @Composable
@@ -73,7 +80,7 @@ fun TopBarActionIcons(
             }
         }
 
-        Spacer(Modifier.width(3.dp))
+        Spacer(Modifier.width(TopBarActionsIconSpacing))
 
         // 2. 切换主题按钮
         val isDarkTheme = LocalIsDarkTheme.current
@@ -124,7 +131,7 @@ fun TopBarActionIcons(
             }
         }
 
-        Spacer(Modifier.width(3.dp))
+        Spacer(Modifier.width(TopBarActionsIconSpacing))
 
         // 3. 设置按钮
         Box(
@@ -144,7 +151,7 @@ fun TopBarActionIcons(
             }
         }
 
-        Spacer(Modifier.width(3.dp))
+        Spacer(Modifier.width(TopBarActionsIconSpacing))
 
         // 4. 消息提醒按钮
         Box(
@@ -211,7 +218,7 @@ fun TabSecondaryActionIcons(
             }
         }
 
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(TopBarActionsIconSpacing))
 
         // 消息提醒按钮
         Box(

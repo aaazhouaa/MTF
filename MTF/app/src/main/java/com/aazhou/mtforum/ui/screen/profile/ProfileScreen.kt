@@ -49,6 +49,8 @@ import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.TabSecondaryActionIcons
+import com.aazhou.mtforum.ui.common.TopBarActionsEndPadding
+import com.aazhou.mtforum.ui.common.TopBarVerticalPadding
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
@@ -97,7 +99,8 @@ fun ProfileScreen(
             onMessages = onMessages,
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = 6.dp, end = 12.dp),
+                // 上留白取顶栏的垂直 padding：图标中心与首页/板块顶栏图标对齐（状态栏下方 28dp）
+                .padding(top = TopBarVerticalPadding, end = TopBarActionsEndPadding),
         )
     }
 }
