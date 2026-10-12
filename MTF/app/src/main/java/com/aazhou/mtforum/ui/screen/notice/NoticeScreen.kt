@@ -103,10 +103,12 @@ fun NoticeScreen(
             it.repository,
             NoticeRepo(it.httpClient),
             it.contentCache,
+            it.noticeUnreadStore,
             onRead = { ids -> it.markNoticesRead(ids) },
         )
     }
     val currentCategory by viewModel.category.collectAsStateWithLifecycle()
+    val unreadCategories by viewModel.unreadCategories.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
@@ -183,6 +185,7 @@ fun NoticeScreen(
             // 顶部五个分类入口：整齐排成一排，紧凑精致
             NoticeCategoryBar(
                 selected = selectedCategory,
+                unreadCategories = unreadCategories,
                 onSelect = { cat ->
                     viewModel.selectCategory(cat)
                     scope.launch { listState.scrollToTop() }
@@ -345,6 +348,7 @@ fun NoticeScreen(
 @Composable
 private fun NoticeCategoryBar(
     selected: NoticeCategory,
+    unreadCategories: Set<NoticeCategory>,
     onSelect: (NoticeCategory) -> Unit,
 ) {
     val colors = LocalMtfColors.current
@@ -365,6 +369,7 @@ private fun NoticeCategoryBar(
                     category = NoticeCategory.PRIVATE_PM,
                     iconRes = R.drawable.ic_notice_pm,
                     isSelected = selected == NoticeCategory.PRIVATE_PM,
+                    hasUnread = NoticeCategory.PRIVATE_PM in unreadCategories,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.PRIVATE_PM) },
                 )
@@ -372,6 +377,7 @@ private fun NoticeCategoryBar(
                     category = NoticeCategory.ANNOUNCE_PM,
                     iconRes = R.drawable.ic_notice_announce,
                     isSelected = selected == NoticeCategory.ANNOUNCE_PM,
+                    hasUnread = NoticeCategory.ANNOUNCE_PM in unreadCategories,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.ANNOUNCE_PM) },
                 )
@@ -379,6 +385,7 @@ private fun NoticeCategoryBar(
                     category = NoticeCategory.MY_POST,
                     iconRes = R.drawable.ic_notice_mypost,
                     isSelected = selected == NoticeCategory.MY_POST,
+                    hasUnread = NoticeCategory.MY_POST in unreadCategories,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.MY_POST) },
                 )
@@ -386,6 +393,7 @@ private fun NoticeCategoryBar(
                     category = NoticeCategory.INTERACTIVE,
                     iconRes = R.drawable.ic_notice_interactive,
                     isSelected = selected == NoticeCategory.INTERACTIVE,
+                    hasUnread = NoticeCategory.INTERACTIVE in unreadCategories,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.INTERACTIVE) },
                 )
@@ -393,6 +401,7 @@ private fun NoticeCategoryBar(
                     category = NoticeCategory.SYSTEM,
                     iconRes = R.drawable.ic_notice_system,
                     isSelected = selected == NoticeCategory.SYSTEM,
+                    hasUnread = NoticeCategory.SYSTEM in unreadCategories,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(NoticeCategory.SYSTEM) },
                 )
@@ -408,6 +417,8 @@ private fun CategoryItem(
     category: NoticeCategory,
     iconRes: Int,
     isSelected: Boolean,
+    /** 该分类有没看过的新消息：图标右上角贴一颗主题色圆点。 */
+    hasUnread: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -451,6 +462,16 @@ private fun CategoryItem(
                 tint = iconTint,
                 modifier = Modifier.size(20.dp),
             )
+            if (hasUnread) {
+                // 未读圆点与首页消息图标同一画法：主题色小圆点贴在图标右上角，无空隙
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(primaryColor),
+                )
+            }
         }
         Spacer(Modifier.height(5.dp))
         Text(

@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.aazhou.mtforum.data.model.NoticeCategory
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -19,6 +20,10 @@ private val Context.noticeUnreadDataStore by preferencesDataStore(name = "mtf_no
  *
  * 第一次轮询时集合还是空的，只记基线不亮红点：否则刚装好应用就把历史未读
  * 全算成新消息，一进来就是一颗点。
+ *
+ * 分类级未读（消息页 tab 圆点）是另一套账：全局那份按「看过消息页」一次性清空，
+ * 无法回答「哪个 tab 有新东西」，故每个分类各存一份已看 id 与未读标志，
+ * 由 [onCategoryPolled] / [markCategoryRead] 维护。
  */
 class NoticeUnreadStore(private val context: Context) {
 
@@ -50,4 +55,47 @@ class NoticeUnreadStore(private val context: Context) {
             prefs[unreadKey] = false
         }
     }
+
+    /** 有未读的分类：消息页五个 tab 右上角的圆点以它为准。 */
+    val unreadCategories: Flow<Set<NoticeCategory>> =
+        context.noticeUnreadDataStore.data.map { prefs ->
+            NoticeCategory.entries.filter { prefs[categoryUnreadKey(it)] == true }.toSet()
+        }
+
+    /**
+     * 某分类拿到新列表：出现没看过的新消息就点亮圆点并返回 true。
+     *
+     * 与全局红点同一套判据（id 集合），但按分类各记一份：站点只给私信行做未读标记、
+     * 且不因客户端查看而清除，三类提醒连标记都没有，故只能本地记账。
+     * 该分类还没有基线时只建基线不点亮，否则刚装好应用就把历史全算成新消息。
+     */
+    suspend fun onCategoryPolled(category: NoticeCategory, ids: List<String>): Boolean {
+        if (ids.isEmpty()) return false
+        var fresh = false
+        context.noticeUnreadDataStore.edit { prefs ->
+            val seen = prefs[categorySeenKey(category)].orEmpty()
+            if (seen.isEmpty()) {
+                prefs[categorySeenKey(category)] = ids.toSet()
+            } else if (ids.any { it !in seen }) {
+                prefs[categoryUnreadKey(category)] = true
+                fresh = true
+            }
+        }
+        return fresh
+    }
+
+    /** 看过某分类：以这批 id 为已读，圆点灭掉。 */
+    suspend fun markCategoryRead(category: NoticeCategory, ids: List<String>) {
+        context.noticeUnreadDataStore.edit { prefs ->
+            if (ids.isNotEmpty()) prefs[categorySeenKey(category)] = ids.toSet()
+            prefs[categoryUnreadKey(category)] = false
+        }
+    }
 }
+
+/** 某分类的「已看过 id 集合」key；与全局红点那份 [seenKey] 分开存，互不干扰。 */
+private fun categorySeenKey(category: NoticeCategory) =
+    stringSetPreferencesKey("seen_ids_${category.name}")
+
+private fun categoryUnreadKey(category: NoticeCategory) =
+    booleanPreferencesKey("unread_${category.name}")
