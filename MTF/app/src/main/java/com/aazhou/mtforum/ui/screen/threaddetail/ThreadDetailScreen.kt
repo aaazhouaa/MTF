@@ -79,7 +79,6 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -152,7 +151,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ThreadDetailScreen(
     tid: String,
@@ -651,31 +650,36 @@ fun ThreadDetailScreen(
                                     )
                                 }
                             }
-                            item(key = "comment-header") {
-                                CommentHeader(
-                                    total = data.totalReplies,
-                                    folded = foldedCount,
-                                    foldExpanded = foldExpanded,
-                                    opOnly = opOnly,
-                                    orderType = orderType,
-                                    onToggleFold = { viewModel.toggleFoldExpanded() },
-                                    onOpOnly = {
-                                        viewModel.setReplyFilter(true, orderType, anchorNow())
-                                    },
-                                    onOrder = {
-                                        // 正序/倒序是两套排法，切过去直接跳到评论区顶部：
-                                        // 倒序的第一屏就是全帖最新评论
-                                        viewModel.setReplyFilter(
-                                            opOnly = false,
-                                            orderType = it,
-                                            anchor = ScrollAnchor(
-                                                index = if (op != null) 1 else 0,
-                                                offset = 0,
-                                            ),
-                                        )
-                                    },
-                                )
-                                HorizontalDivider(color = colors.divider)
+                            // 评论区头钉在列表顶部：上滑滚过它之后停在顶栏下沿，下滑随正文一起
+                            // 退场。用 stickyHeader 而不是另做一份覆盖层——它是列表的一部分，
+                            // 切排序/刷新后自然重建，不会出现副本留在原处不动的情况
+                            stickyHeader(key = "comment-header") {
+                                Column(Modifier.fillMaxWidth().background(colors.topBar)) {
+                                    CommentHeader(
+                                        total = data.totalReplies,
+                                        folded = foldedCount,
+                                        foldExpanded = foldExpanded,
+                                        opOnly = opOnly,
+                                        orderType = orderType,
+                                        onToggleFold = { viewModel.toggleFoldExpanded() },
+                                        onOpOnly = {
+                                            viewModel.setReplyFilter(true, orderType, anchorNow())
+                                        },
+                                        onOrder = {
+                                            // 正序/倒序是两套排法，切过去直接跳到评论区顶部：
+                                            // 倒序的第一屏就是全帖最新评论
+                                            viewModel.setReplyFilter(
+                                                opOnly = false,
+                                                orderType = it,
+                                                anchor = ScrollAnchor(
+                                                    index = if (op != null) 2 else 1,
+                                                    offset = 0,
+                                                ),
+                                            )
+                                        },
+                                    )
+                                    HorizontalDivider(color = colors.divider)
+                                }
                             }
                             if (visibleReplies.isEmpty()) {
                                 item(key = "no-comment") {
@@ -726,61 +730,6 @@ fun ThreadDetailScreen(
                                 }
                             }
                         }
-                            // 「全部评论」栏滚过视口顶端后，这一份副本贴在顶栏下沿不再随正文走；
-                            // 下滑时原栏回到视口里，副本淡出退场。做成 Box 覆盖层而不是
-                            // LazyColumn 的 item：item 一进一出会改变后续 item 的下标，
-                            // 滚动位置会跳
-                            val pinAlpha by remember {
-                                derivedStateOf {
-                                    val info = listState.layoutInfo
-                                    val idx = info.visibleItemsInfo
-                                        .indexOfFirst { it.key == "comment-header" }
-                                    // 原栏完全滚出视口顶端才开始显形，一格之内淡入到不透明
-                                    if (idx < 0) {
-                                        1f
-                                    } else {
-                                        val item = info.visibleItemsInfo[idx]
-                                        // 原栏往上走出视口的过程就是副本淡入的过程：offset 由 0 走到底
-                                        // （一格的高度），alpha 同步由 0 到 1。size 是这一格的像素高
-                                        (-item.offset.toFloat() / item.size.coerceAtLeast(1).toFloat())
-                                            .coerceIn(0f, 1f)
-                                    }
-                                }
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopCenter)
-                                    .fillMaxWidth()
-                                    .height(commentHeaderPinHeight)
-                                    .background(colors.topBar)
-                                    .alpha(pinAlpha),
-                            ) {
-                                CommentHeader(
-                                    total = data.totalReplies,
-                                    folded = foldedCount,
-                                    foldExpanded = foldExpanded,
-                                    opOnly = opOnly,
-                                    orderType = orderType,
-                                    onToggleFold = { viewModel.toggleFoldExpanded() },
-                                    onOpOnly = {
-                                        viewModel.setReplyFilter(true, orderType, anchorNow())
-                                    },
-                                    onOrder = {
-                                        viewModel.setReplyFilter(
-                                            opOnly = false,
-                                            orderType = it,
-                                            anchor = ScrollAnchor(
-                                                index = if (op != null) 1 else 0,
-                                                offset = 0,
-                                            ),
-                                        )
-                                    },
-                                )
-                                HorizontalDivider(
-                                    color = colors.divider,
-                                    modifier = Modifier.align(Alignment.BottomStart),
-                                )
-                            }
                         }
                     }
                 }
@@ -1032,9 +981,6 @@ fun ThreadDetailScreen(
         }
     }
 }
-
-/** 钉顶的「全部评论」栏高度：与原栏同规格，避免贴上顶栏时高度跳变。 */
-private val commentHeaderPinHeight = 44.dp
 
 /** 未登录点击互动入口时的提示文案。 */
 private const val LOGIN_HINT_REPLY = "你不登录咋回复???"
