@@ -80,6 +80,20 @@ private const val SMILEY_REVALIDATE_INTERVAL_MS = 12 * 60 * 60 * 1000L
 /** 正文里引用已上传附件的标记：`[attachimg]<aid>[/attachimg]`。 */
 private val RE_ATTACHIMG_AID = Regex("""\[attachimg\](\d+)\[/attachimg\]""", RegexOption.IGNORE_CASE)
 
+/**
+ * 编辑提交前的引用标签：`[quote]`、`[/quote]`、`[size=N]`、`[/size]`。
+ *
+ * 站点的编辑提交会剥掉小写的这几个标签（`[/quote]` 还被换成一个换行），引用块只剩
+ * 内部文本、被引快照混进正文，引用卡整个消失；而 Discuz 的渲染端大小写不敏感，
+ * 大写形式照样渲染成引用卡（pid 链接也在）。已用站点实测确认两种写法提交后的落库
+ * 形态，故编辑提交前统一转成大写。新回复走 noticetrimstr，站点不做这个剥离，不受影响。
+ */
+private val RE_EDIT_QUOTE_TAG = Regex("""\[/?(?:quote|size)\b[^\]]*]""", RegexOption.IGNORE_CASE)
+
+/** 把正文里的引用相关标签转成大写，避开站点编辑提交对它们的剥离（见 [RE_EDIT_QUOTE_TAG]）。 */
+internal fun protectQuoteTagsOnEdit(message: String): String =
+    RE_EDIT_QUOTE_TAG.replace(message) { it.value.uppercase() }
+
 /** guide 模块里由门户插件出列表的视图：站点把 view=hot 做成门户首页，帖子列表走 AJAX。 */
 private const val GUIDE_VIEW_PORTAL = "hot"
 
@@ -610,15 +624,17 @@ class ForumRepository(
         subject: String? = null,
     ): EditPostResult = withContext(Dispatchers.IO) {
         val url = http.url("forum.php?mod=post&action=edit&extra=&tid=$tid&pid=$pid&page=1&editsubmit=yes&mobile=2")
+        // 站点编辑提交会剥掉小写的 quote/size 标签，提交前转成大写（渲染端大小写不敏感）
+        val text = protectQuoteTagsOnEdit(message)
         val params = mutableMapOf(
             "formhash" to formhash,
-            "message" to message,
+            "message" to text,
             "editsubmit" to "yes",
             "tid" to tid,
             "pid" to pid,
         )
         if (!subject.isNullOrBlank()) params["subject"] = subject
-        for (aid in attachAids(message)) params["attachnew[$aid][description]"] = ""
+        for (aid in attachAids(text)) params["attachnew[$aid][description]"] = ""
         val body = http.post(
             url,
             params,

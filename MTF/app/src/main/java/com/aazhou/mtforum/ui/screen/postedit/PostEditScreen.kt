@@ -69,6 +69,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -724,6 +725,11 @@ fun PostEditScreen(
                                     color = bodyTextColor(),
                                     fontSize = 15.sp,
                                     lineHeight = 24.sp,
+                                    // 单行正文走的是 Compose 的 LineHeightStyleSpan「首行即末行」提前返回
+                                    // 分支，段级 lineHeight 不生效，行盒只剩各字号自身的度量：纯表情行
+                                    // 的表情码被缩成小字号占位，行盒只剩十几 dp，贴图按行盒夹紧后跟着
+                                    // 缩成一点。显式打开 includeFontPadding 改走 LineHeightSpan
+                                    platformStyle = PlatformTextStyle(includeFontPadding = true),
                                 ),
                                 cursorBrush = SolidColor(primaryColor),
                                 visualTransformation = smileyVisualTransformation,

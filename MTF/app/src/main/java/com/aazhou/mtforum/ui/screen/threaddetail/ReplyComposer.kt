@@ -51,6 +51,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.ripple
@@ -66,6 +67,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -79,12 +82,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.geometry.Offset
@@ -258,6 +263,14 @@ internal fun ReplyComposer(
     }
     // 文本布局结果：没有它就不知道每个表情码画在哪
     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    // 输入框可视区高度：正文比它高时字段内部自行滚动，贴图要减掉同一滚动量
+    var fieldHeight by remember { mutableIntStateOf(0) }
+    val scrollTracker = remember { ComposerScrollTracker() }
+    // 布局追上正文这一刻才算滚动量：正文刚变而布局还是上一帧时，光标矩形是旧的，跟进会算错
+    val scrollOffset = textLayout?.takeIf { it.layoutInput.text.text == value.text }?.let {
+        scrollTracker.update(it, value.selection, fieldHeight)
+        scrollTracker.offset
+    } ?: 0f
 
     // 退格时智能联动删除成对标签（如 [audio]...[/audio]）或整个表情码
     fun onComposerValueChange(next: TextFieldValue) {
@@ -447,13 +460,24 @@ internal fun ReplyComposer(
                     BasicTextField(
                         value = value,
                         onValueChange = ::onComposerValueChange,
-                        textStyle = TextStyle(color = bodyTextColor(), fontSize = 15.sp, lineHeight = 22.sp),
+                        textStyle = TextStyle(
+                            color = bodyTextColor(),
+                            fontSize = 15.sp,
+                            lineHeight = 22.sp,
+                            // 单行正文走的是 Compose 的 LineHeightStyleSpan「首行即末行」提前返回
+                            // 分支，段级 lineHeight 不生效，行盒只剩各字号自身的度量：纯表情行
+                            // 的表情码被缩成小字号占位，行盒只剩十几 dp，贴图按行盒夹紧后跟着
+                            // 缩成一点；混排普通文字的行盒有 15sp 撑着就正常。显式打开
+                            // includeFontPadding 改走 LineHeightSpan，每行都按 22sp 出行盒
+                            platformStyle = PlatformTextStyle(includeFontPadding = true),
+                        ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         visualTransformation = smileyVisualTransformation,
                         onTextLayout = { textLayout = it },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 8.dp)
+                            .onSizeChanged { fieldHeight = it.height }
                             .focusRequester(focusRequester),
                         // 表情贴图层：BasicTextField 没有 inlineContent 参数，只能自己按布局坐标贴图。
                         // 文字已被 visualTransformation 染成透明色，这一层垫在输入框下面，光标与
@@ -464,6 +488,10 @@ internal fun ReplyComposer(
                                     text = value.text,
                                     layout = textLayout,
                                     smileyByCode = smileyByCode,
+                                    scrollOffset = scrollOffset,
+                                    // 贴图层与字段的可视区严格同尺寸：滚出可视区的表情由它裁掉，
+                                    // 不会糊到工具栏与表情行上
+                                    modifier = Modifier.matchParentSize().clipToBounds(),
                                 )
                                 inner()
                             }
@@ -983,15 +1011,61 @@ internal fun formatRichComposerText(
  * BasicTextField 各版本都没有 inlineContent 参数（已解包 foundation 的 classes.jar 用 javap
  * 核实），行内图片只能自己贴。这一层垫在输入框下面：文字已被染成透明色，光标与选区仍由
  * 输入框画在最上层，不会被图片盖住。
+ *
+ * [scrollOffset] 是输入框内部的滚动量（px）：正文比可视区高时 BasicTextField 自行滚动
+ * 把光标挪进视野，而 onTextLayout 的坐标是未滚动的，不减掉它表情会整体漂到输入框外。
  */
 /** 正文里引用已上传附件的标记：`[attachimg]<aid>[/attachimg]`。 */
 private val RE_ATTACH_TAG_AID = Regex("""\[attachimg\](\d+)\[/attachimg\]""", RegexOption.IGNORE_CASE)
+
+/**
+ * 输入框内部滚动量的复刻，更新规则对齐 foundation 的 TextFieldScrollerPosition。
+ *
+ * 正文比输入框高时字段自行滚动（光标矩形移动才跟进，偏移夹在 0..最大滚动量），贴图层
+ * 与字段内部滚动文本是兄弟节点、拿不到字段的滚动状态，只能按同一套规则算一份。
+ */
+internal class ComposerScrollTracker {
+    /** 字段当下的滚动量（px），0 表示没滚。 */
+    var offset by mutableFloatStateOf(0f)
+        private set
+
+    private var previousCursorRect: Rect? = null
+    private var previousSelection: TextRange = TextRange.Zero
+
+    fun update(layout: TextLayoutResult, selection: TextRange, viewportHeight: Int) {
+        val maximum = (layout.size.height - viewportHeight).coerceAtLeast(0).toFloat()
+        // 光标跟selection 变化的那一端（字段自己的规则）：两端都动时跟起点
+        val follow = when {
+            selection.start != previousSelection.start -> selection.start
+            selection.end != previousSelection.end -> selection.end
+            else -> selection.min
+        }
+        previousSelection = selection
+        val cursorRect = layout.getCursorRect(follow.coerceIn(0, layout.layoutInput.text.length))
+        val previous = previousCursorRect
+        if (previous == null || cursorRect.top != previous.top || cursorRect.left != previous.left) {
+            val endBound = offset + viewportHeight
+            val cursorHeight = cursorRect.bottom - cursorRect.top
+            val shift = when {
+                cursorRect.bottom > endBound -> cursorRect.bottom - endBound
+                cursorRect.top < offset && cursorHeight > viewportHeight -> cursorRect.bottom - endBound
+                cursorRect.top < offset -> cursorRect.top - offset
+                else -> 0f
+            }
+            offset += shift
+            previousCursorRect = cursorRect
+        }
+        offset = offset.coerceIn(0f, maximum)
+    }
+}
 
 @Composable
 internal fun SmileyOverlay(
     text: String,
     layout: TextLayoutResult?,
     smileyByCode: Map<String, Smiley>,
+    scrollOffset: Float = 0f,
+    modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
     if (layout == null || smileyByCode.isEmpty()) return
     // 区间按布局自己的文本算，确保坐标计算绝对安全；不因 text 与 layout 存在单帧时差而直接 return，
@@ -1000,9 +1074,11 @@ internal fun SmileyOverlay(
     val ranges = remember(source, smileyByCode) { smileyRangesOf(source, smileyByCode) }
     if (ranges.isEmpty()) return
     val density = LocalDensity.current
-    // 只撑宽不撑高：这一层可能被放在可滚动容器里（编辑页正文），取无限高度约束会直接崩；
-    // 贴图用 absoluteOffset 定位，超出自身边界的部分照常绘制，由外层裁剪到视口
-    Box(Modifier.fillMaxWidth()) {
+    // 贴图用 absoluteOffset 定位，超出自身边界的部分照常绘制：由调用方给尺寸与裁剪
+    // （回复面板里与输入框可视区同尺寸并裁掉滚出区的表情；编辑页正文在滚动容器里，
+    // 容器自身会裁）。别在这一层用 fillMaxHeight：它可能被放在可滚动容器里，
+    // 取无限高度约束会直接崩
+    Box(modifier) {
         ranges.forEach { (range, code) ->
             val smiley = smileyByCode[code] ?: return@forEach
             if (range.first >= layout.layoutInput.text.length) return@forEach
@@ -1026,7 +1102,9 @@ internal fun SmileyOverlay(
                 // 表情码被行尾截断时只剩首字符那一格，格宽往往远小于表情本身：居中会让表情往左
                 // 溢出压住前一个字。偏移不越出格子，多出来的部分留在行尾空白里
                 val left = box.left + ((box.width - side) / 2f).coerceAtLeast(0f)
-                val top = lineTop + ((lineBottom - lineTop - side) / 2f).coerceAtLeast(0f)
+                // 减掉输入框的内部滚动量：不减的话正文一长（编辑态预填）表情就停在未滚动
+                // 坐标上，整体漂到输入框外
+                val top = lineTop + ((lineBottom - lineTop - side) / 2f).coerceAtLeast(0f) - scrollOffset
                 key(range.first to code) {
                     AsyncImage(
                         model = smiley.url,
