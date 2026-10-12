@@ -65,7 +65,6 @@ object ForumParser {
     private val RE_UPLOAD_HASH = Regex("uploadformdata:\\{uid:\"\\d+\",\\s*hash:\"([0-9a-fA-F]+)\"")
     private val RE_UPLOAD_PAIR = Regex("uploadformdata:\\{uid:\"(\\d+)\",\\s*hash:\"([0-9a-fA-F]+)\"")
     private val RE_QUOTE_PID = Regex("pid=(\\d+)")
-    private val RE_BR = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
     private val RE_TAG = Regex("<[^>]+>")
     private val RE_BLOCK_END = Regex(
         "</(?:p|div|li|ul|ol|blockquote|quote|h[1-6]|tr|table|pre|hr)>",
@@ -108,9 +107,10 @@ object ForumParser {
      * 引用块内的行边界：<br>，或块级元素（div/p）的开闭标签。
      *
      * 站点回复路径用 <br> 分隔 meta 与正文；编辑提交后烘回来的是 PC 版结构，两者各占
-     * 一个 div、没有 <br>。两种都要能切开。
+     * 一个 div、没有 <br>。两种都要能切开。渲染层兜底取被引正文时也用这一份
+     * （见 ui/common/HtmlContent.kt 的 quoteBodyText），两处语义必须一致。
      */
-    private val RE_QUOTE_LINE_BREAK = Regex(
+    internal val RE_QUOTE_LINE_BREAK = Regex(
         """<br\s*/?>|</?(?:div|p|li|tr|h[1-6]|blockquote|table|ul|ol)\b[^>]*>""",
         RegexOption.IGNORE_CASE,
     )

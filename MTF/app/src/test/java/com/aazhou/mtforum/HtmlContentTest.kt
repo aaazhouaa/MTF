@@ -595,4 +595,30 @@ class HtmlContentTest {
         val quote = parseContentBlocks(html).filterIsInstance<ContentBlock.Quote>().single()
         assertEquals("只有被引正文 第二行", quote.text)
     }
+
+    @Test
+    fun residualQuoteBlockDropsMetaLineWhenSeparatedByBlockElement() {
+        // 编辑提交后站点烘回来的是 PC 版结构：meta 与正文各占一个 div、没有 <br>。
+        // 只按 <br> 切会把 meta 连同正文一起当被引内容，meta 于是残在正文里
+        val html = "<div class=\"comiis_quote\"><blockquote>" +
+            "<div><a href=\"x\"><font color=\"#999999\">heidong4686 发表于 7 天前</font></a></div>" +
+            "<div>频道里面是你的账号被封了</div>" +
+            "</blockquote></div>我自己的正文"
+        val blocks = parseContentBlocks(html)
+        val quote = blocks.filterIsInstance<ContentBlock.Quote>().single()
+        assertEquals("频道里面是你的账号被封了", quote.text)
+        assertEquals("我自己的正文", blocks.filterIsInstance<ContentBlock.Text>().single().text)
+    }
+
+    @Test
+    fun residualQuoteBlockDropsMetaLineWhenBlockElementPrecedesIt() {
+        // meta 前还压着别的块级元素：仍要按行找「发表于」，不能认第一行就是 meta
+        val html = "<div class=\"comiis_quote\"><blockquote>" +
+            "<div>引用提示</div>" +
+            "<div>heidong4686 发表于 7 天前</div>" +
+            "<div>频道里面是你的账号被封了</div>" +
+            "</blockquote></div>"
+        val quote = parseContentBlocks(html).filterIsInstance<ContentBlock.Quote>().single()
+        assertEquals("频道里面是你的账号被封了", quote.text)
+    }
 }

@@ -246,7 +246,13 @@ fun NoticeScreen(
                         } else {
                             PullToRefreshBox(
                                 isRefreshing = refreshing,
-                                onRefresh = { viewModel.refresh() },
+                                onRefresh = {
+                                    viewModel.refresh()
+                                    // 刷新会把列表换回第 1 页：不复位滚动位置的话，
+                                    // 原先停在很后面的视口会被钳到新列表末尾，而新提醒
+                                    // 按时间倒序排在最前面，正好被推到视口外看不见
+                                    scope.launch { listState.scrollToTop() }
+                                },
                                 modifier = Modifier.fillMaxSize(),
                             ) {
                                 Crossfade(targetState = content, label = "notice_content") { target ->
@@ -495,7 +501,7 @@ private fun PrivateMessageListView(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = 4.dp, bottom = bottomBarContentPadding()),
     ) {
-        items(items) { pm ->
+        items(items, key = { it.plid ?: it.touid ?: it.username }) { pm ->
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
