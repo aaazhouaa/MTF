@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -25,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +42,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,6 +60,33 @@ private const val MAX_SCALE = 5f
 
 /** 单击判定阈值：抬起位置离按下处超过该距离就不算单击。 */
 private const val TAP_SLOP = 24f
+
+/**
+ * 开预览前等 ime 归零的最多帧数（约 0.7s）。
+ *
+ * 预览是挂在窗口装饰层的 Popup，且不带焦点：创建那一刻窗口框架按当时的 ime 高度
+ * 把底部裁掉一块，键盘随后收起也不会补回来，于是预览只剩上半屏、下半截还是原页面。
+ * 键盘弹着时必须先收键盘、等 ime 落到底再开；等不到（个别输入法不收键盘）就按原样
+ * 开，别把预览卡死。
+ */
+internal const val PREVIEW_IME_SETTLE_FRAMES = 45
+
+/**
+ * 等软键盘收起动画走完（ime 归零）或等满 [PREVIEW_IME_SETTLE_FRAMES] 帧。
+ *
+ * 连续两帧为 0 才算落底：收起动画的中间值一路递减，中途的 0 之前必然还有非零值，
+ * 但留一帧余量更稳。
+ */
+internal suspend fun awaitImeSettled(imeInsets: WindowInsets, density: Density) {
+    var zeroFrames = 0
+    var frames = 0
+    while (frames < PREVIEW_IME_SETTLE_FRAMES) {
+        withFrameNanos { }
+        frames++
+        zeroFrames = if (imeInsets.getBottom(density) == 0) zeroFrames + 1 else 0
+        if (zeroFrames >= 2) break
+    }
+}
 
 /**
  * 全屏图片查看：黑底，多图左右翻页，双指缩放、放大后拖动、双击放大/还原，
@@ -97,6 +127,8 @@ fun ImagePreview(
     // 预览必须盖住玻璃底栏：底栏与 NavHost 同在 AppRoot 的 Box 里、且绘制在 NavHost 之后，
     // 作为页面内 composable 的预览无论 fillMaxSize 到哪都被它压住。Popup 挂在窗口装饰层，
     // 绘制层级高于整个窗口内容；返回键交给内容里的 BackHandler，故关掉 popup 自身的返回拦截。
+    // 键盘弹着时别急着开：Popup 不带焦点，创建那一刻的窗口框架按当时的 ime 高度裁掉底部
+    // 一块且之后不补回来，调用方需先收键盘并等 ime 归零（见 [awaitImeSettled]）。
     // excludeFromSystemGesture 必须为 false：Popup 默认把整块弹窗区域登记成系统手势排除区，
     // 而系统对每侧的排除上限只有 200dp，超限时自屏幕底部往上生效——于是边侧上滑在屏幕
     // 下半段（约底部 200dp）被弹窗吃掉，系统返回手势不再触发，表现为「侧滑返回时好时坏」

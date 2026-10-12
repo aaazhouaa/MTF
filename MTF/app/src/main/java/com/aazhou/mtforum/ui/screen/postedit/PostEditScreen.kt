@@ -1,6 +1,5 @@
 package com.aazhou.mtforum.ui.screen.postedit
 
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -88,6 +87,7 @@ import com.aazhou.mtforum.data.model.ThreadType
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.awaitImeSettled
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.screen.threaddetail.AtSuggestionStrip
 import com.aazhou.mtforum.ui.screen.threaddetail.AtUserPickerPage
@@ -99,6 +99,7 @@ import com.aazhou.mtforum.ui.screen.threaddetail.InlineInsertBar
 import com.aazhou.mtforum.ui.screen.threaddetail.InsertKind
 import com.aazhou.mtforum.ui.screen.threaddetail.InsertPanel
 import com.aazhou.mtforum.ui.screen.threaddetail.KeyboardTracker
+import com.aazhou.mtforum.ui.screen.threaddetail.MAX_UPLOAD_IMAGES
 import com.aazhou.mtforum.ui.screen.threaddetail.MinKeyboardHeight
 import com.aazhou.mtforum.ui.screen.threaddetail.STABLE_KEYBOARD_FRAMES
 import com.aazhou.mtforum.ui.screen.threaddetail.SmileyOverlay
@@ -184,6 +185,11 @@ fun PostEditScreen(
     var showAtPicker by remember { mutableStateOf(false) }
     // 正在看大图的附件下标，-1 表示没打开
     var previewImageIndex by remember { mutableIntStateOf(-1) }
+    // 点了缩略图但还没开预览的下标：预览是挂在窗口装饰层的 Popup，键盘还在时创建会按
+    // 当时的 ime 高度把底部裁掉一块，且键盘随后收起也不补回来，故先收键盘再开
+    var pendingPreviewIndex by remember { mutableIntStateOf(-1) }
+    // 开预览前键盘是否弹着：看完大图按原样请回来，用户自己收起的键盘不硬弹
+    var previewRestoreKeyboard by remember { mutableStateOf(false) }
 
     val subjectFocusRequester = remember { FocusRequester() }
     val messageFocusRequester = remember { FocusRequester() }
@@ -239,6 +245,15 @@ fun PostEditScreen(
                 stableFrames = 0
             }
         }
+    }
+
+    // 键盘收起动画走完（ime 归零）才开预览：Popup 不带焦点，创建那一刻的窗口框架按
+    // 当时的 ime 高度裁掉底部一块、之后也不补回来。等不到就按原样开，别把预览卡死
+    LaunchedEffect(pendingPreviewIndex) {
+        if (pendingPreviewIndex < 0) return@LaunchedEffect
+        awaitImeSettled(imeInsets, density)
+        previewImageIndex = pendingPreviewIndex
+        pendingPreviewIndex = -1
     }
 
     LaunchedEffect(state) {
@@ -301,20 +316,23 @@ fun PostEditScreen(
         }
     }
 
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(MAX_UPLOAD_IMAGES),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
         scope.launch {
-            try {
-                val file = prepareUploadFile(context, uri)
-                val aid = viewModel.uploadImageFile(file)
-                if (aid != null) {
-                    viewModel.insertTextAtSelection("[attachimg]$aid[/attachimg]")
-                    AppToast.show("图片上传成功并已插入正文")
-                } else {
-                    AppToast.show("图片上传失败")
-                }
-            } catch (e: Exception) {
-                AppToast.show(e.message ?: "图片处理失败")
+            val aids = viewModel.uploadImages(uris) { uri -> prepareUploadFile(context, uri) }
+            // 标记一次插齐：逐张插会都基于同一份文本，后一张把前一张覆盖掉
+            if (aids.isNotEmpty()) {
+                viewModel.insertTextAtSelection(aids.joinToString("") { "[attachimg]$it[/attachimg]" })
+            }
+            val failed = uris.size - aids.size
+            when {
+                failed == 0 -> AppToast.show(
+                    if (aids.size == 1) "图片上传成功并已插入正文" else "${aids.size} 张图片已插入正文",
+                )
+                aids.isEmpty() -> AppToast.show("上传失败，可能超出大小限制或凭据已过期")
+                else -> AppToast.show("${aids.size} 张已插入，$failed 张上传失败")
             }
         }
     }
@@ -793,7 +811,10 @@ fun PostEditScreen(
                                             modifier = Modifier
                                                 .fillMaxSize()
                                                 .clickable {
-                                                    previewImageIndex = uploadedImages.indexOf(attachment)
+                                                    previewRestoreKeyboard = imeHeight > 0.dp
+                                                    focusManager.clearFocus()
+                                                    keyboard?.hide()
+                                                    pendingPreviewIndex = uploadedImages.indexOf(attachment)
                                                 },
                                         )
 
@@ -891,7 +912,12 @@ fun PostEditScreen(
             ImagePreview(
                 urls = uploadedImages.map { it.imageModel },
                 initialIndex = previewImageIndex.coerceAtMost(uploadedImages.lastIndex),
-                onDismiss = { previewImageIndex = -1 },
+                onDismiss = {
+                    previewImageIndex = -1
+                    // 看大图前收起的键盘请回来：接着写不用再点一下输入框。用户自己收起
+                    // 键盘再看图的（previewRestoreKeyboard 为 false）不硬弹
+                    if (previewRestoreKeyboard) switchToKeyboard()
+                },
             )
         }
     }

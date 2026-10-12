@@ -230,7 +230,9 @@ private fun InfoCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 3.dp)
+            .padding(horizontal = 6.dp)
+            // 与访客主页资料卡同一套顶部几何：24dp 留白 + 头像突出 34dp，两页头部才等高
+            .padding(top = 24.dp, bottom = 3.dp)
             .padding(top = avatarProtrude),
     ) {
         // 卡片主体

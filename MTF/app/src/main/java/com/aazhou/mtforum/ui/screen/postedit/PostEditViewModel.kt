@@ -4,6 +4,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.net.Uri
 import com.aazhou.mtforum.data.model.EditPostPageData
 import com.aazhou.mtforum.data.model.NewThreadPageData
 import com.aazhou.mtforum.data.model.PostDraft
@@ -14,6 +15,7 @@ import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.SmileyStore
 import com.aazhou.mtforum.ui.screen.threaddetail.insertAtSelection
 import com.aazhou.mtforum.ui.screen.threaddetail.normalizeAtMentions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,13 +25,19 @@ import java.io.File
 /** 已上传图片附件 */
 data class UploadedImageAttachment(
     val aid: String,
-    val localFile: File?,
+    /**
+     * 相册里选中的那张原图：缩略图与大图都按它加载。
+     *
+     * 压缩缓存只有一份固定路径（reply_upload.jpg），按它取图会让每一张附件都显示成
+     * 最后插入的那张，故这里只留来源 Uri。
+     */
+    val sourceUri: Uri?,
     val fileName: String,
-    /** 编辑态回填的站上已有附件：没有本地文件，缩略图与预览都走站点地址。 */
+    /** 编辑态回填的站上已有附件：没有本地来源，缩略图与预览都走站点地址。 */
     val remoteUrl: String? = null,
 ) {
-    /** 缩略图与大图共用的加载对象：新上传走本地文件，回填的站上附件走站点地址。 */
-    val imageModel: Any get() = localFile ?: remoteUrl.orEmpty()
+    /** 缩略图与大图共用的加载对象：新上传走相册原图，回填的站上附件走站点地址。 */
+    val imageModel: Any get() = sourceUri ?: remoteUrl.orEmpty()
 }
 
 class PostEditViewModel(
@@ -110,7 +118,7 @@ class PostEditViewModel(
                 _uploadedImages.value = data.attachments.map {
                     UploadedImageAttachment(
                         aid = it.aid,
-                        localFile = null,
+                        sourceUri = null,
                         fileName = it.fileName,
                         remoteUrl = it.url,
                     )
@@ -215,28 +223,46 @@ class PostEditViewModel(
         }
     }
 
-    suspend fun uploadImageFile(file: File): String? {
+    /**
+     * 一次多选时按选择顺序逐张「压缩 → 上传」交替进行，全部结束后交回成功的那几个 aid。
+     *
+     * 压缩产物是同一份固定路径的缓存文件，必须逐张交替：先把所有图压完再上传，后一张
+     * 会把前一张覆盖掉，整批全传成同一张。单张失败不打断整批，剩下的照传。
+     */
+    suspend fun uploadImages(sources: List<Uri>, prepare: suspend (Uri) -> File): List<String> {
         // 发新帖的凭据随发帖页来，编辑态的随编辑页来（两个页面的内联上传配置同款）
         val uid = _initData.value?.uploadUid ?: _editData.value?.uploadUid
         val hash = _initData.value?.uploadHash ?: _editData.value?.uploadHash
         if (uid.isNullOrBlank() || hash.isNullOrBlank()) {
             _state.value = PostState.Error("图片上传凭据未就绪，请稍后重试")
-            return null
+            return emptyList()
         }
         _uploading.value = true
         return try {
-            val aid = repository.uploadReplyImage(file, uid, hash)
-            if (aid != null) {
+            val aids = mutableListOf<String>()
+            for (uri in sources) {
+                val file = try {
+                    prepare(uri)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    continue
+                }
+                val aid = try {
+                    repository.uploadReplyImage(file, uid, hash)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                } ?: continue
                 _uploadedImages.value = _uploadedImages.value + UploadedImageAttachment(
                     aid = aid,
-                    localFile = file,
+                    sourceUri = uri,
                     fileName = file.name,
                 )
+                aids += aid
             }
-            aid
-        } catch (e: Exception) {
-            _state.value = PostState.Error(e.message ?: "图片上传失败")
-            null
+            aids
         } finally {
             _uploading.value = false
         }

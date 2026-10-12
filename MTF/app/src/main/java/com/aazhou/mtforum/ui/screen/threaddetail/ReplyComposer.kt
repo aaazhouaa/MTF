@@ -119,6 +119,7 @@ import com.aazhou.mtforum.data.parser.Smiley
 import com.aazhou.mtforum.data.parser.SmileyPack
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.ImagePreview
+import com.aazhou.mtforum.ui.common.awaitImeSettled
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -179,6 +180,11 @@ internal fun ReplyComposer(
     // 本次会话已传上去的图：缩略图条可点开全屏查看，也能删掉不要的那张
     var uploaded by remember { mutableStateOf<List<UploadedImage>>(emptyList()) }
     var previewUploaded by remember { mutableStateOf(-1) }
+    // 点了缩略图但还没开预览的下标：预览是挂在窗口装饰层的 Popup，键盘还在时创建会按
+    // 当时的 ime 高度把底部裁掉一块，且键盘随后收起也不补回来，故先收键盘再开
+    var pendingPreviewIndex by remember { mutableIntStateOf(-1) }
+    // 开预览前键盘是否弹着：看完大图按原样请回来，用户自己收起的键盘不硬弹
+    var previewRestoreKeyboard by remember { mutableStateOf(false) }
     // 全屏预览的取图顺序：站点已有附件在前，本次上传的在后，两个来源共用一套预览
     val previewModels: List<Any> = existingAttachments.map { it.url } + uploaded.map { it.uri }
 
@@ -347,6 +353,23 @@ internal fun ReplyComposer(
         }
         focusRequester.requestFocus()
         keyboard?.show()
+    }
+
+    // 开预览前先把键盘收干净：Popup 创建那一刻的窗口框架按当时的 ime 高度裁掉底部
+    // 一块，键盘随后收起也不补回来，预览就只剩上半屏、下半截还是输入面板
+    fun openImagePreview(index: Int) {
+        previewRestoreKeyboard = imeHeight > 0.dp
+        focusManager.clearFocus()
+        keyboard?.hide()
+        pendingPreviewIndex = index
+    }
+
+    // 键盘收起动画走完（ime 归零）才开预览：等不到就按原样开，别把预览卡死
+    LaunchedEffect(pendingPreviewIndex) {
+        if (pendingPreviewIndex < 0) return@LaunchedEffect
+        awaitImeSettled(imeInsets, density)
+        previewUploaded = pendingPreviewIndex
+        pendingPreviewIndex = -1
     }
 
     // 表情面板展开时按返回键：直接整体收起输入面板，与点遮罩收起面板同一路子，
@@ -587,7 +610,7 @@ internal fun ReplyComposer(
                         AttachThumb(
                             model = item.url,
                             contentDescription = item.fileName.ifBlank { null },
-                            onPreview = { previewUploaded = index },
+                            onPreview = { openImagePreview(index) },
                             onInsert = {
                                 onValueChange(value.insertAtSelection("[attachimg]${item.aid}[/attachimg]"))
                             },
@@ -600,7 +623,7 @@ internal fun ReplyComposer(
                         AttachThumb(
                             model = item.uri,
                             contentDescription = null,
-                            onPreview = { previewUploaded = existingAttachments.size + index },
+                            onPreview = { openImagePreview(existingAttachments.size + index) },
                             onInsert = {
                                 onValueChange(value.insertAtSelection("[attachimg]${item.aid}[/attachimg]"))
                             },
@@ -764,7 +787,12 @@ internal fun ReplyComposer(
         ImagePreview(
             urls = previewModels,
             initialIndex = previewUploaded,
-            onDismiss = { previewUploaded = -1 },
+            onDismiss = {
+                previewUploaded = -1
+                // 看大图前收起的键盘请回来，接着写不用再点一下输入框；用户自己收起
+                // 键盘再看图的（previewRestoreKeyboard 为 false）不硬弹
+                if (previewRestoreKeyboard) switchToKeyboard()
+            },
         )
     }
 }
@@ -1880,7 +1908,7 @@ private const val MAX_UPLOAD_EDGE = 1500
 private const val MIN_UPLOAD_QUALITY = 15
 
 /** 一次最多选几张：站点对单帖附件数有上限，取一个保守值。 */
-private const val MAX_UPLOAD_IMAGES = 9
+internal const val MAX_UPLOAD_IMAGES = 9
 
 /** 取选中图读取流的重试次数与间隔：provider 重启后再取通常就好了。 */
 private const val OPEN_URI_ATTEMPTS = 3
