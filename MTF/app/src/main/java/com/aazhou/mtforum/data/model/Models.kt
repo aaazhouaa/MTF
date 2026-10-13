@@ -434,6 +434,8 @@ data class FollowUserItem(
     val fansCount: String? = null,
     val followCount: String? = null,
     val isFollowing: Boolean = false,
+    /** 备注名（站点「我的关注」行内备注）；粉丝页不给，为空。 */
+    val remark: String? = null,
 )
 
 /** 关注/粉丝分页数据。 */

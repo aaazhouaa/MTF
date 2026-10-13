@@ -1516,6 +1516,10 @@ object ForumParser {
             val followCount = Regex("""(\d+)\s*关注""").find(txt)?.groupValues?.get(1)
             val hasCancelA = li.selectFirst("a.user_gz[href*=op=del]") != null
             val isFollowing = if (hasCancelA) true else defaultIsFollowing
+            // 备注：行内「备注」链接（op=bkname）旁的 font#followbkame_UID 存备注文本，
+            // 与「备注」链接同 id 前缀但不同 id（fbkname_UID vs followbkame_UID）
+            val remark = li.selectFirst("font[id^=followbkame_]")
+                ?.text()?.trim()?.takeIf { it.isNotEmpty() }
             items.add(
                 FollowUserItem(
                     uid = uid,
@@ -1524,6 +1528,7 @@ object ForumParser {
                     fansCount = fansCount,
                     followCount = followCount,
                     isFollowing = isFollowing,
+                    remark = remark,
                 )
             )
         }

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,6 +23,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -29,6 +31,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -40,16 +44,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -255,6 +265,29 @@ class FollowListViewModel(
         }
     }
 
+    /** 设置备注：成功后把 remark 写回「我的关注」里的该用户，再落盘。 */
+    fun setRemark(type: String, user: FollowUserItem, remark: String) {
+        viewModelScope.launch {
+            val result = runCatching { repository.setFollowRemark(user.uid, "", remark) }
+                .getOrElse { Result.failure(it) }
+            result
+                .onSuccess { msg ->
+                    AppToast.show(msg.ifBlank { "备注成功" })
+                    update(type) { tab ->
+                        tab.copy(
+                            state = UiState.Success(
+                                (_tabStates.value[type]?.state as? UiState.Success)?.data
+                                    ?.map { if (it.uid == user.uid) it.copy(remark = remark) else it }
+                                    ?: emptyList(),
+                            ),
+                        )
+                    }
+                    saveToCache(sessionStore.uid.first(), type)
+                }
+                .onFailure { e -> AppToast.show(e.message ?: "备注失败") }
+        }
+    }
+
     private fun listOf(type: String): List<FollowUserItem> =
         (_tabStates.value[type]?.state as? UiState.Success)?.data ?: emptyList()
 
@@ -300,6 +333,9 @@ fun FollowListScreen(
     // 每页一个列表状态并提升到页面作用域：切 tab 不丢滚动位置，也不重建已翻页的数据
     val listStates = tabs.map { rememberLazyListState() }
     val scope = rememberCoroutineScope()
+
+    // 备注弹窗目标：null 表示未打开
+    var remarkTarget by remember { mutableStateOf<FollowUserItem?>(null) }
 
     // 加载类提示改走全局轻提示
     LaunchedEffect(actionMessage) {
@@ -376,13 +412,26 @@ fun FollowListScreen(
                 refreshing = type in refreshing,
                 listState = listStates[page],
                 emptyText = "暂无${tabs[page].first}用户",
+                showRemark = type == "following",
                 onRetry = { viewModel.retry(type) },
                 onRefresh = { viewModel.refresh(type) },
                 onLoadMore = { viewModel.loadMore(type) },
                 onUserClick = onUserClick,
                 onToggleFollow = { user -> viewModel.toggleFollow(type, user) },
+                onRemark = { user -> remarkTarget = user },
             )
         }
+    }
+
+    remarkTarget?.let { target ->
+        RemarkDialog(
+            target = target,
+            onDismiss = { remarkTarget = null },
+            onConfirm = { remark ->
+                viewModel.setRemark("following", target, remark)
+                remarkTarget = null
+            },
+        )
     }
 }
 
@@ -394,11 +443,13 @@ private fun FollowTab(
     refreshing: Boolean,
     listState: LazyListState,
     emptyText: String,
+    showRemark: Boolean,
     onRetry: () -> Unit,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onUserClick: (String) -> Unit,
     onToggleFollow: (FollowUserItem) -> Unit,
+    onRemark: (FollowUserItem) -> Unit,
 ) {
     when (val current = tab.state) {
         is UiState.Loading -> LoadingBox()
@@ -431,8 +482,10 @@ private fun FollowTab(
                         items(users, key = { it.uid }) { user ->
                             FollowUserCard(
                                 user = user,
+                                showRemark = showRemark,
                                 onClick = { onUserClick(user.uid) },
                                 onToggleFollow = { onToggleFollow(user) },
+                                onRemark = { onRemark(user) },
                             )
                         }
                         if (tab.loadingMore) {
@@ -455,8 +508,10 @@ private fun FollowTab(
 @Composable
 private fun FollowUserCard(
     user: FollowUserItem,
+    showRemark: Boolean,
     onClick: () -> Unit,
     onToggleFollow: () -> Unit,
+    onRemark: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
@@ -487,6 +542,7 @@ private fun FollowUserCard(
                 .dimImageInDark(),
         )
         Spacer(Modifier.width(12.dp))
+        val remark = user.remark?.takeIf { it.isNotBlank() }
         Column(Modifier.weight(1f)) {
             Text(
                 user.username,
@@ -496,6 +552,16 @@ private fun FollowUserCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (remark != null) {
+                Text(
+                    "备注：$remark",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    color = colors.textHint,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
             val stats = listOfNotNull(
                 user.fansCount?.let { "$it 粉丝" },
                 user.followCount?.let { "$it 关注" },
@@ -509,23 +575,171 @@ private fun FollowUserCard(
                 )
             }
         }
-        OutlinedButton(
-            onClick = onToggleFollow,
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = if (user.isFollowing) colors.textSecondary else MaterialTheme.colorScheme.primary,
-            ),
-            border = BorderStroke(
-                1.dp,
-                if (user.isFollowing) colors.divider else MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.6f else 0.4f),
-            ),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        Column(horizontalAlignment = Alignment.End) {
+            OutlinedButton(
+                onClick = onToggleFollow,
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (user.isFollowing) colors.textSecondary else MaterialTheme.colorScheme.primary,
+                ),
+                border = BorderStroke(
+                    1.dp,
+                    if (user.isFollowing) colors.divider else MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.6f else 0.4f),
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    if (user.isFollowing) "已关注" else "+ 关注",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            if (showRemark) {
+                Text(
+                    if (remark != null) "修改备注" else "备注",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    color = colors.textSecondary,
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(onClick = onRemark)
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 设置/修改备注弹窗：输入框预填现有备注，确认后回调新备注。 */
+@Composable
+private fun RemarkDialog(
+    target: FollowUserItem,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var remark by remember { mutableStateOf(target.remark.orEmpty()) }
+    val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val primaryColor = MaterialTheme.colorScheme.primary
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        androidx.compose.material3.Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp)
+                .then(
+                    if (isDark) {
+                        Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(20.dp))
+                    } else {
+                        Modifier
+                    },
+                ),
+            shape = RoundedCornerShape(20.dp),
+            color = colors.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
         ) {
-            Text(
-                if (user.isFollowing) "已关注" else "+ 关注",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 22.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = if (target.remark.isNullOrBlank()) "添加备注" else "修改备注",
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
+                    fontWeight = FontWeight.Bold,
+                    color = bodyTextColor(),
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                Text(
+                    text = "为「${target.username}」设置备注",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                    color = colors.textSecondary,
+                    textAlign = TextAlign.Center,
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = remark,
+                    onValueChange = { if (it.length <= 30) remark = it },
+                    placeholder = {
+                        Text(
+                            "备注名（留空清除备注）",
+                            color = colors.textHint,
+                            fontSize = 14.sp,
+                        )
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = colors.quoteBackground,
+                        unfocusedContainerColor = colors.quoteBackground,
+                        focusedBorderColor = primaryColor,
+                        unfocusedBorderColor = colors.divider,
+                        focusedTextColor = bodyTextColor(),
+                        unfocusedTextColor = bodyTextColor(),
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+
+                Spacer(Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.quoteBackground)
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "取消",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                            fontWeight = FontWeight.Medium,
+                            color = bodyTextColor(),
+                        )
+                    }
+
+                    val btnBg = if (isDark) primaryColor.copy(alpha = 0.22f) else primaryColor
+                    val btnTextColor = if (isDark) primaryColor else Color.White
+                    Button(
+                        onClick = { onConfirm(remark.trim()) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .then(
+                                if (isDark) {
+                                    Modifier.border(1.dp, primaryColor.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = btnBg,
+                            contentColor = btnTextColor,
+                        ),
+                    ) {
+                        Text(
+                            text = "保存",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -919,6 +919,36 @@ class ForumRepository(
             .fold({ it }, { it.message ?: "操作失败，请重试" })
     }
 
+    /**
+     * 设置关注用户的备注名（站点「我的关注」行内备注，op=bkname）。
+     *
+     * 提交接口 POST `spacecp&ac=follow&op=bkname&fuid=UID&editsubmit_btn=true&inajax=1`，
+     * body 带 formhash/editbkname/bkname；[remark] 传空串即清除备注。回执是 inajax XML，
+     * succeedhandle_followbkame_UID 脚本里带「备注成功」。
+     */
+    suspend fun setFollowRemark(uid: String, formhash: String, remark: String): Result<String> =
+        withContext(Dispatchers.IO) {
+            if (uid.isBlank()) return@withContext Result.failure(IllegalStateException("用户不存在"))
+            val fh = formhash.takeIf { it.isNotBlank() } ?: fetchFormhash(FORMHASH_PAGE)
+            if (fh.isBlank()) {
+                return@withContext Result.failure(IllegalStateException("获取操作凭据失败，请重试"))
+            }
+            val url = http.url(
+                "home.php?mod=spacecp&ac=follow&op=bkname&fuid=$uid" +
+                    "&editsubmit_btn=true&handlekey=followbkame_$uid&inajax=1&mobile=2",
+            )
+            val params = mapOf(
+                "formhash" to fh,
+                "editbkname" to "true",
+                "bkname" to remark,
+                "handlekey" to "followbkame_$uid",
+                "editsubmit_btn" to "true",
+            )
+            val referer = http.url("home.php?mod=follow&do=following&mobile=2")
+            val res = http.post(url, params, referer = referer)
+            readWriteResult(res, "备注成功")
+        }
+
     /** 依次抓页面提取 formhash；都取不到返回空串，调用方据此中止写操作。 */
     private suspend fun fetchFormhash(vararg paths: String): String {
         for (path in paths) {
