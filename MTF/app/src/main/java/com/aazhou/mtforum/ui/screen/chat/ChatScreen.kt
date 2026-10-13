@@ -636,7 +636,7 @@ private fun ChatBubbleItem(
                     )
                     .then(
                         if (message.isSelf) {
-                            Modifier.background(primaryColor)
+                            Modifier.background(primaryColor.copy(alpha = 0.69f))
                         } else {
                             Modifier
                                 .then(
