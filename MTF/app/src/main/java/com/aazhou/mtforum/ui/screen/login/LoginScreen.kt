@@ -40,6 +40,8 @@ fun LoginScreen(onBack: () -> Unit, onSuccess: () -> Unit) {
 
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var questionId by remember { mutableStateOf(0) }
+    var answer by remember { mutableStateOf("") }
 
     LaunchedEffect(state) {
         if (state is LoginViewModel.LoginUiState.Success) {
@@ -86,9 +88,16 @@ fun LoginScreen(onBack: () -> Unit, onSuccess: () -> Unit) {
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
             )
+            Spacer(Modifier.height(12.dp))
+            SecurityQuestionField(
+                questionId = questionId,
+                onQuestionIdChange = { questionId = it },
+                answer = answer,
+                onAnswerChange = { answer = it },
+            )
             Spacer(Modifier.height(20.dp))
             Button(
-                onClick = { viewModel.login(username, password) },
+                onClick = { viewModel.login(username, password, questionId, answer) },
                 enabled = state !is LoginViewModel.LoginUiState.Loading,
                 modifier = Modifier.fillMaxWidth(),
             ) {

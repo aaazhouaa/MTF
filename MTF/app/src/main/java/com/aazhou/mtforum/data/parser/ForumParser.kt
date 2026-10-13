@@ -168,6 +168,18 @@ object ForumParser {
     /** 点赞成功标识。 */
     private val RE_LIKE_SUCCESS = Regex("succeedhandle|recommendv|recommendc|点赞成功|评价成功")
 
+    /**
+     * 登录成功的提示词。
+     *
+     * Discuz 的 showmessage「提示信息」页登录成功与失败共用，不能只凭「有没有登录表单」
+     * 判定成败。这里采用正向判据：只有正文明确是登录成功才算成功，其余提示页一律归失败，
+     * 避免登录被拒时落成 success，上层只能笼统报「登录未生效」。
+     */
+    private val LOGIN_SUCCESS_HINT = Regex("登录成功|欢迎您回来|欢迎回来|现在将转入|正在转入")
+
+    /** 提示页里提示句的失败关键词，用于在不假定页面结构时定位站点原话。 */
+    private val TIP_FAILURE_KEYWORD = Regex("密码|验证码|失败|错误|次数|不存在|锁定|禁用|不正确|无效|稍后|请填写|请输入|安全提问")
+
     /** 响应里的提示正文（messagetext 下的 p）。 */
     private val RE_TIP_MESSAGE = Regex("(?s)<p>(.*?)(?:<script|</p>)")
 
@@ -723,15 +735,77 @@ object ForumParser {
     /** 判断登录结果：仍存在登录表单即视为失败。 */
     fun parseLoginResult(html: String): LoginResult {
         val document = doc(html)
+        val captcha = document.selectFirst("img[src*=seccode], img[src*=secqaa]")?.attr("src")
         val stillLoginForm = document.selectFirst("form#loginform") != null
         if (stillLoginForm) {
             val message = document.select("div.comiis_tip, div.alert_error, div.alert_info")
                 .firstOrNull { it.text().isNotBlank() }?.text()?.trim()
-            val captcha = document.selectFirst("img[src*=seccode], img[src*=secqaa]")?.attr("src")
             return LoginResult(success = false, message = message, needsCaptcha = captcha != null, captchaUrl = captcha)
         }
-        return LoginResult(success = true)
+        // showmessage「提示信息」页：登录成功与失败共用此页，没有登录表单不能当成功。
+        // 实测该页 title 固定为「提示信息 - 站点名」，以此识别；命中成功词算成功，其余
+        // （含验证码、密码错、次数过多）归失败并把站点原文回传，否则失败会被误判成功，
+        // 上层只能笼统报「登录未生效」。非提示页（如直接回首页）维持成功，交资料页复核。
+        // 提示页正文很短，容器选择器不命中时会围绕失败关键词取窗口，直接把站点原话回传。
+        if (extractTitle(html)?.contains("提示信息") != true) return LoginResult(success = true)
+        val message = extractTipText(html)
+        val succeeded = message != null && LOGIN_SUCCESS_HINT.containsMatchIn(message)
+        return LoginResult(
+            success = succeeded,
+            message = message ?: "登录失败，请重试",
+            needsCaptcha = captcha != null,
+            captchaUrl = captcha,
+        )
     }
+
+    /** 页面标题，用于识别站点 showmessage「提示信息」结果页。 */
+    fun extractTitle(html: String): String? =
+        Regex("<title>(.*?)</title>", RegexOption.DOT_MATCHES_ALL)
+            .find(html)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
+
+    /**
+     * 站点 showmessage「提示信息」页的正文。
+     *
+     * 移动模板把提示放在 div.comiis_password_top 的 <p> 里（实测：成功页为「欢迎您回来…
+     * 现在将转入…」，失败页为「密码错误次数过多，请 15 分钟后重新登录」）。其余容器
+     * （#messagetext / div.comiis_tip）是桌面/其它模板的写法，兼作兼容。都不命中时退到
+     * 页面可见文本，围绕首个提示关键词取窗口，避免把整页导航文字倒给用户。
+     */
+    fun extractTipText(html: String): String? {
+        val document = doc(html)
+        document.selectFirst("div.comiis_password_top p")?.text()?.trim()
+            ?.ifEmpty { null }?.let { return it }
+        document.selectFirst("#messagetext p, #messagetext")?.text()?.trim()
+            ?.ifEmpty { null }?.let { return it }
+        document.selectFirst("div.comiis_tip p, div.comiis_tip")?.text()?.trim()
+            ?.ifEmpty { null }?.let { return it }
+        val full = messagePageText(html) ?: return null
+        val hit = TIP_FAILURE_KEYWORD.find(full) ?: return full.take(120)
+        val start = (hit.range.first - 30).coerceAtLeast(0)
+        val end = (hit.range.last + 60).coerceAtMost(full.length)
+        return full.substring(start, end).trim()
+    }
+
+    /** 提示页里想要的跳转地址：showmessage 用 JS 延迟跳转，OkHttp 不会跟随。 */
+    fun extractMessageRedirect(html: String): String? =
+        Regex("location\\.href\\s*=\\s*['\"]([^'\"]+)['\"]").find(html)?.groupValues?.get(1)
+
+    /**
+     * 提示页的可见正文（调试用）。
+     *
+     * 站点改过 showmessage 模板，容器选择器不一定命中；这里退到 body 全文，剥掉
+     * script/style 后取可见文本，保证日志里总能拿到站点原话。
+     */
+    fun messagePageText(html: String): String? {
+        val document = doc(html)
+        document.select("script, style, noscript").remove()
+        return document.body()?.text()?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    /** 登录表单里各 input 的 name，用于核对客户端提交是否漏字段。 */
+    fun loginFormFields(html: String): List<String> =
+        doc(html).selectFirst("form#loginform")?.select("input[name]")
+            ?.map { it.attr("name") }?.filter { it.isNotEmpty() } ?: emptyList()
 
     /** 首页（guide&view=hot）：热版推荐 + 热帖排行。 */
     fun parseHome(html: String): HomeData {

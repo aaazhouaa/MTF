@@ -172,7 +172,22 @@ class HttpClient(
         if (!referer.isNullOrEmpty()) builder.header("Referer", referer)
         val request = builder.post(form.build()).build()
         fun execute(): String =
-            client.newCall(request).execute().use { it.body?.string() ?: "" }
+            client.newCall(request).execute().use { response ->
+                // 登录提交的回执要定位「为什么没登上」：看状态码、重定向终址与站点是否下发会话 cookie。
+                // 只记 cookie 名，值里是凭据不能入库。
+                if (url.contains("loginsubmit")) {
+                    val names = response.headers("Set-Cookie")
+                        .map { it.substringBefore('=') }
+                        .joinToString(",")
+                    onLog?.invoke(
+                        LogLevel.INFO,
+                        TAG,
+                        "登录 POST：HTTP ${response.code} 终址=${response.request.url} Set-Cookie=[$names]",
+                        null,
+                    )
+                }
+                response.body?.string() ?: ""
+            }
         var body = execute()
         // 写操作命中 WAF 挑战：本地解出 cookie 后按原请求体重放一次。Discuz 的这几个写操作
         // 都幂等（重复关注/重复拉黑/重复删好友返回的都是提示而非重复生效），重放安全；

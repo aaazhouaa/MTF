@@ -30,7 +30,9 @@ import com.aazhou.mtforum.data.model.FriendUserPage
 import com.aazhou.mtforum.data.model.MyThreadPage
 import com.aazhou.mtforum.data.model.NewThreadPageData
 import com.aazhou.mtforum.data.model.NewThreadResult
+import com.aazhou.mtforum.data.log.LogLevel
 import com.aazhou.mtforum.data.network.HttpClient
+import com.aazhou.mtforum.data.network.WafSolver
 import com.aazhou.mtforum.data.parser.ForumParser
 import com.aazhou.mtforum.data.parser.SmileyPack
 import com.aazhou.mtforum.data.parser.SmileyParser
@@ -43,6 +45,22 @@ import java.io.File
 
 /** 回复未拿到 inajax XML 回执时（整页 HTML）兜底判失败、提示重新登录的提示词。 */
 private val REPLY_ERROR_PATTERN = Regex("抱歉|非法操作|请先登录|需要先登录|没有权限|审核")
+
+/** 登录被拒时的诊断提示词：只用于日志取样，不影响判据。 */
+private val LOGIN_DIAG_HINTS = listOf(
+    "密码错误", "密码不正确", "密码为空", "用户名不存在", "账号不存在", "该用户不存在",
+    "需要验证码", "请填写验证码", "验证码错误", "请输入验证码", "seccode",
+    "失败次数", "次数过多", "请稍后再试", "请稍后重试", "锁定", "安全提问", "answer",
+)
+
+/** 取原始 HTML 里关键词周围的片段，供诊断日志定位提示页结构。 */
+private fun rawSnippet(body: String, key: String, radius: Int = 250): String? {
+    val i = body.indexOf(key)
+    if (i < 0) return null
+    val start = (i - radius).coerceAtLeast(0)
+    val end = (i + radius).coerceAtMost(body.length)
+    return body.substring(start, end)
+}
 
 /** 点赞/收藏失败提示词。 */
 private val LIKE_ERROR_PATTERN = Regex(
@@ -528,7 +546,10 @@ class ForumRepository(
      * 头像、统计与积分，只有昵称/uid 这类每个页面都有的 JS 变量。
      */
     suspend fun me(): UserProfile = withContext(Dispatchers.IO) {
-        ForumParser.parseUserProfile(http.get(http.url("home.php?mod=space&do=profile&mobile=2")))
+        val body = http.get(http.url("home.php?mod=space&do=profile&mobile=2"))
+        val profile = ForumParser.parseUserProfile(body)
+        logMeResponse(body, profile)
+        profile
     }
 
     /**
@@ -820,11 +841,25 @@ class ForumRepository(
     }
 
     /** 登录：先取登录页的 hash，再提交凭据。 */
-    suspend fun login(username: String, password: String): LoginResult = withContext(Dispatchers.IO) {
+    suspend fun login(
+        username: String,
+        password: String,
+        questionId: Int = 0,
+        answer: String = "",
+    ): LoginResult = withContext(Dispatchers.IO) {
         val loginPage = http.get(http.url("member.php?mod=logging&action=login&mobile=2"))
         val loginhash = ForumParser.extractLoginHash(loginPage)
-            ?: return@withContext LoginResult(false, "无法获取登录令牌（可能被风控拦截）")
         val formhash = ForumParser.extractLoginFormhash(loginPage) ?: ""
+        http.onLog?.invoke(
+            LogLevel.INFO,
+            "Login",
+            "登录页：len=${loginPage.length} loginhash=${loginhash != null} " +
+                "formhash=${formhash.isNotEmpty()} 登录表单=${loginPage.contains("loginform")} " +
+                "挑战页=${WafSolver.looksLikeChallenge(loginPage)} " +
+                "表单字段=[${ForumParser.loginFormFields(loginPage).joinToString(",")}]",
+            null,
+        )
+        if (loginhash == null) return@withContext LoginResult(false, "无法获取登录令牌（可能被风控拦截）")
         val result = http.post(
             http.url("member.php?mod=logging&action=login&loginsubmit=yes&loginhash=$loginhash"),
             mapOf(
@@ -834,11 +869,60 @@ class ForumRepository(
                 "cookietime" to "31104000",
                 "username" to username,
                 "password" to password,
+                "questionid" to questionId.toString(),
+                "answer" to answer,
                 "submit" to "true",
             ),
             referer = http.url("member.php?mod=logging&action=login&mobile=2"),
         )
-        ForumParser.parseLoginResult(result)
+        val parsed = ForumParser.parseLoginResult(result)
+        logLoginResponse(result, parsed)
+        parsed
+    }
+
+    /**
+     * 记录登录提交返回页面的特征，供复现时定位到底是哪一类响应。
+     *
+     * 站点拒绝登录（密码错、需验证码、失败次数锁定）返回的是 showmessage 提示页，
+     * 页面上没有登录表单；只按「还有没有 form#loginform」判断会把这类拒绝当作成功，
+     * 上游于是报「登录未生效」。这里把提示页/验证码/文案与提交后手里的 cookie 名
+     * 一并记下来，区分「没登上」与「登上了但后续 URL 不认会话」两类。
+     */
+    private fun logLoginResponse(body: String, parsed: LoginResult) {
+        val cookieNames = http.cookieStore.cookies(http.host).joinToString(",") { it.name }
+        val title = Regex("<title>(.*?)</title>", RegexOption.DOT_MATCHES_ALL)
+            .find(body)?.groupValues?.get(1)?.trim()
+        val tip = ForumParser.extractTipText(body)
+        val redirect = ForumParser.extractMessageRedirect(body)
+        // Discuz 的登录 cookie 名形如 <cookiepre>auth；站点另有 <cookiepre>invite_auth，
+        // 也以 _auth 结尾，需排除，否则游客请求会被误记成已下登录 cookie。
+        val hasAuthCookie = cookieNames.split(',').any { it.endsWith("_auth") && !it.endsWith("invite_auth") }
+        // 提示页容器选择器不保证命中，靠已知提示词扫描兜底，保证日志里能看到拒绝原因。
+        val hints = LOGIN_DIAG_HINTS.filter { body.contains(it) }
+        val anchor = if (body.contains("messagetext")) "messagetext" else hints.firstOrNull()
+        val snippet = anchor?.let { rawSnippet(body, it) }
+        http.onLog?.invoke(
+            LogLevel.INFO,
+            "Login",
+            "登录响应：len=${body.length} title=$title 结果=success:${parsed.success} msg=${parsed.message} " +
+                "提示正文=$tip 跳转=$redirect 有authCookie=$hasAuthCookie 命中提示词=$hints",
+            null,
+        )
+        if (snippet != null) http.onLog?.invoke(LogLevel.INFO, "Login", "提示页片段：$snippet", null)
+    }
+
+    /** 拉取当前用户资料前后的自检：未登录时记下页面特征与 cookie，定位会话是否被站点接受。 */
+    private fun logMeResponse(body: String, profile: UserProfile) {
+        if (profile.isLoggedIn) return
+        val discuzUid = Regex("discuz_uid\\s*=\\s*'(\\d+)'").find(body)?.groupValues?.get(1)
+        val cookieNames = http.cookieStore.cookies(http.host).joinToString(",") { it.name }
+        http.onLog?.invoke(
+            LogLevel.WARN,
+            "Login",
+            "资料页未登录：len=${body.length} uid=${profile.uid} discuz_uid=$discuzUid " +
+                "登录表单=${body.contains("loginform")} cookie=[$cookieNames]",
+            null,
+        )
     }
 
     /** 获取移动端签到页面状态（是否已签、formhash）。严格单次只读请求。 */

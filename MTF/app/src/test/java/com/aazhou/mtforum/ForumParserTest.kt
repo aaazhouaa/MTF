@@ -1627,4 +1627,61 @@ class ForumParserTest {
             blocks.filterIsInstance<ContentBlock.ImageGroup>().single().urls,
         )
     }
+
+    /**
+     * 登录失败提示页（实测 2026-10-14，站点按 IP 记的失败次数锁定）。
+     *
+     * 提示正文在 div.comiis_password_top 的 <p> 里；页面上没有 form#loginform，
+     * 也没有 #messagetext / div.comiis_tip，旧实现因此取不到文案、还把失败判成成功。
+     */
+    private val loginFailureHtml = """
+        <html><head><title>提示信息 - MT论坛</title></head><body id="member">
+        <div class="comiis_bodybox"><div class="comiis_password_top">
+            <div class="comiis_password_ico"><i class="comiis_font f_e"></i></div>
+            <p class="f_c">密码错误次数过多，请 15 分钟后重新登录</p>
+        </div></div>
+        <script type="text/javascript">setTimeout(function(){ window.location.href = 'https://bbs.binmt.cc/member.php?mod=logging&action=login&mobile=2'; }, 3000);</script>
+        </body></html>
+    """.trimIndent()
+
+    /** 登录成功提示页（实测站点的「欢迎您回来…现在将转入…」文案）。 */
+    private val loginSuccessHtml = """
+        <html><head><title>提示信息 - MT论坛</title></head><body id="member">
+        <div class="comiis_bodybox"><div class="comiis_password_top">
+            <p class="f_c">欢迎您回来，初中生 username123，现在将转入登录前页面</p>
+        </div></div>
+        <script>setTimeout(function(){ window.location.href = 'https://bbs.binmt.cc/forum.php?mod=guide&view=hot&mobile=2'; }, 1000);</script>
+        </body></html>
+    """.trimIndent()
+
+    @Test
+    fun readsLoginFailureTip() {
+        assertEquals(
+            "密码错误次数过多，请 15 分钟后重新登录",
+            ForumParser.extractTipText(loginFailureHtml),
+        )
+    }
+
+    @Test
+    fun marksLoginFailurePageAsFailed() {
+        val result = ForumParser.parseLoginResult(loginFailureHtml)
+        assertEquals(false, result.success)
+        assertEquals("密码错误次数过多，请 15 分钟后重新登录", result.message)
+    }
+
+    @Test
+    fun marksLoginSuccessPageAsSucceeded() {
+        val result = ForumParser.parseLoginResult(loginSuccessHtml)
+        assertEquals(true, result.success)
+    }
+
+    @Test
+    fun stillTreatsRemainingLoginFormAsFailure() {
+        val html = "<html><head><title>登录 - MT论坛</title></head><body>" +
+            "<div class=\"comiis_tip\">密码错误，请重新输入</div>" +
+            "<form id=\"loginform\"></form></body></html>"
+        val result = ForumParser.parseLoginResult(html)
+        assertEquals(false, result.success)
+        assertEquals("密码错误，请重新输入", result.message)
+    }
 }

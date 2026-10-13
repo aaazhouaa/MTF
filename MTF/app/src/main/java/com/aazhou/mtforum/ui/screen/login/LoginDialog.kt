@@ -72,6 +72,8 @@ fun LoginDialog(
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
+    var questionId by remember { mutableStateOf(0) }
+    var answer by remember { mutableStateOf("") }
 
     LaunchedEffect(state) {
         if (state is LoginViewModel.LoginUiState.Success) {
@@ -86,7 +88,7 @@ fun LoginDialog(
     val doLogin = {
         if (!isLoading) {
             focusManager.clearFocus()
-            viewModel.login(username, password)
+            viewModel.login(username, password, questionId, answer)
         }
     }
 
@@ -196,6 +198,25 @@ fun LoginDialog(
                         unfocusedContainerColor = colors.background,
                     ),
                     modifier = Modifier.fillMaxWidth(),
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                SecurityQuestionField(
+                    questionId = questionId,
+                    onQuestionIdChange = {
+                        questionId = it
+                        if (errorMessage != null) viewModel.reset()
+                    },
+                    answer = answer,
+                    onAnswerChange = {
+                        answer = it
+                        if (errorMessage != null) viewModel.reset()
+                    },
+                    textColor = bodyTextColor(),
+                    hintColor = colors.textHint,
+                    borderColor = colors.divider,
+                    containerColor = colors.background,
                 )
 
                 // 错误信息展示条
