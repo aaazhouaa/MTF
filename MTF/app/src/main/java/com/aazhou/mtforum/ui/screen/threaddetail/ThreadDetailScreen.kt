@@ -116,6 +116,7 @@ import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.image.ImageAspectCache
 import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.PostContent
+import com.aazhou.mtforum.ui.common.saveAttachment
 import com.aazhou.mtforum.ui.common.saveThreadDownload
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.VideoPlayerScreen
@@ -453,6 +454,13 @@ fun ThreadDetailScreen(
     }
 
     val todo: (String) -> Unit = { msg -> AppToast.show(msg) }
+    // 附件下载：走 MediaStore 流式落盘到「下载/MTF」，保留站点原始文件名
+    val downloadAttachment: (String, String) -> Unit = { fileName, url ->
+        scope.launch {
+            val saved = withContext(Dispatchers.IO) { saveAttachment(context, fileName, url) != null }
+            AppToast.show(if (saved) "已下载：$fileName" else "下载失败，请稍后再试")
+        }
+    }
     // 未登录时互动入口只弹提示：不发请求、不开弹窗、不改状态
     val requireLogin: (String) -> Boolean = { hint ->
         if (loggedIn) {
@@ -677,6 +685,7 @@ fun ThreadDetailScreen(
                                                 onUserClick,
                                             )
                                         },
+                                        onAttachmentClick = downloadAttachment,
                                     )
                                 }
                             }
@@ -738,6 +747,7 @@ fun ThreadDetailScreen(
                                     pageImages = pageImages,
                                     onLongPress = { actionTarget = it },
                                     onThreadClick = onThreadClick,
+                                    onAttachmentClick = downloadAttachment,
                                 )
                             }
                             item(key = "pager") {
@@ -1553,6 +1563,7 @@ internal fun DetailHeader(
     pageImages: List<String>,
     onUnlock: () -> Unit,
     onLinkClick: ((url: String) -> Unit)? = null,
+    onAttachmentClick: ((fileName: String, url: String) -> Unit)? = null,
 ) {
     val colors = LocalMtfColors.current
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -1614,6 +1625,7 @@ internal fun DetailHeader(
             bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 24.sp),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             onLinkClick = onLinkClick,
+            onAttachmentClick = onAttachmentClick,
         )
         if (post.hasHiddenContent) {
             HiddenContentCard(onUnlock = onUnlock)
@@ -1805,6 +1817,7 @@ internal fun ReplyBlock(
     pageImages: List<String>,
     onLongPress: (Post) -> Unit,
     onThreadClick: (String) -> Unit,
+    onAttachmentClick: ((fileName: String, url: String) -> Unit)? = null,
 ) {
     val colors = LocalMtfColors.current
     val context = LocalContext.current
@@ -1883,6 +1896,7 @@ internal fun ReplyBlock(
                     onLinkClick = { url ->
                         openForumLink(context, url, siteHost, onThreadClick, onUserClick)
                     },
+                    onAttachmentClick = onAttachmentClick,
                     selectable = false,
                 )
             }

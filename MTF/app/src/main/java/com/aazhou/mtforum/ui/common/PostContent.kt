@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.LinkInteractionListener
@@ -86,7 +87,7 @@ import com.aazhou.mtforum.ui.theme.MtfColors
 /** 行内表情的显示尺寸，与正文行高匹配。 */
 private val SmileySize = 20.sp
 
-/** 渲染帖子正文，图文按原顺序展示；图片/视频/链接点击回调交给上层处理。 */
+/** 渲染帖子正文，图文按原顺序展示；图片/视频/链接/附件点击回调交给上层处理。 */
 @Composable
 fun PostContent(
     html: String,
@@ -95,6 +96,8 @@ fun PostContent(
     onVideoClick: ((url: String) -> Unit)? = null,
     /** 正文链接点击：站内帖子链接交由上层跳到原生详情页，其余走系统浏览器。 */
     onLinkClick: ((url: String) -> Unit)? = null,
+    /** 附件下载框点击：交由上层处理（下载并落盘）。 */
+    onAttachmentClick: ((fileName: String, url: String) -> Unit)? = null,
     pageImages: List<String> = emptyList(),
     bodyStyle: TextStyle = MaterialTheme.typography.bodyMedium,
     modifier: Modifier = Modifier,
@@ -108,10 +111,10 @@ fun PostContent(
 ) {
     if (selectable) {
         SelectionContainer {
-            PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier)
+            PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, onAttachmentClick, pageImages, bodyStyle, modifier)
         }
     } else {
-        PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, pageImages, bodyStyle, modifier)
+        PostContentBody(html, quote, onImageClick, onVideoClick, onLinkClick, onAttachmentClick, pageImages, bodyStyle, modifier)
     }
 }
 
@@ -122,6 +125,7 @@ private fun PostContentBody(
     onImageClick: ((urls: List<String>, index: Int) -> Unit)?,
     onVideoClick: ((url: String) -> Unit)?,
     onLinkClick: ((url: String) -> Unit)?,
+    onAttachmentClick: ((fileName: String, url: String) -> Unit)?,
     pageImages: List<String>,
     bodyStyle: TextStyle,
     modifier: Modifier,
@@ -204,6 +208,10 @@ private fun PostContentBody(
                     url = block.url,
                     poster = block.poster,
                     onPlay = onVideoClick?.let { click -> { click(block.url) } },
+                )
+                is ContentBlock.Attachment -> PostAttachment(
+                    block = block,
+                    onClick = onAttachmentClick,
                 )
                 is ContentBlock.Table -> PostTable(block, bodyStyle)
                 is ContentBlock.CodeBlock -> PostCodeBlock(block, bodyStyle)
@@ -636,6 +644,65 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
                 repeat(columns - row.size) {
                     Spacer(Modifier.weight(1f))
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 正文附件下载卡片：文件图标 + 文件名 + 大小/积分说明，点击后由上层下载。
+ * 还原网页端 div.comiis_attach 的「文件」形态。
+ */
+@Composable
+private fun PostAttachment(
+    block: ContentBlock.Attachment,
+    onClick: ((fileName: String, url: String) -> Unit)?,
+) {
+    val colors = LocalMtfColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(colors.quoteBackground)
+            .border(1.dp, colors.divider, RoundedCornerShape(8.dp))
+            .then(if (onClick != null) Modifier.clickable { onClick(block.fileName, block.url) } else Modifier)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+        ) {
+            Icon(
+                painter = painterResource(com.aazhou.mtforum.R.drawable.ic_download),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = block.fileName,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                fontWeight = FontWeight.Medium,
+                color = bodyTextColor(),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!block.sizeText.isNullOrBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = block.sizeText,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

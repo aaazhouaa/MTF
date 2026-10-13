@@ -124,6 +124,50 @@ internal fun saveVideoToGallery(context: Context, url: String): Uri? {
     return uri
 }
 
+/**
+ * 把论坛附件流式下载到「下载/MTF」目录；保留站点给的原始文件名（可能已改后缀）。
+ *
+ * 附件接口 forum.php?mod=attachment 会触发 CDN 限频，须带 UA / 会话 Cookie / Referer，
+ * 故与视频同走 [copyToUri]（内部用 forumMediaClient）。返回 null 表示失败。
+ */
+internal fun saveAttachment(context: Context, fileName: String, url: String): Uri? {
+    val resolver = context.contentResolver
+    val values = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+        put(MediaStore.MediaColumns.MIME_TYPE, attachmentMimeOf(fileName))
+        put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/MTF")
+        put(MediaStore.MediaColumns.IS_PENDING, 1)
+    }
+    val uri = resolver.insert(MediaStore.Files.getContentUri("external"), values) ?: return null
+    val ok = try {
+        copyToUri(context, url, uri)
+    } catch (_: Exception) {
+        false
+    }
+    if (!ok) {
+        resolver.delete(uri, null, null)
+        return null
+    }
+    values.clear()
+    values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+    resolver.update(uri, values, null, null)
+    return uri
+}
+
+/** 附件 mime 按文件名扩展名判断；未知类型兜底为二进制。 */
+private fun attachmentMimeOf(fileName: String): String = when {
+    fileName.endsWith(".png", true) -> "image/png"
+    fileName.endsWith(".jpg", true) || fileName.endsWith(".jpeg", true) -> "image/jpeg"
+    fileName.endsWith(".gif", true) -> "image/gif"
+    fileName.endsWith(".webp", true) -> "image/webp"
+    fileName.endsWith(".mp4", true) -> "video/mp4"
+    fileName.endsWith(".apk", true) -> "application/vnd.android.package-archive"
+    fileName.endsWith(".zip", true) -> "application/zip"
+    fileName.endsWith(".txt", true) -> "text/plain"
+    fileName.endsWith(".pdf", true) -> "application/pdf"
+    else -> "application/octet-stream"
+}
+
 /** 把媒体字节流拷进已插入的相册项；带 UA / 会话 Cookie / Referer，附件 CDN 才放行。 */
 private fun copyToUri(context: Context, url: String, uri: Uri): Boolean {
     val httpClient = context.container().httpClient

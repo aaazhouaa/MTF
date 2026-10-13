@@ -50,6 +50,16 @@ sealed interface ContentBlock {
      * 渲染时另起等宽字体卡片，不当成带序号的普通列表。
      */
     data class CodeBlock(val lines: List<String>) : ContentBlock
+
+    /**
+     * 正文附件下载框（div.comiis_attach）：文件名、下载链接与大小/积分说明。
+     * 渲染成可下载卡片，还原网页端「文件」形态而非正文图片。
+     */
+    data class Attachment(
+        val fileName: String,
+        val url: String,
+        val sizeText: String?,
+    ) : ContentBlock
 }
 
 /**
@@ -429,6 +439,13 @@ private fun quoteBodyText(element: Element): String {
             if (quote.isNotEmpty()) blocks.add(ContentBlock.Quote(quote))
             return
         }
+        // 附件下载框整体是一块「文件」，不能按普通 div 展开——里面的 filetype 小图标
+        // 会被当成正文大图，文件名/大小也被拆成散文本
+        if (element.hasClass("comiis_attach")) {
+            flushText()
+            parseAttachment(element)?.let { blocks.add(it) }
+            return
+        }
         if (element.hasClass("comiis_blockcode") || element.tagName() == "pre") {
             flushText()
             codeLinesOf(element)?.let { blocks.add(ContentBlock.CodeBlock(it)) }
@@ -585,6 +602,22 @@ private fun quoteBodyText(element: Element): String {
         }
     }
 
+    /**
+     * 解析附件下载框：取下载链接、文件名与大小/积分说明。
+     * 链接或文件名缺失时不产出块（按普通内容处理）。
+     */
+    private fun parseAttachment(element: Element): ContentBlock.Attachment? {
+        val link = element.selectFirst("a[href]") ?: return null
+        val url = link.attr("href").trim()
+        val fileName = link.selectFirst("span.f_ok")?.text()?.trim().orEmpty()
+        if (url.isEmpty() || fileName.isEmpty()) return null
+        return ContentBlock.Attachment(
+            fileName = fileName,
+            url = normalizeMediaUrl(url),
+            sizeText = link.selectFirst("p.attach_size")?.text()?.trim()?.ifBlank { null },
+        )
+    }
+
     private fun buildTable(element: Element): ContentBlock.Table? {
         val trs = element.select("tr")
         val rows = trs.map { tr ->
@@ -703,7 +736,7 @@ internal fun imageUrl(img: Element): String? {
         "data-file", "data-lazy-src", "src",
     )
         .map { img.attr(it) }
-        .firstOrNull { it.isNotBlank() && !isPlaceholderImage(it) }
+        .firstOrNull { it.isNotBlank() && !isPlaceholderImage(it) && !isFileTypeIcon(it) }
         ?: return null
     return normalizeMediaUrl(raw)
 }
@@ -727,6 +760,10 @@ private fun isPlaceholderImage(url: String): Boolean {
     return "none.gif" in lower || "none.png" in lower ||
         "blank.gif" in lower || "imageloading" in lower
 }
+
+/** 文件类型小图标（附件框左侧 text.gif 等）不是正文内容，不作为图片渲染。 */
+private fun isFileTypeIcon(url: String): Boolean =
+    "/static/image/filetype/" in url.lowercase()
 
 /**
  * 视频直链判定的集中入口：附件后缀（带 query 也认）。
