@@ -520,7 +520,7 @@ fun ThreadDetailScreen(
                     showMore = true,
                     downloadBusy = downloadBusy,
                     onBack = onBack,
-                    onFollow = { viewModel.toggleFollow() },
+                    onFollow = { if (requireLogin(LOGIN_HINT_FOLLOW)) viewModel.toggleFollow() },
                     onReport = reportThread,
                     onReward = rewardThread,
                     onDownload = onDownload,
@@ -987,6 +987,7 @@ private const val LOGIN_HINT_LIKE = "嗯?暂无点赞资格"
 private const val LOGIN_HINT_FAVORITE = "我说收藏成功了你信吗?"
 private const val LOGIN_HINT_REPORT = "666你是有操作的"
 private const val LOGIN_HINT_REWARD = "tui~啥也不是!"
+private const val LOGIN_HINT_FOLLOW = "你干啥嘞？"
 
 /** 未登录提示的停留时长。 */
 private const val LOGIN_HINT_DURATION_MS = 2000L

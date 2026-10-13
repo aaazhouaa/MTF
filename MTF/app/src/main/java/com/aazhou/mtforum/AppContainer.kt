@@ -2,6 +2,7 @@ package com.aazhou.mtforum
 
 import android.app.Application
 import android.content.Context
+import android.webkit.CookieManager
 import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.download.ThreadArchiveStore
 import com.aazhou.mtforum.data.log.AppLogger
@@ -202,6 +203,8 @@ class AppContainer(application: Application) {
 
     fun logout() {
         httpClient.cookieStore.clear()
+        // WebView（人机验证/登录）里的 cookie 也在站点域下，退登一并清掉，避免残留会话
+        CookieManager.getInstance().removeAllCookies(null)
         _currentUser.value = null
         logger.info("Session", "已退出登录")
         NoticePollWorker.cancel(appContext)
