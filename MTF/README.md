@@ -50,6 +50,13 @@ MTF 是一款 [MT 论坛](https://bbs.binmt.cc/)（bbs.binmt.cc）的第三方 A
 
 > Release 签名：若仓库外的 `.secrets/mtf/keystore.properties` 存在则使用正式签名，否则回退为 debug 签名，便于直接安装测试。
 
+## 底层机制
+
+- **`ContentCache` 磁盘快照缓存**：TTL 过期 + 128MB 容量上限淘汰（先清过期、再按最旧删除），写入走「临时文件 + rename」原子替换，坏文件静默降级为「无缓存」走网络路径。
+- **`RateLimiter` 请求节流**：保证两次请求间隔不小于 400ms；命中 514 / 403 / 429 时退避 3 秒，静态资源可过滤放行。
+- **`WafSolver` WAF 本地求解**：在原生 HTTP 层复现站点阿里云 ESA 的 `acw_sc__v2` JS 挑战算法（40 项置换表 + XOR），无需 WebView；失败时降级到 WebView 真人验证兜底。
+- **`NoticePollWorker` 后台轮询**：论坛无推送服务端，用 WorkManager 每 15 分钟拉一次提醒，来新消息发系统通知；进应用时额外即时查一次。
+
 ## 项目结构
 
 ```
