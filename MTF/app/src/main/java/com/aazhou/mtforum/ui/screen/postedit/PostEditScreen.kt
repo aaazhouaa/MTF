@@ -97,6 +97,8 @@ import com.aazhou.mtforum.ui.screen.threaddetail.ComposerSubBarHeight
 import com.aazhou.mtforum.ui.screen.threaddetail.ComposerToolButton
 import com.aazhou.mtforum.ui.screen.threaddetail.DefaultSmileyCodes
 import com.aazhou.mtforum.ui.screen.threaddetail.InlineInsertBar
+import com.aazhou.mtforum.ui.screen.threaddetail.HideInsertBar
+import com.aazhou.mtforum.ui.screen.threaddetail.buildHideTag
 import com.aazhou.mtforum.ui.screen.threaddetail.InsertKind
 import com.aazhou.mtforum.ui.screen.threaddetail.InsertPanel
 import com.aazhou.mtforum.ui.screen.threaddetail.KeyboardTracker
@@ -185,6 +187,9 @@ fun PostEditScreen(
     var activeInsertKind by remember { mutableStateOf<InsertKind?>(null) }
     var inlineUrlInput by remember { mutableStateOf("") }
     var inlineTitleInput by remember { mutableStateOf("") }
+    var hideContentInput by remember { mutableStateOf("") }
+    var hideCreditsInput by remember { mutableStateOf("") }
+    var hideDaysInput by remember { mutableStateOf("") }
     var showAtPicker by remember { mutableStateOf(false) }
     // 正在看大图的附件下标，-1 表示没打开
     var previewImageIndex by remember { mutableIntStateOf(-1) }
@@ -489,7 +494,31 @@ fun PostEditScreen(
 
                     // 工具栏下方的内容区：就地内联插入条 / 插入面板
                     val currentInsert = activeInsertKind
-                    if (currentInsert != null) {
+                    if (currentInsert == InsertKind.Hide) {
+                        HideInsertBar(
+                            contentInput = hideContentInput,
+                            creditsInput = hideCreditsInput,
+                            daysInput = hideDaysInput,
+                            onContentChange = { hideContentInput = it },
+                            onCreditsChange = { hideCreditsInput = it },
+                            onDaysChange = { hideDaysInput = it },
+                            onDismiss = {
+                                activeInsertKind = null
+                                messageFocusRequester.requestFocus()
+                                keyboard?.show()
+                            },
+                            onConfirm = {
+                                val tag = buildHideTag(hideContentInput, hideCreditsInput, hideDaysInput)
+                                viewModel.insertTextAtSelection(tag)
+                                hideContentInput = ""
+                                hideCreditsInput = ""
+                                hideDaysInput = ""
+                                activeInsertKind = null
+                                messageFocusRequester.requestFocus()
+                                keyboard?.show()
+                            },
+                        )
+                    } else if (currentInsert != null) {
                         InlineInsertBar(
                             kind = currentInsert,
                             urlInput = inlineUrlInput,
@@ -519,6 +548,7 @@ fun PostEditScreen(
                                     InsertKind.Flash -> "[flash]${inlineUrlInput.trim()}[/flash]"
                                     InsertKind.Quote -> "[quote]${inlineUrlInput.trim()}[/quote]"
                                     InsertKind.Code -> "[code]${inlineUrlInput.trim()}[/code]"
+                                    InsertKind.Hide -> ""
                                 }
                                 viewModel.insertTextAtSelection(tag)
                                 inlineUrlInput = ""
@@ -562,6 +592,11 @@ fun PostEditScreen(
                                 } else {
                                     inlineUrlInput = selected
                                     inlineTitleInput = ""
+                                    if (kind == InsertKind.Hide) {
+                                        hideContentInput = selected
+                                        hideCreditsInput = ""
+                                        hideDaysInput = ""
+                                    }
                                     activeInsertKind = kind
                                     panel = PostComposerPanel.None
                                 }

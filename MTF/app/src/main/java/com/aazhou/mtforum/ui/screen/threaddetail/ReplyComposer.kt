@@ -254,6 +254,9 @@ internal fun ReplyComposer(
     var activeInsertKind by remember { mutableStateOf<InsertKind?>(null) }
     var inlineUrlInput by remember { mutableStateOf("") }
     var inlineTitleInput by remember { mutableStateOf("") }
+    var hideContentInput by remember { mutableStateOf("") }
+    var hideCreditsInput by remember { mutableStateOf("") }
+    var hideDaysInput by remember { mutableStateOf("") }
     var pendingSelection by remember { mutableStateOf<TextRange?>(null) }
 
     val smileyByCode = remember(smileyPacks) {
@@ -680,7 +683,35 @@ internal fun ReplyComposer(
             // 3. 正常打字（None）：显示 8 个快捷表情行
             // 4. 打开大表情面板（Smiley）：不显示快捷行，避免上下重复
             val currentInsert = activeInsertKind
-            if (currentInsert != null) {
+            if (currentInsert == InsertKind.Hide) {
+                HideInsertBar(
+                    contentInput = hideContentInput,
+                    creditsInput = hideCreditsInput,
+                    daysInput = hideDaysInput,
+                    onContentChange = { hideContentInput = it },
+                    onCreditsChange = { hideCreditsInput = it },
+                    onDaysChange = { hideDaysInput = it },
+                    onDismiss = {
+                        activeInsertKind = null
+                        focusRequester.requestFocus()
+                        keyboard?.show()
+                    },
+                    onConfirm = {
+                        val inserted = buildHideTag(hideContentInput, hideCreditsInput, hideDaysInput)
+                        val targetRange = pendingSelection ?: value.selection
+                        val start = min(targetRange.min, targetRange.max).coerceIn(0, value.text.length)
+                        val end = max(targetRange.min, targetRange.max).coerceIn(0, value.text.length)
+                        val merged = value.text.substring(0, start) + inserted + value.text.substring(end)
+                        val cursor = start + inserted.length
+                        onValueChange(value.copy(text = merged, selection = TextRange(cursor)))
+                        pendingSelection = null
+                        activeInsertKind = null
+                        focusRequester.requestFocus()
+                        keyboard?.show()
+                    },
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            } else if (currentInsert != null) {
                 InlineInsertBar(
                     kind = currentInsert,
                     urlInput = inlineUrlInput,
@@ -709,6 +740,7 @@ internal fun ReplyComposer(
                             InsertKind.Flash -> "[flash]${inlineUrlInput.trim()}[/flash]"
                             InsertKind.Quote -> "[quote]${inlineUrlInput.trim()}[/quote]"
                             InsertKind.Code -> "[code]${inlineUrlInput.trim()}[/code]"
+                            InsertKind.Hide -> ""
                         }
                         val targetRange = pendingSelection ?: value.selection
                         val start = min(targetRange.min, targetRange.max).coerceIn(0, value.text.length)
@@ -755,6 +787,11 @@ internal fun ReplyComposer(
                             activeInsertKind = kind
                             inlineUrlInput = ""
                             inlineTitleInput = selected
+                            if (kind == InsertKind.Hide) {
+                                hideContentInput = selected
+                                hideCreditsInput = ""
+                                hideDaysInput = ""
+                            }
                             pendingSelection = value.selection
                             panel = ComposerPanel.None
                         }
@@ -1009,7 +1046,19 @@ internal fun formatRichComposerText(
             )
         }
 
-        // 9. 多媒体标签弱化：[img]、[audio]、[media]、[flash]、[attachimg]
+        // 9. 隐藏内容富文本：[hide]...[/hide]（可带 =积分 / =d天数,积分 属性）
+        val hideRegex = Regex("""(\[hide(?:=[^\]]*)?\])([\s\S]*?)(\[/hide\])""", RegexOption.IGNORE_CASE)
+        for (match in hideRegex.findAll(source)) {
+            styleTagPair(
+                entireRange = match.range,
+                openRange = match.groups[1]!!.range,
+                closeRange = match.groups[3]!!.range,
+                contentRange = match.groups[2]!!.range,
+                contentStyle = SpanStyle(color = colors.textSecondary),
+            )
+        }
+
+        // 10. 多媒体标签弱化：[img]、[audio]、[media]、[flash]、[attachimg]
         val mediaRegex = Regex("""(\[(img|audio|media[^\\]]*|flash|attachimg)\])([\s\S]*?)(\[/(?:img|audio|media|flash|attachimg)\])""", RegexOption.IGNORE_CASE)
         for (match in mediaRegex.findAll(source)) {
             styleTagPair(
@@ -1209,6 +1258,26 @@ internal enum class InsertKind(val label: String, val iconRes: Int? = null) {
     Flash("Flash"),
     Quote("引用"),
     Code("代码"),
+    Hide("隐藏内容"),
+}
+
+/**
+ * 站点「隐藏内容」标签：与网页端插入脚本一致的 BBCode 生成规则。
+ * - 积分与天数都为空：`[hide]...[/hide]`（默认回复可见）
+ * - 仅积分：`[hide=积分]`
+ * - 仅天数：`[hide=d天数]`
+ * - 两者都有：`[hide=d天数,积分]`
+ */
+internal fun buildHideTag(content: String, credits: String, days: String): String {
+    val c = credits.trim()
+    val d = days.trim()
+    val attr = when {
+        c.isEmpty() && d.isEmpty() -> ""
+        c.isNotEmpty() && d.isEmpty() -> "=$c"
+        c.isEmpty() -> "=d$d"
+        else -> "=d$d,$c"
+    }
+    return "[hide$attr]$content[/hide]"
 }
 
 /** 在光标处插入 [text]，插完光标落在插入内容里第 [cursorOffsetInInserted] 个字符处。 */
@@ -1718,6 +1787,7 @@ internal fun InlineInsertBar(
                                 InsertKind.Flash -> "请输入 Flash 网址"
                                 InsertKind.Quote -> "请输入引用内容"
                                 InsertKind.Code -> "请输入代码"
+                                InsertKind.Hide -> ""
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.textHint,
@@ -1782,15 +1852,173 @@ internal fun InlineInsertBar(
     }
 }
 
+/** 隐藏内容插入条：内容 + 积分大于 + 可见天数，与网页端「隐藏内容」设置区同构。 */
+@Composable
+internal fun HideInsertBar(
+    contentInput: String,
+    creditsInput: String,
+    daysInput: String,
+    onContentChange: (String) -> Unit,
+    onCreditsChange: (String) -> Unit,
+    onDaysChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalMtfColors.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val contentFocusRequester = remember { FocusRequester() }
+    val ready = contentInput.isNotBlank()
+
+    LaunchedEffect(Unit) {
+        delay(60)
+        contentFocusRequester.requestFocus()
+        keyboard?.show()
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(colors.background)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "隐藏内容",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+            )
+            BasicTextField(
+                value = contentInput,
+                onValueChange = onContentChange,
+                singleLine = true,
+                textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier
+                    .weight(1f)
+                    .background(colors.surface, AbsoluteRoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .focusRequester(contentFocusRequester),
+                decorationBox = { inner ->
+                    if (contentInput.isEmpty()) {
+                        Text(
+                            text = "请输入要隐藏的信息内容",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.textHint,
+                        )
+                    }
+                    inner()
+                },
+            )
+            val primaryColor = MaterialTheme.colorScheme.primary
+            Text(
+                text = "插入",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (ready) Color.White else colors.textHint,
+                modifier = Modifier
+                    .background(
+                        if (ready) primaryColor.copy(alpha = 0.69f) else colors.textHint.copy(alpha = 0.2f),
+                        AbsoluteRoundedCornerShape(50),
+                    )
+                    .clickable(enabled = ready, onClick = onConfirm)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+            Text(
+                text = "✕",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textHint,
+                modifier = Modifier
+                    .clickable(onClick = onDismiss)
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "积分大于",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.textSecondary,
+            )
+            BasicTextField(
+                value = creditsInput,
+                onValueChange = { if (it.all(Char::isDigit)) onCreditsChange(it) },
+                singleLine = true,
+                textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                ),
+                decorationBox = { inner ->
+                    if (creditsInput.isEmpty()) {
+                        Text("可不填", style = MaterialTheme.typography.bodySmall, color = colors.textHint)
+                    }
+                    inner()
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .background(colors.surface, AbsoluteRoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "可见天数",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.textSecondary,
+            )
+            BasicTextField(
+                value = daysInput,
+                onValueChange = { if (it.all(Char::isDigit)) onDaysChange(it) },
+                singleLine = true,
+                textStyle = TextStyle(color = bodyTextColor(), fontSize = 14.sp),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                ),
+                decorationBox = { inner ->
+                    if (daysInput.isEmpty()) {
+                        Text("可不填", style = MaterialTheme.typography.bodySmall, color = colors.textHint)
+                    }
+                    inner()
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .background(colors.surface, AbsoluteRoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "不设置积分和天数，默认为回复可见",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.textSecondary,
+        )
+    }
+}
+
 /**
- * 成对 BBCode 标签匹配正则（audio、url、img、media、flash、quote、code、attachimg）。
- * Group 1: 开始标签（如 `[audio]` 或 `[url=...]`）
+ * 成对 BBCode 标签匹配正则（audio、url、img、media、flash、quote、code、attachimg、hide）。
+ * Group 1: 开始标签（如 `[audio]` 或 `[url=...]` 或 `[hide=...]`）
  * Group 2: 标签名
  * Group 3: 中间包含的内容（可为空）
- * Group 4: 闭合标签（如 `[/audio]` 或 `[/url]`）
+ * Group 4: 闭合标签（如 `[/audio]` 或 `[/url]` 或 `[/hide]`）
  */
 private val COMPOSER_TAG_PAIR_REGEX = Regex(
-    """(\[(url(?:=[^\]]*)?|audio|img|media(?:=[^\]]*)?|flash|quote|code|attachimg|b|i|u|s)\])([\s\S]*?)(\[/(?:url|audio|img|media|flash|quote|code|attachimg|b|i|u|s)\])""",
+    """(\[(url(?:=[^\]]*)?|audio|img|media(?:=[^\]]*)?|flash|quote|code|attachimg|hide(?:=[^\]]*)?|b|i|u|s)\])([\s\S]*?)(\[/(?:url|audio|img|media|flash|quote|code|attachimg|hide|b|i|u|s)\])""",
     RegexOption.IGNORE_CASE,
 )
 
