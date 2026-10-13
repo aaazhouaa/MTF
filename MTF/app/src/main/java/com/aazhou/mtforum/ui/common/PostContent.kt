@@ -191,7 +191,14 @@ private fun PostContentBody(
                 )
                 is ContentBlock.ImageGroup -> ImageGrid(
                     urls = block.urls,
-                    onImageClick = onImageClick?.let { click -> { url -> click(block.urls, block.urls.indexOf(url)) } },
+                    onImageClick = onImageClick?.let { click ->
+                        { url ->
+                            // 图组也放进全帖图片序列：与单图一致，点击组内任意一张都能翻看全帖所有图
+                            val urls = pageImages.ifEmpty { block.urls }
+                            val index = urls.indexOf(url).coerceAtLeast(0)
+                            click(urls, index)
+                        }
+                    },
                 )
                 is ContentBlock.Video -> InlineVideo(
                     url = block.url,

@@ -253,14 +253,17 @@ object ForumParser {
 
         val threads = mutableListOf<Thread>()
         for (li in document.select("li.forumlist_li")) {
-            val titleA = li.selectFirst("div.mmlist_li_box h2 a[href*=thread-]") ?: continue
-            val tid = RE_TID.find(titleA.attr("href"))?.groupValues?.get(1) ?: continue
+            // 有标题帖：标题在 mmlist_li_box 的 h2 里；无标题帖（朋友圈式纯图/纯文帖）站点
+            // 不渲染 h2 标题块，标题与正文都落在 list_body 的链接里，需回退到它，否则整条帖被跳过
+            val titleA = li.selectFirst("div.mmlist_li_box h2 a[href*=thread-]")
+            val threadA = titleA ?: li.selectFirst("div.list_body a[href*=thread-]") ?: continue
+            val tid = RE_TID.find(threadA.attr("href"))?.groupValues?.get(1) ?: continue
             val authorA = li.selectFirst("a.top_user")
             val (replyCount, viewCount, likeCount) = readCardStats(li)
             threads.add(
                 Thread(
                     tid = tid,
-                    subject = titleA.text().stripInvisibleChars(),
+                    subject = threadA.text().stripInvisibleChars(),
                     authorName = authorA?.text()?.trim(),
                     authorUid = RE_UID.find(authorA?.attr("href") ?: "")?.groupValues?.get(1),
                     avatarUrl = li.selectFirst("img.top_tximg")?.attr("src"),
@@ -268,7 +271,10 @@ object ForumParser {
                     timeText = li.selectFirst("div.forumlist_li_time span")?.text()?.trim(),
                     replyCount = replyCount,
                     viewCount = viewCount,
-                    excerpt = li.selectFirst("div.list_body a")?.text()?.stripInvisibleChars(),
+                    // 无标题帖没有独立摘要：标题已取 list_body 正文，摘要置空避免重复显示
+                    excerpt = if (titleA != null) {
+                        li.selectFirst("div.list_body a")?.text()?.stripInvisibleChars()
+                    } else null,
                     forumName = li.selectFirst("div.comiis_xznalist_bk a[href*=forum-]")?.let { a ->
                         a.ownText().trim().ifEmpty { a.text().trim() }
                     }?.ifEmpty { null }

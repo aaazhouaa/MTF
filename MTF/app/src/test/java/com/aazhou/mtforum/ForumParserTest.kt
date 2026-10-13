@@ -169,6 +169,42 @@ class ForumParserTest {
     }
 
     @Test
+    fun forumPageWithoutH2TitleParsesFromListBody() {
+        // 朋友圈式无标题帖（纯图/纯文）：站点不渲染 mmlist_li_box 里的 h2 标题块，
+        // 标题与正文都落在 list_body 的链接里。旧选择器 h2 a[href*=thread-] 找不到会跳过
+        // 整条帖，导致“看不到自己的帖子”。
+        val html = """
+            <div class="comiis_forumlist">
+              <ul>
+                <li class="forumlist_li comiis_znalist bg_f b_t b_b">
+                  <div class="forumlist_li_top cl">
+                    <a href="https://bbs.binmt.cc/home.php?mod=space&uid=160113&do=profile" class="wblist_tximg"><img class="top_tximg" src="https://avatar.mt2.cn/avatar.php?uid=160113"></a>
+                    <h2><a href="javascript:;" class="user_gz">关注</a>
+                      <a href="https://bbs.binmt.cc/home.php?mod=space&uid=160113&do=profile" class="top_user">username123</a></h2>
+                    <div class="forumlist_li_time"><span class="f_d">27 分钟前</span></div>
+                  </div>
+                  <div class="mmlist_li_box cl">
+                    <div class="list_body cl"><a href="https://bbs.binmt.cc/thread-174666-1-1.html">测试一下发帖功能是否正常，文字内插入图片看看排版是否正常</a></div>
+                    <div class="comiis_pyqlist_imgs comiis_pyqlist_img3p"><ul><li><img src="none.png" comiis_loadimages="https://cdn.binmt.cc/forum.php?mod=image&aid=379135"></li></ul></div>
+                  </div>
+                  <div class="comiis_xznalist_bottom cl"><ul class="cl">
+                    <li><span class="comiis_tm">0</span></li>
+                    <li><span class="comiis_tm">0</span></li>
+                    <li><span class="comiis_tm">4</span></li>
+                  </ul></div>
+                </li>
+              </ul>
+            </div>
+        """.trimIndent()
+        val thread = ForumParser.parseForumPage(html, 1).threads.single()
+        assertEquals("174666", thread.tid)
+        assertEquals("username123", thread.authorName)
+        assertEquals("测试一下发帖功能是否正常，文字内插入图片看看排版是否正常", thread.subject)
+        assertNull(thread.excerpt)
+        assertEquals(listOf("https://cdn.binmt.cc/forum.php?mod=image&aid=379135"), thread.imageUrls)
+    }
+
+    @Test
     fun parsesThreadPage() {
         val page = ForumParser.parseThreadPage(threadHtml, 1)
         assertEquals("174050", page.tid)
