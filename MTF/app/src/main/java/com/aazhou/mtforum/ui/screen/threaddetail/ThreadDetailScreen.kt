@@ -666,12 +666,14 @@ fun ThreadDetailScreen(
                                         },
                                         onOrder = {
                                             // 正序/倒序是两套排法，切过去直接跳到评论区顶部：
-                                            // 倒序的第一屏就是全帖最新评论
+                                            // 倒序的第一屏就是全帖最新评论。锚点定位到评论区头
+                                            // （stickyHeader 本身）而不是第一条评论，否则第一条
+                                            // 评论会被钉在顶部的评论区头遮住上半截。
                                             viewModel.setReplyFilter(
                                                 opOnly = false,
                                                 orderType = it,
                                                 anchor = ScrollAnchor(
-                                                    index = if (op != null) 2 else 1,
+                                                    index = if (op != null) 1 else 0,
                                                     offset = 0,
                                                 ),
                                             )
