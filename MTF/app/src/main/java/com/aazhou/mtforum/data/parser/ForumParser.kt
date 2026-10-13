@@ -1605,6 +1605,9 @@ object ForumParser {
         val permissionDenied = when {
             document.selectFirst("form#loginform") != null || html.contains("action=login") -> "请先登录后再编辑"
             html.contains("没有权限") -> "没有编辑这条内容的权限"
+            // 站点对超过可编辑时限的楼层不再返回表单，只给这句提示页；页面里没有 textarea，
+            // 若不识别这里，message 会解析成空字符串、编辑面板照常打开却一片空白
+            html.contains("不能再进行编辑") -> "该内容已超过可编辑时限，不能再进行编辑"
             else -> null
         }
         return EditPostPageData(

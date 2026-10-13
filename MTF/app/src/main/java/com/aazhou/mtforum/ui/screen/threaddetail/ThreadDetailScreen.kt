@@ -149,6 +149,36 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Calendar
+
+/** 站点可编辑时限：从发表到现在不超过 10080 分钟（7 天）。 */
+private const val EDIT_WINDOW_MS = 10_080L * 60_000L
+
+/** 楼层时间文本里的绝对日期：`2026-10-5 12:32:13`，年月日必有，时分秒可选。 */
+private val RE_FLOOR_ABS_TIME =
+    Regex("""(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?""")
+
+/**
+ * 楼层是否已超过站点可编辑时限。
+ *
+ * 只能解析出绝对日期时才本地判定：解析不出（相对时间、「昨天/今天」日词）说明楼层够新，
+ * 不可能超时，放行交给服务端判定。仅拦截「明确超过 7 天」的，不误伤新鲜楼层。
+ */
+private fun isEditExpired(timeText: String?): Boolean {
+    val raw = timeText?.trim().orEmpty()
+    if (raw.isEmpty()) return false
+    val m = RE_FLOOR_ABS_TIME.find(raw) ?: return false
+    val calendar = Calendar.getInstance().apply {
+        clear()
+        set(Calendar.YEAR, m.groupValues[1].toIntOrNull() ?: return false)
+        set(Calendar.MONTH, (m.groupValues[2].toIntOrNull() ?: return false) - 1)
+        set(Calendar.DAY_OF_MONTH, m.groupValues[3].toIntOrNull() ?: return false)
+        set(Calendar.HOUR_OF_DAY, m.groupValues[4].toIntOrNull() ?: 0)
+        set(Calendar.MINUTE, m.groupValues[5].toIntOrNull() ?: 0)
+        set(Calendar.SECOND, m.groupValues[6].toIntOrNull() ?: 0)
+    }
+    return System.currentTimeMillis() - calendar.timeInMillis > EDIT_WINDOW_MS
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -516,7 +546,8 @@ fun ThreadDetailScreen(
                     followEnabled = page?.opUid != null,
                     // 楼主是自己才给「编辑本帖」：站点只允许改自己的内容。
                     // 帖子带标题，编辑走整页（标题 + 正文 + 分类），与评论的底部面板不同
-                    canEditThread = myUid.isNotBlank() && myUid == op?.authorUid,
+                    canEditThread = myUid.isNotBlank() && myUid == op?.authorUid &&
+                        !isEditExpired(op?.timeText),
                     showMore = true,
                     downloadBusy = downloadBusy,
                     onBack = onBack,
@@ -959,9 +990,12 @@ fun ThreadDetailScreen(
                 }
             }
             if (isOwn) {
-                MenuAction("编辑") {
-                    actionTarget = null
-                    viewModel.beginEdit(target)
+                // 超过可编辑时限的楼层，站点不再给表单，入口也一并收起
+                if (!isEditExpired(target.timeText)) {
+                    MenuAction("编辑") {
+                        actionTarget = null
+                        viewModel.beginEdit(target)
+                    }
                 }
                 MenuAction("删除") {
                     actionTarget = null

@@ -116,6 +116,21 @@ class ForumParserEditPostTest {
         assertNull(ForumParser.parseEditPostInit(html).subject)
     }
 
+    /** 站点对超时楼层只回一句提示页、不给编辑表单：必须判成错误，否则 message 为空照常开面板。 */
+    @Test
+    fun `parseEditPostInit flags edit window expired`() {
+        val html = """
+            <html><body>
+            <div class="comiis_password_top">
+                <p class="f_c">抱歉，您的帖子从发表到现在已超过 10080 分钟，不能再进行编辑</p>
+            </div>
+            </body></html>
+        """.trimIndent()
+        val data = ForumParser.parseEditPostInit(html)
+        assertEquals("该内容已超过可编辑时限，不能再进行编辑", data.permissionDenied)
+        assertTrue(data.message.isEmpty())
+    }
+
     @Test
     fun `edit result success markers`() {
         assertTrue(ForumParser.parseEditPostResult("succeedhandle_('123', 'ok')", tid).success)
