@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -472,10 +473,14 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
     // LazyColumn 的滚动锚点失配导致的跳屏随之消失；未命中仍回落 4:3 占位
     val cachedAspect = ImageAspectCache.aspectOf(url)
     var aspectRatio by remember(url) { mutableStateOf(cachedAspect ?: 4f / 3f) }
+    // 加载失败的图整块收起：站点附件失效时网页端同样不占位（懒加载失败后换成 0×0 的
+    // img_err.gif），客户端留着灰框会凭空多出几个空块
+    var loadFailed by remember(url) { mutableStateOf(false) }
     // 预取在本项组合之后才完成时，缓存写入会触发重组，此时按缓存校正一次
     LaunchedEffect(url, cachedAspect) {
         if (cachedAspect != null && aspectRatio != cachedAspect) aspectRatio = cachedAspect
     }
+    if (loadFailed) return
     BoxWithConstraints(modifier.fillMaxWidth()) {
         // 单图比多图网格单格略大即可：同时限宽与限高，横图按宽、竖图按高，避免长图把列表撑得过长
         val maxImageWidth = maxWidth * 0.6f
@@ -499,6 +504,7 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
                     }
                 },
                 onError = { state ->
+                    loadFailed = true
                     context.container().logger.error(
                         "Image",
                         "正文单图加载失败 url=$url",
@@ -542,6 +548,7 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
                         }
                     },
                     onError = { state ->
+                        loadFailed = true
                         context.container().logger.error(
                             "Image",
                             "正文单图加载失败 url=$url",
@@ -560,9 +567,14 @@ private fun SingleImage(url: String, onImageClick: (() -> Unit)?, modifier: Modi
 private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
     val colors = LocalMtfColors.current
     val context = LocalContext.current
-    val columns = if (urls.size == 2 || urls.size == 4) 2 else 3
-    val cells = if (urls.size > 9) urls.take(9) else urls
-    val overflow = urls.size - 9
+    // 失效图不进网格：站点删掉的附件/失联的图床加载失败后，网页端是 0×0 占位、不占地方，
+    // 客户端照原样渲染只会得到一排灰框
+    val failedUrls = remember(urls) { mutableStateMapOf<String, Boolean>() }
+    val liveUrls = urls.filterNot { failedUrls[it] == true }
+    if (liveUrls.isEmpty()) return
+    val columns = if (liveUrls.size == 2 || liveUrls.size == 4) 2 else 3
+    val cells = if (liveUrls.size > 9) liveUrls.take(9) else liveUrls
+    val overflow = liveUrls.size - 9
     val cellRatio = if (columns == 2) 0.85f else 1f
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -590,6 +602,7 @@ private fun ImageGrid(urls: List<String>, onImageClick: ((String) -> Unit)?) {
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             onError = { state ->
+                                failedUrls[url] = true
                                 context.container().logger.error(
                                     "Image",
                                     "正文图组加载失败 url=$url",

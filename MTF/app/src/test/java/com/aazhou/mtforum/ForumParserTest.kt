@@ -1,6 +1,8 @@
 package com.aazhou.mtforum
 
 import com.aazhou.mtforum.data.parser.ForumParser
+import com.aazhou.mtforum.ui.common.ContentBlock
+import com.aazhou.mtforum.ui.common.parseContentBlocks
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -1483,5 +1485,43 @@ class ForumParserTest {
         assertEquals("秋枫Mod", post.quote?.author)
         assertEquals("不是，怎么还有我的事。", post.quote?.text)
         assertTrue(post.contentHtml.contains("你住论坛了"))
+    }
+
+    @Test
+    fun deadAttachmentsInImgListStillBecomeImageBlocks() {
+        // thread-174561 首帖实测：正文里内嵌一张图，站点又把两枚 2023 年的旧附件列在正文
+        // 下方的 ul.comiis_img_list，两枚在 CDN 上已失效。网页端懒加载失败后换成 0×0 的
+        // img_err.gif、不占地方；客户端的图块结构必须与网页一致（内嵌图单张 + 两枚连排成组），
+        // 收起失效图的逻辑才有东西可收。
+        val html = """
+            <html><head><title>关于epicv2 - MT论坛</title></head><body>
+            <div class="comiis_postlist">
+            <div class="comiis_postli" id="pid11951142">
+              <div class="comiis_postli_top comiis_postli_topv1"></div>
+              <div class="comiis_message view_one"><div class="comiis_messages comiis_aimg_show cl">
+                <div class="comiis_a comiis_message_table cl">正文<br />
+                <span class="comiis_postimg vm"><img id="aimg_378876" src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://oos.binmt.cc/forum/202610/12/134225gf5fb6br0rmibr4z.jpg" /></span><br />
+                <a href="https://rainyspring.lanzoub.com/b01gidm61e">apk和dex 提取码：4cgx</a></div>
+                <ul class="comiis_img_list cl">
+                  <li><span><img id="aimg_216369" src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/forum/202301/22/230319qmnn997n171qn7nq.jpg" /></span></li>
+                  <li><span><img id="aimg_216368" src="https://cdn.binmt.cc/template/comiis_app/pic/none.png" comiis_loadimages="https://cdn.binmt.cc/data/attachment/forum/202301/22/225554ze12ntl092182aem.jpg" /></span></li>
+                </ul>
+              </div></div>
+            </div>
+            </div></body></html>
+        """.trimIndent()
+        val post = ForumParser.parseThreadPage(html, 1).posts.single()
+        val blocks = parseContentBlocks(post.contentHtml)
+        assertEquals(
+            "https://oos.binmt.cc/forum/202610/12/134225gf5fb6br0rmibr4z.jpg",
+            blocks.filterIsInstance<ContentBlock.Image>().single().url,
+        )
+        assertEquals(
+            listOf(
+                "https://cdn.binmt.cc/data/attachment/forum/202301/22/230319qmnn997n171qn7nq.jpg",
+                "https://cdn.binmt.cc/data/attachment/forum/202301/22/225554ze12ntl092182aem.jpg",
+            ),
+            blocks.filterIsInstance<ContentBlock.ImageGroup>().single().urls,
+        )
     }
 }

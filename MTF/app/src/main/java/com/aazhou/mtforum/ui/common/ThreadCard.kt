@@ -22,6 +22,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -177,13 +179,22 @@ private fun ForumNameChip(name: String, colors: MtfColors, modifier: Modifier = 
  * 帖子卡片单张配图：满宽、固定 155dp 舒适高度，CenterCrop 裁切，圆角 + 细描边。
  */
 @Composable
-private fun CardSingleImage(url: String, onClick: () -> Unit) {
+private fun CardSingleImage(url: String, onFailed: () -> Unit, onClick: () -> Unit) {
     val colors = LocalMtfColors.current
+    val context = LocalContext.current
     val shape = RoundedCornerShape(10.dp)
     AsyncImage(
         model = postImageRequest(url),
         contentDescription = null,
         contentScale = ContentScale.Crop,
+        onError = { state ->
+            onFailed()
+            context.container().logger.error(
+                "Image",
+                "帖子卡片配图加载失败 url=$url",
+                state.result.throwable,
+            )
+        },
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 10.dp)
@@ -202,7 +213,11 @@ private fun CardSingleImage(url: String, onClick: () -> Unit) {
  * 手工 Row/Column 布局而非 Lazy 网格：卡片本身在 LazyColumn 里，嵌套懒布局会互相抢复用。
  */
 @Composable
-private fun CardImageGrid(urls: List<String>, onImageClick: (List<String>, Int) -> Unit) {
+private fun CardImageGrid(
+    urls: List<String>,
+    failedUrls: MutableMap<String, Boolean>,
+    onImageClick: (List<String>, Int) -> Unit,
+) {
     val colors = LocalMtfColors.current
     Column(
         modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
@@ -216,6 +231,7 @@ private fun CardImageGrid(urls: List<String>, onImageClick: (List<String>, Int) 
                         cardCellModifier(colors, height = 130.dp, shape = RoundedCornerShape(6.dp)) {
                             onImageClick(urls, index)
                         },
+                        onFailed = { failedUrls[url] = true },
                     )
                 }
             }
@@ -227,6 +243,7 @@ private fun CardImageGrid(urls: List<String>, onImageClick: (List<String>, Int) 
                         cardCellModifier(colors, height = 100.dp, shape = RoundedCornerShape(6.dp)) {
                             onImageClick(urls, index)
                         },
+                        onFailed = { failedUrls[url] = true },
                     )
                 }
             }
@@ -240,6 +257,7 @@ private fun CardImageGrid(urls: List<String>, onImageClick: (List<String>, Int) 
                             cardCellModifier(colors, height = 98.dp, shape = RoundedCornerShape(6.dp)) {
                                 onImageClick(urls, index)
                             },
+                            onFailed = { failedUrls[urls[index]] = true },
                         )
                     }
                 }
@@ -253,7 +271,7 @@ private fun CardImageGrid(urls: List<String>, onImageClick: (List<String>, Int) 
                     }
                     if (showBadge) {
                         Box(modifier = modifier) {
-                            CardImage(url, Modifier.fillMaxSize())
+                            CardImage(url, Modifier.fillMaxSize(), onFailed = { failedUrls[url] = true })
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
@@ -270,7 +288,7 @@ private fun CardImageGrid(urls: List<String>, onImageClick: (List<String>, Int) 
                             }
                         }
                     } else {
-                        CardImage(url, modifier)
+                        CardImage(url, modifier, onFailed = { failedUrls[url] = true })
                     }
                 }
             }
@@ -294,13 +312,14 @@ private fun RowScope.cardCellModifier(
 
 /** 单格配图：网格与角标格共用，圆角/底色/描边由传入的 modifier 负责。 */
 @Composable
-private fun CardImage(url: String, modifier: Modifier) {
+private fun CardImage(url: String, modifier: Modifier, onFailed: () -> Unit) {
     val context = LocalContext.current
     AsyncImage(
         model = postImageRequest(url, maxSize = GridImageSize),
         contentDescription = null,
         contentScale = ContentScale.Crop,
         onError = { state ->
+            onFailed()
             context.container().logger.error(
                 "Image",
                 "帖子卡片配图加载失败 url=$url",
@@ -319,10 +338,16 @@ private fun CardImages(
     urls: List<String>,
     onImageClick: (List<String>, Int) -> Unit,
 ) {
-    when (urls.size) {
+    // 失效图不进卡片：站点删掉的附件/失联的图床加载失败后，网页端是 0×0 占位、不占地方，
+    // 客户端照原样渲染只会得到一排灰框；剩余张数按存活图重排
+    val failedUrls = remember(urls) { mutableStateMapOf<String, Boolean>() }
+    val liveUrls = urls.filterNot { failedUrls[it] == true }
+    when (liveUrls.size) {
         0 -> Unit
-        1 -> CardSingleImage(urls.first()) { onImageClick(urls, 0) }
-        else -> CardImageGrid(urls, onImageClick)
+        1 -> CardSingleImage(liveUrls.first(), onFailed = { failedUrls[liveUrls.first()] = true }) {
+            onImageClick(liveUrls, 0)
+        }
+        else -> CardImageGrid(liveUrls, failedUrls, onImageClick)
     }
 }
 
