@@ -64,9 +64,7 @@ import com.aazhou.mtforum.data.repo.NoticeRepo
 import com.aazhou.mtforum.image.smallImageRequest
 import com.aazhou.mtforum.ui.common.EmptyBox
 import com.aazhou.mtforum.ui.common.ErrorBox
-import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.LoadingBox
-import com.aazhou.mtforum.ui.common.MtfConfirmDialog
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.SwipeTabIndicator
 import com.aazhou.mtforum.ui.common.UiState
@@ -90,7 +88,7 @@ import kotlinx.coroutines.launch
 fun NoticeTabScreen(
     group: NoticeGroup,
     onBack: () -> Unit,
-    onThreadClick: (tid: String, pid: String?) -> Unit,
+    onThreadClick: (tid: String) -> Unit,
     onUserClick: (String) -> Unit,
     onChatClick: ((uid: String, name: String) -> Unit)? = null,
 ) {
@@ -105,20 +103,12 @@ fun NoticeTabScreen(
         )
     }
     val tabStates by viewModel.tabStates.collectAsStateWithLifecycle()
-    val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     val tabs = remember(group) { group.tabs() }
 
     val pagerState = rememberPagerState(initialPage = 0) { tabs.size }
     // 每页一个列表状态并提升到页面作用域：切 tab 不丢滚动位置，也不重建已翻页的数据
     val listStates = tabs.map { rememberLazyListState() }
     val scope = rememberCoroutineScope()
-
-    // 加载类提示改走全局轻提示
-    LaunchedEffect(actionMessage) {
-        val message = actionMessage ?: return@LaunchedEffect
-        AppToast.show(message)
-        viewModel.consumeActionMessage()
-    }
 
     // tab 停稳后才加载/记已读：滑动途中不换数据
     LaunchedEffect(pagerState.settledPage) {
@@ -200,7 +190,6 @@ fun NoticeTabScreen(
                 onThreadClick = onThreadClick,
                 onUserClick = onUserClick,
                 onChatClick = onChatClick,
-                onIgnore = { notice -> viewModel.ignore(notice) },
             )
         }
     }
@@ -216,10 +205,9 @@ private fun NoticeTabPage(
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
-    onThreadClick: (String, String?) -> Unit,
+    onThreadClick: (String) -> Unit,
     onUserClick: (String) -> Unit,
     onChatClick: ((String, String) -> Unit)?,
-    onIgnore: (Notice) -> Unit,
 ) {
     when (val current = tabState.state) {
         is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
@@ -243,7 +231,6 @@ private fun NoticeTabPage(
                         onThreadClick = onThreadClick,
                         onUserClick = onUserClick,
                         onChatClick = onChatClick,
-                        onIgnore = onIgnore,
                     )
                 }
             }
@@ -258,10 +245,9 @@ private fun CrossfadeContent(
     hasNext: Boolean,
     loadingMore: Boolean,
     onLoadMore: () -> Unit,
-    onThreadClick: (String, String?) -> Unit,
+    onThreadClick: (String) -> Unit,
     onUserClick: (String) -> Unit,
     onChatClick: ((String, String) -> Unit)?,
-    onIgnore: (Notice) -> Unit,
 ) {
     when (content) {
         is NoticeContentState.Notices -> NoticeListView(
@@ -272,7 +258,6 @@ private fun CrossfadeContent(
             hasNext = hasNext,
             loadingMore = loadingMore,
             onLoadMore = onLoadMore,
-            onIgnore = onIgnore,
         )
 
         is NoticeContentState.PrivateMessages -> PrivateMessageListView(
@@ -290,11 +275,10 @@ private fun NoticeListView(
     listState: LazyListState,
     notices: List<Notice>,
     onUserClick: (String) -> Unit,
-    onThreadClick: (String, String?) -> Unit,
+    onThreadClick: (String) -> Unit,
     hasNext: Boolean,
     loadingMore: Boolean,
     onLoadMore: () -> Unit,
-    onIgnore: (Notice) -> Unit,
 ) {
     // 滑到接近末尾时自动追加下一页
     val shouldLoadMore by remember(notices) {
@@ -316,8 +300,7 @@ private fun NoticeListView(
             NoticeRow(
                 notice = notice,
                 onUserClick = onUserClick,
-                onClick = { notice.tid?.let { tid -> onThreadClick(tid, notice.pid) } },
-                onIgnore = { onIgnore(notice) },
+                onClick = { notice.tid?.let { tid -> onThreadClick(tid) } },
             )
         }
         if (loadingMore) {
@@ -467,20 +450,18 @@ private fun PrivateMessageCard(
 }
 
 /**
- * 单条提醒卡片：独立圆角卡片 + 头像/系统图标 + 正文 + 时间 + 屏蔽 + 进帖箭头。
+ * 单条提醒卡片：独立圆角卡片 + 头像/系统图标 + 正文 + 时间 + 进帖箭头。
  *
- * 站点给了主题链接才可点击；「查看」带 pid，进帖后定位到那条回复。
+ * 站点给了主题链接才可点击。
  */
 @Composable
 private fun NoticeRow(
     notice: Notice,
     onUserClick: (String) -> Unit,
     onClick: () -> Unit,
-    onIgnore: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
-    var confirmIgnore by remember { mutableStateOf(false) }
     val clickable = notice.tid != null
 
     Row(
@@ -564,18 +545,6 @@ private fun NoticeRow(
                 } else {
                     Spacer(Modifier.width(1.dp))
                 }
-
-                if (!notice.ignoreAuthorid.isNullOrBlank() && !notice.ignoreType.isNullOrBlank()) {
-                    Text(
-                        text = "屏蔽",
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                        color = colors.textSecondary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable { confirmIgnore = true }
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
             }
         }
 
@@ -592,15 +561,4 @@ private fun NoticeRow(
         }
     }
 
-    if (confirmIgnore) {
-        MtfConfirmDialog(
-            title = "屏蔽该用户的提醒？",
-            message = "屏蔽后不再收到这位用户的此类提醒，可在站点「好友」里取消屏蔽。",
-            onDismissRequest = { confirmIgnore = false },
-            onConfirm = {
-                confirmIgnore = false
-                onIgnore()
-            },
-        )
-    }
 }

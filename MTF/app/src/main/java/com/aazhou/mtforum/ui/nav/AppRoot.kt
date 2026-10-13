@@ -87,8 +87,7 @@ object Routes {
     fun followList(type: String = "following") = "follow_list?type=$type"
 
     fun forum(fid: String, name: String) = "forum/$fid/${Uri.encode(name)}"
-    fun thread(tid: String, pid: String? = null) =
-        if (pid.isNullOrBlank()) "thread/$tid" else "thread/$tid?pid=$pid"
+    fun thread(tid: String) = "thread/$tid"
 
     /** 消息提醒二级页：[group] 取 [NoticeGroup] 的 name。 */
     fun noticeTab(group: NoticeGroup) = "notice/${group.name}"
@@ -299,7 +298,8 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                     group = group,
                     onBack = { navController.popBackStack() },
                     // 「查看」带 pid：进帖后定位到那条回复所在的位置
-                    onThreadClick = { tid, pid -> navController.navigate(Routes.thread(tid, pid)) },
+                    // 消息里的主题进帖子详情；网页端「查看」还带楼层，客户端只进帖
+                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
                     // 消息里的头像进对应用户的个人主页
                     onUserClick = navigateToUser,
                     onChatClick = { uid, name -> navController.navigate(Routes.chat(uid, name)) },
@@ -344,20 +344,10 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
 
             composable(
                 Routes.THREAD,
-                arguments = listOf(
-                    navArgument("tid") { type = NavType.StringType },
-                    // 可选查询参数：消息提醒的「查看」带楼层 pid，普通进帖不带
-                    navArgument("pid") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
-                    },
-                ),
+                arguments = listOf(navArgument("tid") { type = NavType.StringType }),
             ) { entry ->
                 ThreadDetailScreen(
                     tid = entry.arguments?.getString("tid").orEmpty(),
-                    // 消息提醒跳进来时带上要定位的楼层；普通进帖不带
-                    targetPid = entry.arguments?.getString("pid"),
                     onBack = { navController.popBackStack() },
                     onUserClick = navigateToUser,
                     // 正文里的站内帖子链接在 App 内继续看帖，不进浏览器

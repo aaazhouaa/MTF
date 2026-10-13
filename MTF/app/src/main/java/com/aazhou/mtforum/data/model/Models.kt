@@ -278,9 +278,6 @@ data class HomeData(
  *
  * [text] 为站点渲染的提醒正文，[timeText] 是页面上的相对/绝对时间文本；
  * [tid] 为关联主题，站点未给帖子链接时为 null（该条不可点击）。
- *
- * [pid] 是「查看」链接指向的楼层：网页端点它直达那条回复，客户端进帖后按它定位。
- * [ignoreAuthorid] 与 [ignoreType] 来自行内屏蔽链接，缺任一项就不给屏蔽入口。
  */
 @Serializable
 data class Notice(
@@ -292,12 +289,6 @@ data class Notice(
     val avatarUrl: String? = null,
     /** 该条提醒关联用户的 uid；点头像进入其个人主页，为 null 时不可点。 */
     val uid: String? = null,
-    /** 「查看」链接带的楼层 pid（redirect&goto=findpost&pid=）；系统类提醒没有。 */
-    val pid: String? = null,
-    /** 屏蔽链接里的 authorid：要屏蔽的那位用户。 */
-    val ignoreAuthorid: String? = null,
-    /** 屏蔽链接里的 type：屏蔽哪一类提醒（post/friend/…），提交时原样带回。 */
-    val ignoreType: String? = null,
 )
 
 /** 消息提醒页解析结果；[loggedOut] 为 true 表示页面被重定向到了登录表单。 */

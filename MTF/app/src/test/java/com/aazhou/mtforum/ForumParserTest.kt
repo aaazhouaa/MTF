@@ -840,7 +840,7 @@ class ForumParserTest {
                     <div class="ntc_body"><a href="https://bbs.binmt.cc/space-uid-151212.html">rsuyeug</a> 回复了您的帖子
                       <a href="https://bbs.binmt.cc/forum.php?mod=redirect&amp;goto=findpost&amp;ptid=174032&amp;pid=11921862">(停更)MT论坛app(液态玻璃)</a> &nbsp;
                       <a href="https://bbs.binmt.cc/forum.php?mod=redirect&amp;goto=findpost&amp;pid=11921862&amp;ptid=174032" class="lit">查看</a></div>
-                    <h2 class="f_d"><a class="dialog y" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=155872&amp;type=post&amp;handlekey=addfriendhk_155872&amp;mobile=2" id="a_note_6922883" title="屏蔽"><i class="comiis_font bg_e b_ok">&#xe6ff;</i></a>昨天 15:22</h2>
+                    <h2 class="f_d"><a class="dialog y" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore">忽略</a> 昨天 15:22</h2>
                   </li>
                   <li class="b_b bg_f cl">
                     <a href="https://bbs.binmt.cc/home.php?mod=space&amp;uid=151213&amp;do=profile" class="notice_img"><img src="https://avatar.mt2.cn/uc_server/avatar.php?uid=151213&amp;size=middle"></a>
@@ -859,11 +859,6 @@ class ForumParserTest {
         val first = notices.notices[0]
         assertEquals("174032", first.tid)
         assertEquals("昨天 15:22", first.timeText)
-        // 「查看」链接带的楼层 pid：网页端点它直达那条回复
-        assertEquals("11921862", first.pid)
-        // 屏蔽链接上的两个参数：屏蔽哪位用户、哪一类提醒
-        assertEquals("155872", first.ignoreAuthorid)
-        assertEquals("post", first.ignoreType)
         // 帖子标题超过 8 字截断成省略号，正文与「查看」都不受污染
         assertTrue(first.text.contains("rsuyeug 回复了您的帖子"))
         assertTrue(first.text.contains("(停更)MT论坛…"))
@@ -873,12 +868,6 @@ class ForumParserTest {
         // 互动类提醒带头像链接：a.notice_img 的 img.src 是头像，href 里带 uid（点头像进个人主页）
         assertEquals("https://avatar.mt2.cn/uc_server/avatar.php?uid=151212&size=middle", first.avatarUrl)
         assertEquals("151212", first.uid)
-        // 没有屏蔽链接时两项为 null：界面据此不显示屏蔽入口
-        val second = notices.notices[1]
-        assertNull(second.ignoreAuthorid)
-        assertNull(second.ignoreType)
-        // 第二条没有「查看」，pid 从标题链接上取
-        assertEquals("11921863", second.pid)
     }
 
     @Test

@@ -228,15 +228,6 @@ class ThreadDetailViewModel(
     /** 切换排序/只看楼主时界面传来的滚动锚点，新楼层上屏后才交给界面。 */
     private var requestedAnchor: ScrollAnchor? = null
 
-    /**
-     * 消息提醒带来要定位的楼层 pid，新数据上屏后由界面消费。
-     *
-     * 与 [requestedAnchor] 分开：那边是「恢复原位」，这边是「找到某一楼」，找不到时
-     * 界面要继续等下一次上屏，不能按错的位置硬滚。
-     */
-    private val _pendingLocatePid = MutableStateFlow<String?>(null)
-    val pendingLocatePid: StateFlow<String?> = _pendingLocatePid.asStateFlow()
-
     /** 界面最近可见的楼层 id（列表里那几个固定项的 key 也会进来，比对时自然滤掉）。 */
     private var recentVisiblePids: Set<String> = emptySet()
 
@@ -784,41 +775,6 @@ class ThreadDetailViewModel(
     /** 界面已按锚点定位完，清掉待恢复状态。 */
     fun consumePendingScrollAnchor() {
         _pendingScrollAnchor.value = null
-    }
-
-    /**
-     * 定位到 [pid] 那一楼（消息提醒的「查看」）。
-     *
-     * 站点没有「跳到某楼」的接口，只有 redirect&goto=findpost 的中转：问它要这一楼
-     * 现在的页码，把那一页拉回来合入楼层池，再把楼层号交给界面（[pendingLocatePid]）。
-     * 页码是正序口径的（见 [FETCH_ORDER]），与当前是不是倒序无关；倒序/只看楼主
-     * 视图下两边的页码不是一套编号，故先切回正序全量再定位。
-     */
-    fun locateFloor(pid: String) {
-        viewModelScope.launch {
-            if (_opOnly.value || _orderType.value != FETCH_ORDER) {
-                setReplyFilter(false, FETCH_ORDER)
-            }
-            val seq = Sequence(null, FETCH_ORDER)
-            val page = pageOf[seq]?.get(pid) ?: repository.postPageOf(tid, pid) ?: 1
-            val data = fetchPageOrNull(seq, page)
-            if (data == null) {
-                _actionMessage.value = "没能定位到该回复，可能已被删除"
-                return@launch
-            }
-            mergeIntoPool(seq, page, data)
-            recordProgress(seq, page, data.totalPages)
-            adoptMeta(data)
-            // 交给界面在新数据上屏后定位；首屏那一页可能还没回来，界面按 pid 找不到
-            // 目标楼时会继续等下一次上屏，不会按错的位置硬滚
-            _pendingLocatePid.value = pid
-            publish()
-        }
-    }
-
-    /** 界面已按 [pendingLocatePid] 定位完（或确认找不到），清掉待定位状态。 */
-    fun consumeLocatePid() {
-        _pendingLocatePid.value = null
     }
 
     /** 展开/收起灌水回复。 */

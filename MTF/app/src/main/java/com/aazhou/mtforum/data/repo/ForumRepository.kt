@@ -60,9 +60,6 @@ private val REPORT_ERROR_PATTERN = Regex("举报理由|action=login|请先登录
 private val DELETE_FORM_ACTION = Regex("action=edit")
 private val DELETE_FORM_SUBMIT = Regex("editsubmit")
 
-/** 屏蔽对话页的表单 id（ignoreform_XXX）：提交时作 handlekey，取不到也能屏蔽成功。 */
-private val RE_IGNORE_FORM_ID = Regex("""id=["'](ignoreform_[0-9A-Za-z]+)["']""")
-
 /**
  * 版块帖子流的排序档位，与站点 forumdisplay 的 filter 参数一一对应；[label] 即顶栏 tab 文案。
  */
@@ -574,55 +571,6 @@ class ForumRepository(
     }
 
     /**
-     * 屏蔽某位用户的某类提醒（网页端每条提醒行内的「屏蔽」）。
-     *
-     * 站点是两段式：先 GET 确认对话页拿表单里的 formhash，再 POST 同一个 action。
-     * 提交形状必须照网页端来：comiis 把这类对话表单按 inajax 发（action 后面拼
-     * `&inajax=1`，body 还要带提交按钮 feedignoresubmit）。少了 inajax 站点只会把
-     * 表单再渲染一遍，屏蔽根本不生效；handlekey 只决定回执里 JS 回调的名字，可有可无。
-     */
-    suspend fun ignoreNotice(authorid: String, type: String, formhash: String): Boolean =
-        withContext(Dispatchers.IO) {
-            val formUrl = http.url(
-                "home.php?mod=spacecp&ac=common&op=ignore&authorid=$authorid&type=$type&mobile=2",
-            )
-            val page = runCatching { http.get(formUrl) }.getOrDefault("")
-            val fh = ForumParser.parseFormhash(page) ?: formhash
-            if (fh.isBlank()) return@withContext false
-            val handlekey = RE_IGNORE_FORM_ID.find(page)?.groupValues?.get(1)
-            val handle = if (handlekey.isNullOrBlank()) "" else "&handlekey=$handlekey"
-            val url = http.url(
-                "home.php?mod=spacecp&ac=common&op=ignore&type=$type$handle&inajax=1",
-            )
-            val params = mapOf(
-                "ignoresubmit" to "true",
-                "formhash" to fh,
-                "referer" to formUrl,
-                "authorid" to authorid,
-                "feedignoresubmit" to "true",
-            )
-            val body = http.post(url, params, referer = formUrl)
-            isIgnoreSucceeded(body)
-        }
-
-    /**
-     * 某楼层现在在第几页（正序口径）；取不到返回 null。
-     *
-     * 站点没有「跳到某楼」的接口，只有 redirect&goto=findpost 的中转：跟着 302 只要
-     * Location 头，不把整页下回来（一页几十 KB，还有节流）。目标在第 1 页时站点
-     * 不给 page 参数，此时按 1 算。
-     */
-    suspend fun postPageOf(tid: String, pid: String): Int? = withContext(Dispatchers.IO) {
-        val location = runCatching {
-            http.redirectLocation(
-                http.url("forum.php?mod=redirect&goto=findpost&pid=$pid&ptid=$tid"),
-            )
-        }.getOrNull() ?: return@withContext null
-        Regex("""[?&]page=(\d+)""").find(location)?.groupValues?.get(1)?.toIntOrNull()
-            ?.coerceAtLeast(1)
-    }
-
-    /**
      * 私人消息 / 公共消息列表（网页端「我的消息」的两个 Tab）。
      *
      * 站点把列表放在 Tab 的 inajax 回执里：整页 HTML 的列表容器是空的，直接取页
@@ -1091,13 +1039,3 @@ private const val AT_USER_PAGE_SIZE = 24
 
 /** 好友/关注列表最多翻几页，见 [ForumRepository.fetchFriends]。 */
 private const val MAX_AT_USER_PAGES = 5
-
-/**
- * 屏蔽是否成功。
- *
- * 成功回执是 inajax XML 里的 succeedhandle_ 脚本（站点还带一句「操作成功」）；
- * 没屏蔽成时站点回整页表单，两项都取不到。不能用「不含错误词」判——失败回执里
- * 同样可能出现 formhash 之类的字样。
- */
-internal fun isIgnoreSucceeded(body: String): Boolean =
-    body.contains("succeedhandle_") || body.contains("操作成功")

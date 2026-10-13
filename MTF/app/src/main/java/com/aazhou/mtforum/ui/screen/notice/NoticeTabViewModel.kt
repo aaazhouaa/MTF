@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aazhou.mtforum.data.cache.CacheKeys
 import com.aazhou.mtforum.data.cache.ContentCache
-import com.aazhou.mtforum.data.model.Notice
 import com.aazhou.mtforum.data.model.NoticeGroup
 import com.aazhou.mtforum.data.model.NoticeTab
 import com.aazhou.mtforum.data.model.tabs
@@ -47,10 +46,6 @@ class NoticeTabViewModel(
 
     private val _tabStates = MutableStateFlow<Map<NoticeTab, NoticeTabState>>(emptyMap())
     val tabStates: StateFlow<Map<NoticeTab, NoticeTabState>> = _tabStates.asStateFlow()
-
-    /** 操作结果提示（屏蔽成功/失败等）。 */
-    private val _actionMessage = MutableStateFlow<String?>(null)
-    val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
 
     private val _currentTab = MutableStateFlow(tabs.firstOrNull())
 
@@ -175,35 +170,6 @@ class NoticeTabViewModel(
                 .onFailure { update(tab) { it.copy(loadingMore = false, hasNext = false) } }
             update(tab) { it.copy(loadingMore = false) }
         }
-    }
-
-    /**
-     * 屏蔽某位用户的某类提醒（网页端行内那个「屏蔽」）。
-     *
-     * 站点是两段式提交，仓库里封装好了；成功后本地把这条移除，用户不用等刷新。
-     */
-    fun ignore(notice: Notice) {
-        val authorid = notice.ignoreAuthorid ?: return
-        val type = notice.ignoreType ?: return
-        viewModelScope.launch {
-            val ok = runCatching { repository.ignoreNotice(authorid, type, "") }.getOrDefault(false)
-            if (ok) {
-                memoryCache.keys.toList().forEach { tab ->
-                    val content = memoryCache[tab] as? NoticeContentState.Notices ?: return@forEach
-                    val kept = content.items.filterNot { it.id == notice.id }
-                    if (kept.size != content.items.size) {
-                        updateContent(tab, content.copy(items = kept))
-                    }
-                }
-                _actionMessage.value = "已屏蔽该用户的此类提醒"
-            } else {
-                _actionMessage.value = "屏蔽失败，请稍后重试"
-            }
-        }
-    }
-
-    fun consumeActionMessage() {
-        _actionMessage.value = null
     }
 
     private suspend fun updateContent(tab: NoticeTab, content: NoticeContentState) {
