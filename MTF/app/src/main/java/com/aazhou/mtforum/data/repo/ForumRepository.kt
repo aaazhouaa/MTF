@@ -1050,7 +1050,7 @@ class ForumRepository(
     private fun readWriteResult(body: String, successText: String): Result<String> {
         if (body.isBlank()) return Result.failure(IllegalStateException("站点没有返回结果"))
         val payload = Regex("(?s)<!\\[CDATA\\[(.*?)\\]\\]>").find(body)?.groupValues?.get(1) ?: body
-        val ok = Regex("succeedhandle_|do_success|操作成功|成功收听|已成为好友").containsMatchIn(payload)
+        val ok = Regex("succeedhandle_|do_success|操作成功|发送成功|成功收听|已成为好友").containsMatchIn(payload)
         if (ok) return Result.success(successText)
         val message = ForumParser.parseAjaxMessage(body)
         val failed = Regex("errorhandle_|submit_invalid|formhash|请先登录|Access Denied|非法操作|没有权限")
@@ -1100,8 +1100,10 @@ class ForumRepository(
             "pmsubmit" to "yes",
         )
         val res = http.post(url, params, referer = referer)
-        val msg = ForumParser.parseAjaxMessage(res) ?: if (res.isNotBlank()) "发送成功" else "发送失败"
-        Result.success(msg)
+        // 站点失败时回 `errorhandle_('抱歉，不能发送空消息')` 这类回执，与成功回执一样是
+        // 非空 XML；只看「非空即成功」会把失败当成功，本地留下一条站点根本没收录的幽灵
+        // 消息。与其它写操作共用同一套判据。
+        readWriteResult(res, "发送成功")
     }
 
     /** 将用户加入黑名单（拉黑ta）。 */

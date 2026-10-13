@@ -67,6 +67,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.OffsetMapping
@@ -184,10 +185,11 @@ fun ChatScreen(
     var pendingPreview by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
     val failedSend by viewModel.failedSend.collectAsStateWithLifecycle()
 
-    // 发送失败：把文本退回输入框，别让用户重打一遍
+    // 发送失败：把文本退回输入框，别让用户重打一遍。光标落在末尾——新值默认
+    // selection 在 0，直接回填会把光标顶到文字最前面，要继续补充得手动挪回来
     LaunchedEffect(failedSend) {
         val failed = failedSend ?: return@LaunchedEffect
-        if (inputText.text.isBlank()) inputText = TextFieldValue(failed)
+        if (inputText.text.isBlank()) inputText = TextFieldValue(failed, TextRange(failed.length))
         viewModel.consumeFailedSend()
     }
 

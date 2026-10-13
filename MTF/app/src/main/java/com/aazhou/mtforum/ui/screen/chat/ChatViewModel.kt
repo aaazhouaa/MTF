@@ -22,6 +22,86 @@ import kotlinx.serialization.json.Json
 /** 输入里的贴图标记：`[img]地址[/img]`，与发送时插入的形式一致。 */
 private val RE_IMG_TAG = Regex("""\[img\](\S+?)\[/img\]""", RegexOption.IGNORE_CASE)
 
+/** 正文（本地 BBCode 原文或站点 HTML）里的图片地址。 */
+private val RE_CONTENT_IMG = Regex("""<img[^>]*?src=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+
+/** 站点表情码 `[#呵呵]`：站点渲染成行内小图，比对消息时按不存在处理。 */
+private val RE_SMILEY_CODE = Regex("""\[#[^\]]+\]""")
+
+/** 普通 BBCode 标签 `[b]`、`[/b]` 等。 */
+private val RE_BBCODE_TAG = Regex("""\[/?[a-zA-Z*][^\]]*\]""")
+
+/**
+ * 会话页消息的「身份」，用于把本地消息与站点快照里的同一条对上。
+ *
+ * 站点不给消息 id（实测消息节点无 id），时间只有「上午 06:45:45」这种文本，无法按
+ * 标识或时间戳比对；正文是唯一可用的线索。同一条消息在本地与站点两个形态下正文不同：
+ * 本地是自己输入的 BBCode 原文（`[img]网址[/img] 测试`），站点是渲染后的 HTML
+ * （`<img src="网址"> 测试`）。故统一归一成「图片地址集合 + 去标签去表情去空白后的文本」：
+ * 图片地址已过滤表情小图，文本压掉 `&nbsp;` 与所有空白，两个形态才能落到同一个键上。
+ */
+internal fun chatMessageIdentity(message: ChatMessage): String {
+    val urls = LinkedHashSet<String>()
+    RE_IMG_TAG.findAll(message.text).forEach { urls += it.groupValues[1].replace("&amp;", "&") }
+    val html = message.contentHtml
+    if (!html.isNullOrBlank()) {
+        RE_CONTENT_IMG.findAll(html).forEach { match ->
+            val src = match.groupValues[1].replace("&amp;", "&").trim()
+            // 表情图带 static/image/smiley，不是消息正文里的贴图
+            if (src.isNotEmpty() && !src.contains("smiley", true) && !src.contains("static/image", true)) {
+                urls += src
+            }
+        }
+    }
+    val text = message.text
+        .replace(RE_IMG_TAG, "")
+        .replace(RE_SMILEY_CODE, "")
+        .replace(RE_BBCODE_TAG, "")
+        .replace(RE_CONTENT_IMG, "")
+        .replace("&nbsp;", "")
+        .replace("\u00A0", "")
+        .filterNot { it.isWhitespace() }
+    return urls.joinToString("|") + "\u0000" + text
+}
+
+/**
+ * 把站点快照与本地消息合成一份会话。
+ *
+ * 站点快照是全量历史，但**刚发出的那条有同步延迟**：发完立刻取可能还没收录。
+ * 原先按「站点自己消息条数是否变多」判断收录，一旦快照没收录（或被本地幽灵消息抬高
+ * 基数），判据就再也回不到「已收录」，导致同一条既在快照里又作为本地待确认追加一次
+ * （重复），或本地已确认的那条被快照整体覆盖（丢消息）。这里改成逐条按 [chatMessageIdentity]
+ * 消耗：能对上的交给快照（顺序与内容以站点为准，对方新消息不丢），对不上的才补回末尾；
+ * 用下标记录最后一次命中位置，只补它之后的本地消息，避免把站点已删除的历史又从本地缓存复活。
+ * 站点快照里没有任何自己的消息时没有锚点，就地保留本地全部自己消息；一条都对不上
+ * （站点改了正文渲染等）时保守处理：只补本地待确认的（[ChatMessage.sending]）。
+ */
+internal fun mergeChatMessages(remote: ChatConversation, local: List<ChatMessage>): ChatConversation {
+    val localSelf = local.filter { it.isSelf }
+    if (localSelf.isEmpty()) return remote
+    val siteSelf = remote.messages.filter { it.isSelf }
+    val siteKeys = siteSelf.map(::chatMessageIdentity).toMutableList()
+
+    var lastMatched = -1
+    localSelf.forEachIndexed { index, message ->
+        val at = siteKeys.indexOf(chatMessageIdentity(message))
+        if (at >= 0) {
+            siteKeys.removeAt(at)
+            lastMatched = index
+        }
+    }
+    val tail = when {
+        // 快照里一条自己的消息都没有：新会话刚发出一条。没有可对齐的锚点，就地保留，
+        // 否则本地唯一那条（已非 sending）会被当成站点的旧历史丢掉
+        siteSelf.isEmpty() -> localSelf
+        lastMatched >= 0 -> localSelf.subList(lastMatched + 1, localSelf.size)
+        // 有站点消息但一条都对不上（站点改了正文渲染等）：只补待确认的，不复活整段本地缓存
+        else -> localSelf.filter { it.sending }
+    }
+    if (tail.isEmpty()) return remote
+    return remote.copy(messages = remote.messages + tail.map { it.copy(sending = false) })
+}
+
 class ChatViewModel(
     val touid: String,
     initialTargetName: String?,
@@ -81,8 +161,12 @@ class ChatViewModel(
     private suspend fun reload() {
         try {
             val conversation = repository.chatConversation(touid)
-            applyConversation(conversation)
-            writeDiskCache(conversation)
+            // 与发送回执同样走按身份合并：磁盘快照里可能有一条站点还没来得及收录的自己消息，
+            // 直接拿网络快照整体替换会把它抹掉（表现为重进会话就少一条）
+            val local = (_state.value as? UiState.Success)?.data?.messages.orEmpty()
+            val merged = mergeChatMessages(conversation, local)
+            applyConversation(merged)
+            writeDiskCache(merged)
         } catch (e: Exception) {
             // 已有缓存顶着就别清屏，只在什么都没拿到时才报错
             if ((_state.value as? UiState.Success) == null) {
@@ -166,22 +250,12 @@ class ChatViewModel(
                 if (result.isSuccess) {
                     // 站点会话页对刚发的这条有同步延迟：网页端发完也是把气泡直接插进页面、
                     // 再靠轮询增量补齐。此刻拿快照整体替换会把刚上屏的气泡抹掉，表现为
-                    // 发完不显示、退出重进才回来。故以快照为准（对方新消息不丢），
-                    // 快照里还没收录的那条自己消息按条数判定后补回末尾。
-                    // 不用文本比对：图片消息本地是 BBCode 原文，服务端只剩图后的字，永远对不上。
+                    // 发完不显示、退出重进才回来。改走按身份去重的合并：站点还没收录的本地
+                    // 消息保留在末尾，已收录的交给快照，既不重复也不丢。
                     runCatching {
                         val refreshed = repository.chatConversation(touid)
-                        val local = (_state.value as? UiState.Success)?.data
-                        val pendingLocal = local?.messages.orEmpty().filter { it.sending }
-                        val confirmedSelf = local?.messages.orEmpty().count { it.isSelf && !it.sending }
-                        val synced = refreshed.messages.count { it.isSelf } > confirmedSelf
-                        val merged = if (pendingLocal.isEmpty() || synced) {
-                            refreshed
-                        } else {
-                            refreshed.copy(
-                                messages = refreshed.messages + pendingLocal.map { it.copy(sending = false) },
-                            )
-                        }
+                        val local = (_state.value as? UiState.Success)?.data?.messages.orEmpty()
+                        val merged = mergeChatMessages(refreshed, local)
                         _state.value = UiState.Success(merged)
                         writeDiskCache(merged)
                     }.onFailure {
