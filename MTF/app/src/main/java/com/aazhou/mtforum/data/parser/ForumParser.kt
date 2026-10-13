@@ -1312,12 +1312,16 @@ object ForumParser {
             val isSelf = node.classNames().any { it.contains("self", ignoreCase = true) } ||
                 node.selectFirst(".msg_avt.y, .msg_avt.right, .avat.y, .avat.right") != null
 
-            // 正文只取消息内容节点，不带头像/时间；表情是 <img>（无文本），text() 自然略过
-            val text = node.selectFirst(".msg_mes")?.text()?.trim()
-                ?: node.selectFirst(".dialog_t, .dialog_c")?.text()?.trim()
-                ?: node.selectFirst("p.msg, .msg")?.text()?.trim()
-                ?: node.text().trim()
-            if (text.isBlank()) return@mapIndexedNotNull null
+            // 正文取 HTML 而非纯文本：消息里的贴图是 <img>（无文本节点），text() 会把图整张丢掉。
+            // 表情也是 <img>，交给渲染层按行内小图还原；纯贴图消息没有任何文本，不能据此丢消息
+            val contentEl = node.selectFirst(".msg_mes")
+                ?: node.selectFirst(".dialog_t, .dialog_c")
+                ?: node.selectFirst("p.msg, .msg")
+            val contentHtml = contentEl?.html()?.trim()
+            val text = contentEl?.text()?.trim() ?: node.text().trim()
+            if (text.isBlank() && !contentHtml.orEmpty().contains("<img", ignoreCase = true)) {
+                return@mapIndexedNotNull null
+            }
 
             val time = node.selectFirst(".msg_time")?.text()?.trim()
                 ?: node.selectFirst(".date, .time, span.date")?.text()?.trim()
@@ -1336,6 +1340,7 @@ object ForumParser {
             ChatMessage(
                 id = node.id().ifBlank { "${index}_${time.orEmpty()}" },
                 text = text,
+                contentHtml = contentHtml,
                 time = time,
                 isSelf = isSelf,
                 avatarUrl = avatarUrl,

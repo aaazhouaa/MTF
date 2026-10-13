@@ -34,12 +34,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -87,7 +89,11 @@ import com.aazhou.mtforum.ui.common.LoadingBox
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.AppToast
+import com.aazhou.mtforum.ui.common.ImagePreview
+import com.aazhou.mtforum.ui.common.PostContent
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.awaitImeSettled
+import com.aazhou.mtforum.ui.common.collectImageUrls
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.screen.threaddetail.ComposerScrollTracker
 import com.aazhou.mtforum.ui.screen.threaddetail.HANDOFF_GIVEUP_FRAMES
@@ -173,6 +179,26 @@ fun ChatScreen(
         }
     }
     val listState = rememberLazyListState()
+    // 消息里的图片点开则进全屏查看器；一组地址为该条消息内的全部图片，可左右翻看
+    var preview by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
+    var pendingPreview by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
+    val failedSend by viewModel.failedSend.collectAsStateWithLifecycle()
+
+    // 发送失败：把文本退回输入框，别让用户重打一遍
+    LaunchedEffect(failedSend) {
+        val failed = failedSend ?: return@LaunchedEffect
+        if (inputText.text.isBlank()) inputText = TextFieldValue(failed)
+        viewModel.consumeFailedSend()
+    }
+
+    // 键盘收起动画走完（ime 归零）才开预览：Popup 不带焦点，创建那一刻的窗口框架
+    // 按当时的 ime 高度裁掉底部一块、之后也不补回来
+    LaunchedEffect(pendingPreview) {
+        val target = pendingPreview ?: return@LaunchedEffect
+        awaitImeSettled(imeInsets, density)
+        preview = target
+        pendingPreview = null
+    }
 
     LaunchedEffect(Unit) {
         smileyPacks = runCatching { context.container().repository.smileyPacks() }
@@ -589,12 +615,23 @@ fun ChatScreen(
                                         onUserClick(uid)
                                     }
                                 },
+                                onImageClick = { urls, index ->
+                                    if (imeHeight > 0.dp) {
+                                        focusManager.clearFocus()
+                                        keyboard?.hide()
+                                    }
+                                    pendingPreview = urls to index
+                                },
                             )
                         }
                     }
                 }
             }
         }
+    }
+
+    preview?.let { (urls, index) ->
+        ImagePreview(urls = urls, initialIndex = index, onDismiss = { preview = null })
     }
 }
 
@@ -603,18 +640,11 @@ private fun ChatBubbleItem(
     message: ChatMessage,
     fallbackMyAvatar: String?,
     onAvatarClick: () -> Unit,
+    onImageClick: (List<String>, Int) -> Unit,
 ) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
     val primaryColor = MaterialTheme.colorScheme.primary
-    // 深色下主题色被提亮，白色前景对比不足；按背景亮度取前景，且深色下亮色前景统一
-    // 压到 DarkBrightTextAlpha（同全局文字规范）
-    val bubbleForeground =
-        if (primaryColor.luminance() > 0.5f) {
-            if (isDark) Color(0xFF111827).copy(alpha = DarkBrightTextAlpha) else Color(0xFF111827)
-        } else {
-            if (isDark) Color.White.copy(alpha = DarkBrightTextAlpha) else Color.White
-        }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -680,14 +710,26 @@ private fun ChatBubbleItem(
                     )
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
-                Text(
-                    text = message.text,
-                    fontSize = 15.sp,
-                    lineHeight = 21.sp,
-                    color = if (message.isSelf) bubbleForeground else bodyTextColor(),
-                )
+                ChatMessageContent(message = message, onImageClick = onImageClick)
             }
-            if (!message.time.isNullOrBlank()) {
+            if (message.sending) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(10.dp),
+                        strokeWidth = 1.5.dp,
+                        color = colors.textHint,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "发送中",
+                        fontSize = 11.sp,
+                        color = colors.textHint,
+                    )
+                }
+            } else if (!message.time.isNullOrBlank()) {
                 Text(
                     text = message.time,
                     fontSize = 11.sp,
@@ -710,6 +752,51 @@ private fun ChatBubbleItem(
                     .dimImageInDark(),
             )
         }
+    }
+}
+
+/**
+ * 气泡里的消息正文。
+ *
+ * 走 [PostContent] 而非纯文本：消息里的贴图在站点侧就是 `<img>`，按纯文本渲染会只剩
+ * 图后的那几个字。正文字色由 [LocalContentColor] 决定，己方气泡是主题色底、主题的
+ * 正文色会淹没，故气泡内重写它。
+ */
+@Composable
+private fun ChatMessageContent(message: ChatMessage, onImageClick: (List<String>, Int) -> Unit) {
+    val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+    val primaryColor = MaterialTheme.colorScheme.primary
+    // 深色下主题色被提亮，白色前景对比不足；按背景亮度取前景，且深色下亮色前景统一
+    // 压到 DarkBrightTextAlpha（同全局文字规范）
+    val foreground =
+        if (primaryColor.luminance() > 0.5f) {
+            if (isDark) Color(0xFF111827).copy(alpha = DarkBrightTextAlpha) else Color(0xFF111827)
+        } else {
+            if (isDark) Color.White.copy(alpha = DarkBrightTextAlpha) else Color.White
+        }
+    val bubbleTextColor = if (message.isSelf) foreground else bodyTextColor()
+    val html = message.contentHtml
+    if (html.isNullOrBlank()) {
+        Text(
+            text = message.text,
+            fontSize = 15.sp,
+            lineHeight = 21.sp,
+            color = bubbleTextColor,
+        )
+        return
+    }
+    val images = remember(html) { collectImageUrls(html) }
+    CompositionLocalProvider(LocalContentColor provides bubbleTextColor) {
+        PostContent(
+            html = html,
+            onImageClick = onImageClick,
+            // 把整条消息的图片都告诉正文渲染层：它回传的下标才是消息内的全局下标，
+            // 单图与图组混排时不会用组内下标去索引
+            pageImages = images,
+            bodyStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
+            selectable = false,
+        )
     }
 }
 

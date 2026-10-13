@@ -2,11 +2,14 @@ package com.aazhou.mtforum.ui.common
 
 import org.jsoup.Jsoup
 
-/** 命中即折叠的灌水关键词（包含匹配）。 */
+/** 命中即折叠的灌水关键词（包含匹配，仅短回复生效）。 */
 private val WATER_KEYWORDS = listOf(
     "感谢", "看看", "隐藏", "分享",
-    "学习学习", "学习一下", "论坛有你更精彩", "支持一下", "66666",
+    "学习学习", "学习一下", "支持一下", "66666",
 )
+
+/** 关键词包含匹配只对不超过这么多字的短回复生效：长回复里的「感谢/分享」多半是正常讨论。 */
+private const val KEYWORD_MAX_LENGTH = 5
 
 /** 折叠的灌水短语（完全匹配，不做包含判断）。 */
 private val WATER_PHRASES = hashSetOf(
@@ -15,6 +18,7 @@ private val WATER_PHRASES = hashSetOf(
     "哇哇哇", "啊啊啊", "膜拜大佬", "严肃学习", "大佬牛批",
     "谢谢啦", "谢谢了", "来了来了", "回复一下表示支持",
     "谢谢楼主", "可以可以", "小飞机来了", "小飞机来喽", "小飞机来咯",
+    "论坛有你更精彩",
 )
 
 private val RE_SMILEY_CODE = Regex("\\{:\\d+_\\d+:\\}")
@@ -40,7 +44,11 @@ fun isWaterReply(html: String?): Boolean {
     // 再去标点与符号：用于「是否有实义字符」判定
     val stripped = RE_PUNCT.replace(RE_EMOJI.replace(clean, ""), "")
 
-    if (WATER_KEYWORDS.any { textOnly.contains(it, ignoreCase = true) }) return true
+    if (clean.length <= KEYWORD_MAX_LENGTH &&
+        WATER_KEYWORDS.any { textOnly.contains(it, ignoreCase = true) }
+    ) {
+        return true
+    }
     if (WATER_PHRASES.contains(stripped) || WATER_PHRASES.contains(clean)) return true
     if (clean.length <= 2) return true
     if (stripped.isEmpty()) return true

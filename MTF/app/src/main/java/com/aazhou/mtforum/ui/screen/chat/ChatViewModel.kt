@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 
+/** 输入里的贴图标记：`[img]地址[/img]`，与发送时插入的形式一致。 */
+private val RE_IMG_TAG = Regex("""\[img\](\S+?)\[/img\]""", RegexOption.IGNORE_CASE)
+
 class ChatViewModel(
     val touid: String,
     initialTargetName: String?,
@@ -43,6 +46,14 @@ class ChatViewModel(
 
     private val _isUploading = MutableStateFlow(false)
     val isUploading: StateFlow<Boolean> = _isUploading.asStateFlow()
+
+    /** 发送失败需回填到输入框的文本（一次性，界面消费后调 [consumeFailedSend]）。 */
+    private val _failedSend = MutableStateFlow<String?>(null)
+    val failedSend: StateFlow<String?> = _failedSend.asStateFlow()
+
+    fun consumeFailedSend() {
+        _failedSend.value = null
+    }
 
     /** 贴图上传凭据（uid + hash）：会话级，取到一次就能一直用，懒加载。 */
     private var uploadCredentials: Pair<String, String>? = null
@@ -116,6 +127,27 @@ class ChatViewModel(
         val trimmed = text.trim()
         if (trimmed.isBlank() || _isSending.value) return
         _isSending.value = true
+        // 立刻用自己的输入占屏、并清空输入框：发送往返要等站点回执，等回来再上屏会明显迟一步
+        onSent()
+        val pendingId = "pending_${System.currentTimeMillis()}"
+        val pending = ChatMessage(
+            id = pendingId,
+            text = trimmed,
+            contentHtml = localContentHtml(trimmed),
+            time = "刚刚",
+            isSelf = true,
+            avatarUrl = myAvatarUrl.value,
+            sending = true,
+        )
+        val before = (_state.value as? UiState.Success)?.data
+        val baseList = before?.messages.orEmpty()
+        _state.value = UiState.Success(
+            before?.copy(messages = baseList + pending) ?: ChatConversation(
+                touid = touid,
+                targetName = _targetName.value,
+                messages = listOf(pending),
+            ),
+        )
 
         viewModelScope.launch {
             try {
@@ -126,47 +158,57 @@ class ChatViewModel(
                 }
                 if (formhash.isNullOrBlank()) {
                     AppToast.show("获取发送凭据失败，请重试")
-                    _isSending.value = false
+                    rollbackPending(pendingId, trimmed)
                     return@launch
                 }
 
                 val result = repository.sendPrivateMessage(touid, formhash, trimmed)
                 if (result.isSuccess) {
-                    onSent()
-                    // 乐观更新：在当前会话末尾追加自己的新消息
-                    val currentList = currentConv?.messages.orEmpty()
-                    val newMessage = ChatMessage(
-                        id = "temp_${System.currentTimeMillis()}",
-                        text = trimmed,
-                        time = "刚刚",
-                        isSelf = true,
-                        avatarUrl = myAvatarUrl.value,
-                    )
-                    val updatedConv = currentConv?.copy(
-                        messages = currentList + newMessage,
-                    ) ?: ChatConversation(
-                        touid = touid,
-                        targetName = _targetName.value,
-                        messages = listOf(newMessage),
-                        formhash = formhash,
-                    )
-                    _state.value = UiState.Success(updatedConv)
-
-                    // 静默拉取最新服务端状态
+                    // 静默拉取最新服务端状态；拉不到就留下本地那条已发送的消息
                     runCatching {
                         val refreshed = repository.chatConversation(touid)
                         _state.value = UiState.Success(refreshed)
                         writeDiskCache(refreshed)
+                    }.onFailure {
+                        dropSendingFlag(pendingId)
                     }
                 } else {
                     AppToast.show(result.exceptionOrNull()?.message ?: "发送失败")
+                    rollbackPending(pendingId, trimmed)
                 }
             } catch (e: Exception) {
                 AppToast.show(e.message ?: "发送失败")
+                rollbackPending(pendingId, trimmed)
             } finally {
                 _isSending.value = false
             }
         }
+    }
+
+    /** 把本地那条置为已发送（服务端刷新失败时用，避免气泡永远转圈）。 */
+    private fun dropSendingFlag(pendingId: String) {
+        val conv = (_state.value as? UiState.Success)?.data ?: return
+        _state.value = UiState.Success(
+            conv.copy(
+                messages = conv.messages.map {
+                    if (it.id == pendingId) it.copy(sending = false) else it
+                },
+            ),
+        )
+    }
+
+    /**
+     * 发送失败：把乐观插入的气泡打回输入框，不留在会话里。
+     *
+     * 文本经 [failedSend] 交给界面回填；气泡当场移除，否则刷新时它会与真正的
+     * 服务端消息共存。
+     */
+    private fun rollbackPending(pendingId: String, failedMessage: String) {
+        val conv = (_state.value as? UiState.Success)?.data ?: return
+        _state.value = UiState.Success(
+            conv.copy(messages = conv.messages.filterNot { it.id == pendingId }),
+        )
+        _failedSend.value = failedMessage
     }
 
     /**
@@ -196,6 +238,21 @@ class ChatViewModel(
             } finally {
                 _isUploading.value = false
             }
+        }
+    }
+
+    /**
+     * 本地乐观上屏那条消息的 HTML：把输入里的 `[img]地址[/img]` 先变成图片，
+     * 气泡立刻就是终态图，不必等站点回执把 BBCode 渲染成图后再翻一次。
+     */
+    private fun localContentHtml(text: String): String? {
+        if (!RE_IMG_TAG.containsMatchIn(text)) return null
+        val escaped = text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        return RE_IMG_TAG.replace(escaped) { match ->
+            "<img src=\"${match.groupValues[1].trim()}\" />"
         }
     }
 }

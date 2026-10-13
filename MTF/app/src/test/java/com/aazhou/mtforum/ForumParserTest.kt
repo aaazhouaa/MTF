@@ -2,6 +2,7 @@ package com.aazhou.mtforum
 
 import com.aazhou.mtforum.data.parser.ForumParser
 import com.aazhou.mtforum.ui.common.ContentBlock
+import com.aazhou.mtforum.ui.common.collectImageUrls
 import com.aazhou.mtforum.ui.common.parseContentBlocks
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -1380,6 +1381,49 @@ class ForumParserTest {
         assertEquals("下午 17:59:00", m2.time)
         assertEquals(true, m2.isSelf)
         assertEquals("https://avatar.mt2.cn/me.jpg", m2.avatarUrl)
+    }
+
+    @Test
+    fun `parseChatConversation keeps images in message html`() {
+        // 站点把私聊里的 [img] 外链渲染成真图：<img> 没有文本节点，只取 text() 会把图整张丢掉，
+        // 只剩图后的「测试」；纯贴图消息没有任何文本，更不能据此整条丢弃。
+        val html = """
+            <header class="header"><span class="name">小野猫</span></header>
+            <input type="hidden" name="formhash" value="abc12345" />
+            <div class="comiis_msgbox">
+                <div class="comiis_self_msg cl">
+                    <a href="home.php?mod=space&amp;uid=2&amp;do=profile"><img class="msg_avt y" src="https://avatar.mt2.cn/me.jpg" /></a>
+                    <div class="dialog_green y">
+                        <div class="msg_mes"><img src="https://cdn.binmt.cc/data/attachment/forum/a.jpg" border="0" alt="" /> 测试</div>
+                        <div class="msg_time f_d">上午&nbsp;02:43:24</div>
+                    </div>
+                </div>
+                <div class="comiis_self_msg cl">
+                    <a href="home.php?mod=space&amp;uid=2&amp;do=profile"><img class="msg_avt y" src="https://avatar.mt2.cn/me.jpg" /></a>
+                    <div class="dialog_green y">
+                        <div class="msg_mes"><img src="https://cdn.binmt.cc/data/attachment/forum/b.jpg" border="0" alt="" /></div>
+                        <div class="msg_time f_d">上午&nbsp;02:44:00</div>
+                    </div>
+                </div>
+            </div>
+        """.trimIndent()
+        val conv = ForumParser.parseChatConversation(html, "155639")
+        assertEquals(2, conv.messages.size)
+
+        val withText = conv.messages[0]
+        assertEquals("测试", withText.text)
+        assertEquals(
+            "https://cdn.binmt.cc/data/attachment/forum/a.jpg",
+            collectImageUrls(withText.contentHtml.orEmpty()).single(),
+        )
+
+        // 纯贴图消息：文本为空但图必须留下来
+        val imageOnly = conv.messages[1]
+        assertEquals("", imageOnly.text)
+        assertEquals(
+            "https://cdn.binmt.cc/data/attachment/forum/b.jpg",
+            collectImageUrls(imageOnly.contentHtml.orEmpty()).single(),
+        )
     }
 
     @Test

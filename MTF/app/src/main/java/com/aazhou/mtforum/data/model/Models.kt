@@ -412,6 +412,15 @@ data class ChatMessage(
     val time: String? = null,
     val isSelf: Boolean = false,
     val avatarUrl: String? = null,
+    /**
+     * 站点渲染后的消息正文 HTML。
+     *
+     * 消息里的贴图在站点侧是真正的 `<img>`（不是 BBCode 原文），只取纯文本会把图整张丢掉；
+     * 故渲染以 [contentHtml] 为准，[text] 只作无 HTML 时的兜底。
+     */
+    val contentHtml: String? = null,
+    /** 本地乐观上屏、站点回执还没回来的消息。 */
+    val sending: Boolean = false,
 )
 
 /** 与特定用户的聊天会话。 */
