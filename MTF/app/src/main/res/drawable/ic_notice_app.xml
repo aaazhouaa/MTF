@@ -1,0 +1,34 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 左上应用块 -->
+    <path
+        android:pathData="M4,6.5c0,-1.38 1.12,-2.5 2.5,-2.5h1c1.38,0 2.5,1.12 2.5,2.5v1c0,1.38 -1.12,2.5 -2.5,2.5h-1c-1.38,0 -2.5,-1.12 -2.5,-2.5V6.5Z"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- 右上应用块 -->
+    <path
+        android:pathData="M14,6.5c0,-1.38 1.12,-2.5 2.5,-2.5h1c1.38,0 2.5,1.12 2.5,2.5v1c0,1.38 -1.12,2.5 -2.5,2.5h-1c-1.38,0 -2.5,-1.12 -2.5,-2.5V6.5Z"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- 左下应用块 -->
+    <path
+        android:pathData="M4,16.5c0,-1.38 1.12,-2.5 2.5,-2.5h1c1.38,0 2.5,1.12 2.5,2.5v1c0,1.38 -1.12,2.5 -2.5,2.5h-1c-1.38,0 -2.5,-1.12 -2.5,-2.5V16.5Z"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- 右下应用块 -->
+    <path
+        android:pathData="M14,16.5c0,-1.38 1.12,-2.5 2.5,-2.5h1c1.38,0 2.5,1.12 2.5,2.5v1c0,1.38 -1.12,2.5 -2.5,2.5h-1c-1.38,0 -2.5,-1.12 -2.5,-2.5V16.5Z"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

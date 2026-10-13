@@ -1,7 +1,7 @@
 package com.aazhou.mtforum.ui.screen.notice
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,7 +47,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -72,6 +72,7 @@ import com.aazhou.mtforum.ui.common.SwipeTabIndicator
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -309,7 +310,7 @@ private fun NoticeListView(
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 4.dp, bottom = bottomBarContentPadding()),
+        contentPadding = PaddingValues(top = 8.dp, bottom = bottomBarContentPadding() + 12.dp),
     ) {
         items(notices, key = { it.id }) { notice ->
             NoticeRow(
@@ -340,103 +341,133 @@ private fun PrivateMessageListView(
     onUserClick: (String) -> Unit,
     onChatClick: ((String, String) -> Unit)? = null,
 ) {
-    val colors = LocalMtfColors.current
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 4.dp, bottom = bottomBarContentPadding()),
+        contentPadding = PaddingValues(top = 8.dp, bottom = bottomBarContentPadding() + 12.dp),
     ) {
         items(items, key = { it.plid ?: it.touid ?: it.username }) { pm ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        val touid = pm.touid
-                        if (!touid.isNullOrBlank() && onChatClick != null) {
-                            onChatClick(touid, pm.username)
-                        } else {
-                            touid?.let(onUserClick)
-                        }
-                    }
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(42.dp)) {
-                        AsyncImage(
-                            model = smallImageRequest(pm.avatarUrl),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(CircleShape)
-                                .background(colors.quoteBackground)
-                                .dimImageInDark(),
-                        )
-                        if (pm.unread) {
-                            Box(
-                                modifier = Modifier
-                                    .size(10.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFFFF4D4F))
-                                    .align(Alignment.TopEnd),
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                text = pm.username,
-                                style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
-                                fontWeight = FontWeight.SemiBold,
-                                color = bodyTextColor(),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (!pm.timeText.isNullOrBlank()) {
-                                Text(
-                                    text = pm.timeText,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                    color = colors.textSecondary,
-                                )
-                            }
-                        }
-                        if (pm.summary.isNotBlank()) {
-                            Text(
-                                text = pm.summary,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                                color = colors.textSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Canvas(
-                    Modifier
-                        .padding(start = 54.dp)
-                        .fillMaxWidth()
-                        .height(0.5.dp),
-                ) {
-                    drawLine(
-                        color = colors.divider,
-                        start = Offset(0f, size.height / 2f),
-                        end = Offset(size.width, size.height / 2f),
-                        strokeWidth = size.height,
-                    )
-                }
-            }
+            PrivateMessageCard(
+                pm = pm,
+                onUserClick = onUserClick,
+                onChatClick = onChatClick,
+            )
         }
     }
 }
 
+/** 单条私信会话卡片：独立圆角卡片 + 头像 + 用户名与最新摘要 + 时间 + 箭头指示。 */
+@Composable
+private fun PrivateMessageCard(
+    pm: PrivateMessage,
+    onUserClick: (String) -> Unit,
+    onChatClick: ((String, String) -> Unit)?,
+) {
+    val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 2.5.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (isDark) {
+                    Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(12.dp))
+                } else {
+                    Modifier
+                },
+            )
+            .background(colors.surface)
+            .clickable {
+                val touid = pm.touid
+                if (!touid.isNullOrBlank() && onChatClick != null) {
+                    onChatClick(touid, pm.username)
+                } else {
+                    touid?.let(onUserClick)
+                }
+            }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Box(modifier = Modifier.size(44.dp)) {
+            AsyncImage(
+                model = smallImageRequest(pm.avatarUrl),
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .background(colors.quoteBackground)
+                    .dimImageInDark(),
+            )
+            if (pm.unread) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFF4D4F))
+                        .border(1.5.dp, colors.surface, CircleShape)
+                        .align(Alignment.TopEnd),
+                )
+            }
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = pm.username,
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp),
+                fontWeight = FontWeight.Medium,
+                color = bodyTextColor(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 2.dp),
+            ) {
+                if (pm.summary.isNotBlank()) {
+                    Text(
+                        text = pm.summary,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
+                if (!pm.timeText.isNullOrBlank()) {
+                    if (pm.summary.isNotBlank()) {
+                        Text(
+                            text = " · ",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            color = colors.textHint,
+                        )
+                    }
+                    Text(
+                        text = pm.timeText,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        color = colors.textHint,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.width(8.dp))
+
+        Icon(
+            painter = painterResource(R.drawable.ic_arrow_right),
+            contentDescription = null,
+            tint = colors.textHint,
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
 /**
- * 单条提醒：头像 + 正文 + 时间 + 屏蔽。
+ * 单条提醒卡片：独立圆角卡片 + 头像/系统图标 + 正文 + 时间 + 屏蔽 + 进帖箭头。
  *
  * 站点给了主题链接才可点击；「查看」带 pid，进帖后定位到那条回复。
  */
@@ -448,89 +479,116 @@ private fun NoticeRow(
     onIgnore: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     var confirmIgnore by remember { mutableStateOf(false) }
     val clickable = notice.tid != null
-    Column(
+
+    Row(
+        verticalAlignment = Alignment.Top,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-            .then(if (clickable) Modifier.clickable(onClick = onClick) else Modifier),
+            .padding(horizontal = 6.dp, vertical = 2.5.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (isDark) {
+                    Modifier.border(0.5.dp, colors.divider, RoundedCornerShape(12.dp))
+                } else {
+                    Modifier
+                },
+            )
+            .background(colors.surface)
+            .then(if (clickable) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Row(verticalAlignment = Alignment.Top) {
-            val avatarUrl = notice.avatarUrl
-            if (avatarUrl != null) {
-                AsyncImage(
-                    model = smallImageRequest(avatarUrl),
+        val avatarUrl = notice.avatarUrl
+        if (avatarUrl != null) {
+            AsyncImage(
+                model = smallImageRequest(avatarUrl),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(colors.quoteBackground)
+                    .dimImageInDark()
+                    .then(
+                        notice.uid?.let { uid -> Modifier.clickable { onUserClick(uid) } }
+                            ?: Modifier,
+                    ),
+            )
+        } else {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        if (isDark) Color(0xFF142C20) else Color(0xFFE8F8F0),
+                    ),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_notice_system),
                     contentDescription = null,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(colors.quoteBackground)
-                        .dimImageInDark()
-                        .then(
-                            notice.uid?.let { uid -> Modifier.clickable { onUserClick(uid) } }
-                                ?: Modifier,
-                        ),
+                    tint = if (isDark) Color(0xFF34D399) else Color(0xFF059669),
+                    modifier = Modifier.size(22.dp),
                 )
-            } else {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(colors.quoteBackground),
-                ) {
-                    Icon(
-                        painterResource(R.drawable.ic_mail_line),
-                        contentDescription = null,
-                        tint = accentTextColor(),
-                        modifier = Modifier.size(17.dp),
-                    )
-                }
             }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    notice.text,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
-                    color = bodyTextColor(),
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = notice.text,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                ),
+                color = bodyTextColor(),
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
                 if (!notice.timeText.isNullOrBlank()) {
                     Text(
-                        notice.timeText,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        text = notice.timeText,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        color = colors.textHint,
+                    )
+                } else {
+                    Spacer(Modifier.width(1.dp))
+                }
+
+                if (!notice.ignoreAuthorid.isNullOrBlank() && !notice.ignoreType.isNullOrBlank()) {
+                    Text(
+                        text = "屏蔽",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                         color = colors.textSecondary,
-                        modifier = Modifier.padding(top = 5.dp),
-                    )
-                }
-                Spacer(Modifier.height(7.dp))
-                Canvas(
-                    Modifier
-                        .padding(end = 4.dp)
-                        .fillMaxWidth()
-                        .height(0.5.dp),
-                ) {
-                    drawLine(
-                        color = colors.divider,
-                        start = Offset(0f, size.height / 2f),
-                        end = Offset(size.width, size.height / 2f),
-                        strokeWidth = size.height,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { confirmIgnore = true }
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
                     )
                 }
             }
-            // 站点行内那个「屏蔽」：只在该条带了 authorid 与 type 时才给入口
-            if (!notice.ignoreAuthorid.isNullOrBlank() && !notice.ignoreType.isNullOrBlank()) {
-                Text(
-                    text = "屏蔽",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                    color = colors.textSecondary,
-                    modifier = Modifier
-                        .clickable { confirmIgnore = true }
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                )
-            }
+        }
+
+        if (clickable) {
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                painter = painterResource(R.drawable.ic_arrow_right),
+                contentDescription = null,
+                tint = colors.textHint,
+                modifier = Modifier
+                    .align(Alignment.CenterVertically)
+                    .size(16.dp),
+            )
         }
     }
 

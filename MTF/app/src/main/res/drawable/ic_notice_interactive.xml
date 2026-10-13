@@ -3,7 +3,18 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- 后面右上方对话气泡 -->
     <path
-        android:fillColor="@android:color/white"
-        android:pathData="M2.01,21L23,12 2.01,3 2,10l15,2 -15,2z" />
+        android:pathData="M10,8.5C10,5.462 12.462,3 15.5,3C18.538,3 21,5.462 21,8.5C21,9.6 20.67,10.63 20.1,11.48L20.8,14.2C20.88,14.5 20.65,14.75 20.35,14.68L17.8,14C17.1,14.3 16.32,14.5 15.5,14.5C14.7,14.5 13.9,14.3 13.2,14"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- 前面左下方主对话气泡 -->
+    <path
+        android:pathData="M14,13.5C14,16.538 11.538,19 8.5,19C7.45,19 6.47,18.7 5.64,18.17L3.4,18.8C3.12,18.88 2.88,18.64 2.96,18.36L3.59,16.12C3.21,15.34 3,14.45 3,13.5C3,10.462 5.462,8 8.5,8C11.538,8 14,10.462 14,13.5Z"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>
