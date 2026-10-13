@@ -755,9 +755,11 @@ class ThreadDetailViewModel(
             load(target, orderType = seq.orderType, stalePages = stale)
             return
         }
-        // 这一档全都拉过了：没有主加载可搭车，自己走一遍重拉再上屏
+        // 这一档全都拉过了：没有主加载可搭车。数据已在池子里，先按新档立即上屏，
+        // stale 重拉不阻塞首屏——旧页串行拉回来后再 publish 一次就地换版。
         val generation = dataGeneration
         viewModelScope.launch {
+            if (generation == dataGeneration) publish()
             refetchStale(seq, stale, generation)
             if (generation == dataGeneration) publish()
         }
