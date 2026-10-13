@@ -381,22 +381,31 @@ object ForumParser {
         }
         val authorId = JS_AUTHOR_ID.find(html)?.groupValues?.get(1)
         val firstPostIndex = postNodes.indexOfFirst { it.selectFirst("div.comiis_postli_topv1") != null }
+        // 先整体解析出楼层，第二轮再补楼层号：置顶标记要在推号前就已知，
+        // 无标签页的按序推号得把置顶占掉的那个位置扣掉
+        val parsed = postNodes.map { parsePost(it, authorId) }
+        var stickySeen = 0
         val posts = postNodes.mapIndexed { index, li ->
-            val post = parsePost(li, authorId)
+            val post = parsed[index]
             val label = li.selectFirst("span.f_d.y")?.text()?.stripInvisibleChars()
             val explicit = floorNumberOf(label)
             val floor = when {
                 post.isFirstPost -> 0
-                // 置顶楼层没有楼层号，站点只给「置顶」标记，别按锚点推一个错号出来
-                post.sticky -> null
+                // 置顶楼层：站点把它提到首帖之后，占 1 楼位置，首条普通回复才是沙发（2 楼）。
+                // 它的楼层号必须固定成 1，不能留空等装配时补——补号依赖楼层池的插入顺序，
+                // 切换排序/只看楼主后池序一变就会错位
+                post.sticky -> STICKY_FLOOR
                 // 站点给了楼层标签（「沙发」「11#」）就直接换算成楼层号
                 explicit != null -> explicit
-                // 第 1 页整页没标签时按页内序号推：站点第一条回复恒为沙发（2 楼）
-                page == 1 && firstPostIndex >= 0 -> FIRST_REPLY_FLOOR + index - firstPostIndex - 1
+                // 第 1 页整页没标签时按页内序号推：站点第一条回复恒为沙发（2 楼）。
+                // 置顶楼层排在首帖之后，先出现的置顶要扣掉，否则整页推号都多一位
+                page == 1 && firstPostIndex >= 0 ->
+                    FIRST_REPLY_FLOOR + index - firstPostIndex - 1 - stickySeen
                 // 其余页从第一个带标签的楼层往后推
                 anchorFloor != null -> anchorFloor + (index - anchorIndex)
                 else -> null
             }
+            if (index > firstPostIndex && post.sticky) stickySeen++
             post.copy(
                 floor = floor,
                 floorLabel = floorLabelOf(label, floor),
@@ -641,6 +650,15 @@ object ForumParser {
      * 第 1 页整页不给楼层标签时按它逐条往下推。
      */
     private const val FIRST_REPLY_FLOOR = 2
+
+    /**
+     * 被楼主置顶的回复的楼层号。
+     *
+     * 站点把置顶楼提到首帖之后的第一个位置，楼层号位置只给「置顶」二字、不给数字，
+     * 它占的就是 1 楼——首条普通回复仍是沙发（2 楼）。这个号必须由解析层定死，
+     * 不能留给装配层按插入顺序补。
+     */
+    private const val STICKY_FLOOR = 1
 
 
     /** 表单 hash，发帖/回复接口必需。页面中存在 input 属性与 JS 赋值两种形式。 */

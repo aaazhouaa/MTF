@@ -1544,11 +1544,34 @@ class ForumParserTest {
         val posts = ForumParser.parseThreadPage(html, 1).posts
         val sticky = posts.single { it.pid == "11947918" }
         assertTrue(sticky.sticky)
-        assertNull(sticky.floor)
-        assertNull(sticky.floorLabel)
+        // 置顶楼占首帖之后的第一个位置，即 1 楼；首条普通回复仍是沙发（2 楼）
+        assertEquals(1, sticky.floor)
+        assertEquals("1#", sticky.floorLabel)
         val normal = posts.single { it.pid == "11910144" }
         assertTrue(!normal.sticky)
         assertEquals(2, normal.floor)
+    }
+
+    @Test
+    fun stickyReplyKeepsFirstNormalReplyAtSecondFloorWhenPageHasNoLabels() {
+        val html = """
+            <html><head><title>帖子</title></head><body>
+            <div class="comiis_postli" id="pid1">
+              <div class="comiis_postli_top comiis_postli_topv1"></div>
+            </div>
+            <div class="comiis_postli" id="pid2">
+              <div class="comiis_postli_top b_t"></div>
+              <div class="comiis_a"><span class="f_d y"><span class="f_g">置顶</span> 来自#</span>被置顶的正文</div>
+            </div>
+            <div class="comiis_postli" id="pid3">
+              <div class="comiis_postli_top b_t"></div>
+              <div class="comiis_a"><div class="comiis_messages">沙发正文</div></div>
+            </div>
+            </body></html>
+        """.trimIndent()
+        val posts = ForumParser.parseThreadPage(html, 1).posts
+        assertEquals(1, posts.single { it.pid == "2" }.floor)
+        assertEquals(2, posts.single { it.pid == "3" }.floor)
     }
 
     @Test

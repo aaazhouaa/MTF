@@ -485,9 +485,15 @@ class ThreadDetailViewModel(
             // 第 2 楼），当绝对楼层用会把共用池的排序打乱、正序视图里整条跳走。过滤页只用
             // 来更新内容：已入池的沿用原来的楼层号与标签，首次入池的楼层号留空、由
             // poolOrder 按入池顺序补（标签留着——网页端在过滤页显示的正是「沙发」这类）。
+            // 置顶标记同理必须沿用：站点在过滤页不给这个标记，据它覆盖会把置顶态清掉，
+            // 客户端于是既不显「置顶」、又把它当普通楼层参与排序
             val merged = when {
                 seq.authorId == null -> post
-                existing != null -> post.copy(floor = existing.floor, floorLabel = existing.floorLabel)
+                existing != null -> post.copy(
+                    floor = existing.floor,
+                    floorLabel = existing.floorLabel,
+                    sticky = existing.sticky,
+                )
                 else -> post.copy(floor = null)
             }
             if (existing == null) added++
@@ -582,6 +588,13 @@ class ThreadDetailViewModel(
      * 三者都是同一份池子的投影，不需要各自请求。
      * 池子里可能同时有两条序列拉回来的楼层（正序从旧往新、倒序从新往旧），按楼层号
      * 排序再反向才融得成一份；倒序第一屏来自站点倒序第 1 页，即全帖最新评论。
+     *
+     * 置顶楼不参与反向：站点把它提到首帖之后的第一个位置，正序倒序它都在最上面。
+     * 整表 asReversed 会把它一并翻到最后一条（用户看到「置顶跑到最底部」），故先把它
+     * 摘出来固定在首帖之后，其余楼层才按排序方向翻转。
+     *
+     * 置顶楼同样受「只看楼主」约束：站点允许楼主置顶别人的回复，那种置顶在只看楼主时
+     * 不该出现，故先在 [filtered] 里过一遍楼主过滤，再单独摘出。
      */
     private fun viewPosts(): List<Post> {
         val all = poolOrder()
@@ -591,7 +604,11 @@ class ThreadDetailViewModel(
         } else {
             all
         }
-        return if (_orderType.value == 1) filtered.asReversed() else filtered
+        val first = filtered.filter { it.isFirstPost }
+        val sticky = filtered.filter { !it.isFirstPost && it.sticky }
+        val rest = filtered.filter { !it.isFirstPost && !it.sticky }
+        val orderedRest = if (_orderType.value == 1) rest.asReversed() else rest
+        return first + sticky + orderedRest
     }
 
     /** 按当前视图装配出的「一页」：内容来自池子，页码与会话态来自各自的记录。 */
