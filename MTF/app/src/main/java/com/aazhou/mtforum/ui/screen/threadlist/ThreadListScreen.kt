@@ -26,6 +26,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -175,6 +176,7 @@ fun ThreadListScreen(
                 tab = tab,
                 listState = listStates[page],
                 onRetry = { viewModel.retry(sort) },
+                onRefresh = { viewModel.refresh(sort) },
                 onLoadMore = { viewModel.loadMore(sort) },
                 onThreadClick = onThreadClick,
                 onUserClick = onUserClick,
@@ -188,12 +190,14 @@ fun ThreadListScreen(
     }
 }
 
-/** 单个档位的帖子流：公告卡 + 帖子卡片流，滑到底自动追加下一页。 */
+/** 单个档位的帖子流：公告卡 + 帖子卡片流，滑到底自动追加下一页，支持下拉刷新。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ForumThreadList(
     tab: ForumTabState,
     listState: LazyListState,
     onRetry: () -> Unit,
+    onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onThreadClick: (tid: String) -> Unit,
     onUserClick: (uid: String) -> Unit,
@@ -220,41 +224,47 @@ private fun ForumThreadList(
                 LaunchedEffect(shouldLoadMore, tab.hasNext) {
                     if (shouldLoadMore && tab.hasNext) onLoadMore()
                 }
-                LazyColumn(
-                    state = listState,
-                    // 发帖入口已移到顶栏，底部只留普通收尾留白
-                    contentPadding = PaddingValues(top = 2.5.dp, bottom = 24.dp),
+                PullToRefreshBox(
+                    isRefreshing = tab.refreshing,
+                    onRefresh = onRefresh,
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    if (data.announcements.isNotEmpty()) {
-                        item(key = "announcements") {
-                            RankCard(
-                                "公告",
-                                data.announcements,
-                                onThreadClick,
-                                collapsedLimit = RankCollapsedLimit,
-                                expanded = announcementExpanded,
-                                onToggleExpanded = { announcementExpanded = !announcementExpanded },
+                    LazyColumn(
+                        state = listState,
+                        // 发帖入口已移到顶栏，底部只留普通收尾留白
+                        contentPadding = PaddingValues(top = 2.5.dp, bottom = 24.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        if (data.announcements.isNotEmpty()) {
+                            item(key = "announcements") {
+                                RankCard(
+                                    "公告",
+                                    data.announcements,
+                                    onThreadClick,
+                                    collapsedLimit = RankCollapsedLimit,
+                                    expanded = announcementExpanded,
+                                    onToggleExpanded = { announcementExpanded = !announcementExpanded },
+                                )
+                            }
+                        }
+                        items(data.threads, key = { it.tid }) { thread ->
+                            // 列表本身已限定在当前版块，卡片不再重复显示版块名
+                            ThreadCard(
+                                thread = thread,
+                                onClick = { onThreadClick(thread.tid) },
+                                onImageClick = onImageClick,
+                                onUserClick = onUserClick,
+                                showForumName = false,
                             )
                         }
-                    }
-                    items(data.threads, key = { it.tid }) { thread ->
-                        // 列表本身已限定在当前版块，卡片不再重复显示版块名
-                        ThreadCard(
-                            thread = thread,
-                            onClick = { onThreadClick(thread.tid) },
-                            onImageClick = onImageClick,
-                            onUserClick = onUserClick,
-                            showForumName = false,
-                        )
-                    }
-                    if (tab.loadingMore) {
-                        item(key = "loading-more") {
-                            Box(
-                                Modifier.fillMaxWidth().padding(16.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                CircularProgressIndicator(Modifier.size(22.dp))
+                        if (tab.loadingMore) {
+                            item(key = "loading-more") {
+                                Box(
+                                    Modifier.fillMaxWidth().padding(16.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    CircularProgressIndicator(Modifier.size(22.dp))
+                                }
                             }
                         }
                     }

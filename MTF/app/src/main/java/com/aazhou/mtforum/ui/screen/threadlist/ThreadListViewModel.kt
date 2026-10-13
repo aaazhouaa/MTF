@@ -21,6 +21,8 @@ data class ForumTabState(
     val page: Int = 1,
     val loadingMore: Boolean = false,
     val hasNext: Boolean = true,
+    /** 下拉刷新中：与 [state] 独立，刷新期间保留旧列表不清屏。 */
+    val refreshing: Boolean = false,
 )
 
 class ThreadListViewModel(
@@ -79,6 +81,18 @@ class ThreadListViewModel(
     /** 加载失败后的重试：不受「已加载过」限制，直接重拉第一页。 */
     fun retry(sort: ForumSort) {
         viewModelScope.launch { reload(sort) }
+    }
+
+    /** 下拉刷新：回到第 1 页，已追加的页一并作废，刷新期间保留旧列表不清屏。 */
+    fun refresh(sort: ForumSort) {
+        if (_tabStates.value[sort]?.refreshing == true) return
+        loadMoreJobs[sort]?.cancel()
+        update(sort) { it.copy(loadingMore = false) }
+        viewModelScope.launch {
+            update(sort) { it.copy(refreshing = true) }
+            reload(sort)
+            update(sort) { it.copy(refreshing = false) }
+        }
     }
 
     private suspend fun reload(sort: ForumSort) {
