@@ -42,7 +42,7 @@ android {
         release {
             // 优先用正式签名（仓库外 .secrets/mtf/keystore.properties），缺失时回退 debug 签名
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
