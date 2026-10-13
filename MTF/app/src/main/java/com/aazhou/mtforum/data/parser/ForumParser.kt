@@ -1212,27 +1212,46 @@ object ForumParser {
             ?: headText.trim().removeSuffix("(在线)").removeSuffix("(离线)").trim().ifEmpty { null }
         val targetOnline = headText.takeIf { it.contains("(在线)") || it.contains("(离线)") }
             ?.contains("(在线)")
-        val nodes = document.select(".msgbox > div[class*='msg'], .friend_msg, .self_msg, .msgbox li, .comiis_pmlist li")
+        // 真实 comiis 结构是 `div.comiis_self_msg`（自己）/ `div.comiis_friend_msg`（对方），
+        // 旧版（测试用例沿用）是 `div.self_msg` / `div.friend_msg`；日期分隔 `comiis_msg_date`
+        // 与外层容器 `comiis_msgbox` 不含这两类 class，自然被排除。类选择器按 token 匹配，
+        // 能正确命中 `class="comiis_self_msg cl"` 这种带浮动工具类的节点。
+        val nodes = document.select(
+            "div.comiis_self_msg, div.comiis_friend_msg, div.self_msg, div.friend_msg",
+        )
+            .ifEmpty {
+                document.select(".msgbox li, .comiis_pmlist li")
+            }
             .ifEmpty {
                 document.select("div.dialog_green, div.dialog_white")
             }
-            .ifEmpty {
-                document.select("div:has(> .dialog_c), div:has(> div > .dialog_t)")
-            }
 
         val messages = nodes.mapIndexedNotNull { index, node ->
-            val isSelf = node.hasClass("self_msg") ||
-                node.classNames().any { it.contains("self") || it.contains("my") } ||
-                node.selectFirst(".dialog_white, .self_msg") != null ||
-                node.selectFirst(".avat.y, .avat.right") != null
+            // 只信 class 名里的 self 与头像的浮动方向（.y/.right = 自己），不能拿气泡颜色判：
+            // 真实站点自己=dialog_green，旧版测试用例自己=dialog_white，两者语义相反。
+            val isSelf = node.classNames().any { it.contains("self", ignoreCase = true) } ||
+                node.selectFirst(".msg_avt.y, .msg_avt.right, .avat.y, .avat.right") != null
 
-            val text = node.selectFirst(".dialog_t, .dialog_c, p.msg, .msg")?.text()?.trim()
-                ?: node.selectFirst("p")?.text()?.trim()
+            // 正文只取消息内容节点，不带头像/时间；表情是 <img>（无文本），text() 自然略过
+            val text = node.selectFirst(".msg_mes")?.text()?.trim()
+                ?: node.selectFirst(".dialog_t, .dialog_c")?.text()?.trim()
+                ?: node.selectFirst("p.msg, .msg")?.text()?.trim()
                 ?: node.text().trim()
             if (text.isBlank()) return@mapIndexedNotNull null
 
-            val time = node.selectFirst(".date, .time, span.date")?.text()?.trim()
-            val avatarUrl = node.selectFirst("img")?.absUrl("src")?.takeIf { it.isNotBlank() }
+            val time = node.selectFirst(".msg_time")?.text()?.trim()
+                ?: node.selectFirst(".date, .time, span.date")?.text()?.trim()
+
+            // 头像必须是消息框外的头像图（msg_avt / .avat 里的 <img>），不能落到正文里的表情
+            // <img>。表情图地址带 static/image/smiley，最后一级兜底据此排除。
+            val avatarUrl = node.selectFirst("img.msg_avt")?.absUrl("src")?.takeIf { it.isNotBlank() }
+                ?: node.selectFirst(".avat img, a > img")?.absUrl("src")?.takeIf { it.isNotBlank() }
+                ?: node.select("img").firstOrNull { img ->
+                    val src = img.absUrl("src")
+                    src.isNotBlank() &&
+                        !src.contains("smiley", ignoreCase = true) &&
+                        !src.contains("static/image", ignoreCase = true)
+                }?.absUrl("src")
 
             ChatMessage(
                 id = node.id().ifBlank { "${index}_${time.orEmpty()}" },

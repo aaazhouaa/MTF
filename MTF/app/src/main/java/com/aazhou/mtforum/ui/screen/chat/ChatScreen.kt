@@ -591,42 +591,28 @@ private fun ChatBubbleItem(
     val isDark = LocalIsDarkTheme.current
     val primaryColor = MaterialTheme.colorScheme.primary
 
-    Column(
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = if (message.isSelf) Alignment.End else Alignment.Start,
+        horizontalArrangement = if (message.isSelf) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Top,
     ) {
-        if (!message.time.isNullOrBlank()) {
-            Text(
-                text = message.time,
-                fontSize = 11.sp,
-                color = colors.textHint,
+        if (!message.isSelf) {
+            // 对方头像
+            AsyncImage(
+                model = smallImageRequest(message.avatarUrl),
+                contentDescription = null,
                 modifier = Modifier
-                    .padding(bottom = 6.dp)
-                    .align(Alignment.CenterHorizontally),
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(colors.quoteBackground)
+                    .clickable(onClick = onAvatarClick)
+                    .dimImageInDark(),
             )
+            Spacer(Modifier.width(8.dp))
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = if (message.isSelf) Arrangement.End else Arrangement.Start,
-            verticalAlignment = Alignment.Top,
-        ) {
-            if (!message.isSelf) {
-                // 对方头像
-                AsyncImage(
-                    model = smallImageRequest(message.avatarUrl),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(colors.quoteBackground)
-                        .clickable(onClick = onAvatarClick)
-                        .dimImageInDark(),
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-
-            // 气泡
+        // 气泡与时间同列：时间贴气泡下沿，靠气泡所在侧对齐（己方靠右、对方靠左）
+        Column(horizontalAlignment = if (message.isSelf) Alignment.End else Alignment.Start) {
             Box(
                 modifier = Modifier
                     .widthIn(max = 280.dp)
@@ -671,20 +657,28 @@ private fun ChatBubbleItem(
                     color = if (message.isSelf) Color.White else bodyTextColor(),
                 )
             }
-
-            if (message.isSelf) {
-                Spacer(Modifier.width(8.dp))
-                // 己方头像
-                AsyncImage(
-                    model = smallImageRequest(message.avatarUrl ?: fallbackMyAvatar),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(colors.quoteBackground)
-                        .dimImageInDark(),
+            if (!message.time.isNullOrBlank()) {
+                Text(
+                    text = message.time,
+                    fontSize = 11.sp,
+                    color = colors.textHint,
+                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
+        }
+
+        if (message.isSelf) {
+            Spacer(Modifier.width(8.dp))
+            // 己方头像
+            AsyncImage(
+                model = smallImageRequest(message.avatarUrl ?: fallbackMyAvatar),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(colors.quoteBackground)
+                    .dimImageInDark(),
+            )
         }
     }
 }

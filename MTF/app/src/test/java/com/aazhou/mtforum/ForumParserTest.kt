@@ -1305,6 +1305,48 @@ class ForumParserTest {
     }
 
     @Test
+    fun `parseChatConversation handles comiis structure with smiley`() {
+        // 真实 comiis 私聊 DOM：self/friend 区分靠 comiis_self_msg/comiis_friend_msg，
+        // 头像在 img.msg_avt（气泡外），正文 .msg_mes，时间 .msg_time；正文里的表情是 <img>。
+        // 旧解析器会选中气泡节点、把表情图当头像、正文带时间，这里锁定新行为。
+        val html = """
+            <header class="header"><span class="name">小野猫</span></header>
+            <input type="hidden" name="formhash" value="abc12345" />
+            <div class="comiis_msgbox">
+                <div class="comiis_friend_msg cl">
+                    <a href="home.php?mod=space&amp;uid=1&amp;do=profile"><img class="msg_avt z" src="https://avatar.mt2.cn/friend.jpg" /></a>
+                    <div class="dialog_white z">
+                        <div class="msg_mes">你好<img src="https://bbs.binmt.cc/static/image/smiley/tb_1.png" /></div>
+                        <div class="msg_time f_d">下午&nbsp;17:58:29</div>
+                    </div>
+                </div>
+                <div class="comiis_self_msg cl">
+                    <a href="home.php?mod=space&amp;uid=2&amp;do=profile"><img class="msg_avt y" src="https://avatar.mt2.cn/me.jpg" /></a>
+                    <div class="dialog_green y">
+                        <div class="msg_mes">在呀<img src="https://bbs.binmt.cc/static/image/smiley/tb_2.png" /></div>
+                        <div class="msg_time f_d">下午&nbsp;17:59:00</div>
+                    </div>
+                </div>
+            </div>
+        """.trimIndent()
+        val conv = ForumParser.parseChatConversation(html, "144405")
+        assertEquals("小野猫", conv.targetName)
+        assertEquals(2, conv.messages.size)
+
+        val m1 = conv.messages[0]
+        assertEquals("你好", m1.text)
+        assertEquals("下午 17:58:29", m1.time)
+        assertEquals(false, m1.isSelf)
+        assertEquals("https://avatar.mt2.cn/friend.jpg", m1.avatarUrl)
+
+        val m2 = conv.messages[1]
+        assertEquals("在呀", m2.text)
+        assertEquals("下午 17:59:00", m2.time)
+        assertEquals(true, m2.isSelf)
+        assertEquals("https://avatar.mt2.cn/me.jpg", m2.avatarUrl)
+    }
+
+    @Test
     fun parseNewThreadInitWithTypesAndUploadCredentials() {
         val html = """
             <html>
