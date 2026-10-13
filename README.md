@@ -1,6 +1,6 @@
 # MTF
 
-MTF 是一款 [MT 论坛](https://bbs.binmt.cc/)（bbs.binmt.cc）的第三方 Android 客户端，使用 Kotlin 与 Jetpack Compose 从零构建。
+MTF 是一款 [MT 论坛](https://bbs.binmt.cc/)（bbs.binmt.cc）的第三方 Android 客户端，使用 Kotlin 与 Jetpack Compose 从零构建。代码位于本仓库的 [`MTF/`](MTF/) 目录。
 
 ## 功能特性
 
@@ -39,14 +39,15 @@ MTF 是一款 [MT 论坛](https://bbs.binmt.cc/)（bbs.binmt.cc）的第三方 A
 
 - JDK 21
 - Android SDK（`compileSdk 36`、`buildTools 36.0.0`）
-- Gradle 8.14.2（随项目 `gradlew` 提供）
+- Gradle 8.14.2（随项目 `MTF/gradlew` 提供）
 
 ```bash
+cd MTF
 # 构建 Release APK
 ./gradlew :app:assembleRelease
 ```
 
-构建产物为 `app/build/outputs/apk/release/MTF-v<version>.apk`。
+构建产物为 `MTF/app/build/outputs/apk/release/MTF-v<version>.apk`。
 
 > Release 签名：若仓库外的 `.secrets/mtf/keystore.properties` 存在则使用正式签名，否则回退为 debug 签名，便于直接安装测试。
 
@@ -60,7 +61,7 @@ MTF 是一款 [MT 论坛](https://bbs.binmt.cc/)（bbs.binmt.cc）的第三方 A
 ## 项目结构
 
 ```
-app/src/main/java/com/aazhou/mtforum/
+MTF/app/src/main/java/com/aazhou/mtforum/
 ├── data/                  # 数据层
 │   ├── cache/             # 磁盘快照缓存
 │   ├── download/          # 帖子下载与离线存档
@@ -82,6 +83,7 @@ app/src/main/java/com/aazhou/mtforum/
 ## 测试
 
 ```bash
+cd MTF
 ./gradlew :app:testReleaseUnitTest
 ```
 
