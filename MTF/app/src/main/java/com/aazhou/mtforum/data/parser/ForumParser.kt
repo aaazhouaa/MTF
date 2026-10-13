@@ -904,9 +904,6 @@ object ForumParser {
     /** 分页器里指向某一页的链接：do=notice&view=X&page=N。 */
     private val RE_NOTICE_PAGE = Regex("""[?&]page=(\d+)""")
 
-    /** 提醒里帖子标题的最大显示长度，超出部分用省略号代替。 */
-    private const val NOTICE_TITLE_MAX = 8
-
     /** 帖子地址里的页码：`viewthread&tid=X&page=N` 或 `thread-X-N-1.html`。 */
     private val RE_THREAD_PAGE = Regex("""[?&]page=(\d+)|thread-\d+-(\d+)-""")
 
@@ -994,14 +991,6 @@ object ForumParser {
                     ?: RE_TID.find(href)?.groupValues?.get(1)
             }
             .firstOrNull()
-        // 帖子标题超长时截断：提醒行只有一行多点，长标题会把正文挤没了
-        val titleLink = body?.select("a[href]")?.firstOrNull {
-            RE_NOTICE_TID.containsMatchIn(it.attr("href"))
-        }
-        val fullTitle = titleLink?.text()?.trim()?.ifBlank { null }
-        if (fullTitle != null && fullTitle.length > NOTICE_TITLE_MAX) {
-            text = text.replace(fullTitle, fullTitle.take(NOTICE_TITLE_MAX) + "…")
-        }
         // 站点给每条提醒一个稳定 id（屏蔽链接的 a_note_NNNN）；列表 key 用它，
         // 新消息插到前面时后面的行不会因为下标平移而整批重建
         val noteId = li.selectFirst("a[id^=a_note_]")?.id()?.removePrefix("a_note_")

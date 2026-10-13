@@ -525,7 +525,7 @@ private fun NoticeRow(
                     lineHeight = 20.sp,
                 ),
                 color = bodyTextColor(),
-                maxLines = 4,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
 

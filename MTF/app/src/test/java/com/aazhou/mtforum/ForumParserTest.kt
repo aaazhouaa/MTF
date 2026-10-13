@@ -859,10 +859,10 @@ class ForumParserTest {
         val first = notices.notices[0]
         assertEquals("174032", first.tid)
         assertEquals("昨天 15:22", first.timeText)
-        // 帖子标题超过 8 字截断成省略号，正文与「查看」都不受污染
+        // 长标题不再截断，交给 UI 单行省略号；正文与「查看」都不受污染
         assertTrue(first.text.contains("rsuyeug 回复了您的帖子"))
-        assertTrue(first.text.contains("(停更)MT论坛…"))
-        assertTrue(!first.text.contains("app"))
+        assertTrue(first.text.contains("(停更)MT论坛app(液态玻璃)"))
+        assertTrue(!first.text.contains("…"))
         assertTrue(!first.text.contains("查看"))
         assertTrue(!first.text.contains("忽略"))
         // 互动类提醒带头像链接：a.notice_img 的 img.src 是头像，href 里带 uid（点头像进个人主页）
@@ -872,7 +872,7 @@ class ForumParserTest {
 
     @Test
     fun noticeTitleKeptWhenShort() {
-        // 标题不超过 8 字时原样保留
+        // 短标题原样保留，解析层不做任何截断
         val html = """
             <html><body>
             <div class="comiis_notices_box"><div class="comiis_notice_list"><ul>
