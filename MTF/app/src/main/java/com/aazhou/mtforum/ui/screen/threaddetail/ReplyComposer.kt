@@ -1172,7 +1172,8 @@ internal fun SmileyOverlay(
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
                             .absoluteOffset(left.toDp(), top.toDp())
-                            .requiredSize(side.toDp()),
+                            .requiredSize(side.toDp())
+                            .dimImageInDark(),
                     )
                 }
             }
@@ -1498,7 +1499,9 @@ internal fun SmileyPanel(
                         AsyncImage(
                             model = pack.items.first().url,
                             contentDescription = pack.name,
-                            modifier = Modifier.size(24.dp),
+                            modifier = Modifier
+                                .size(24.dp)
+                                .dimImageInDark(),
                         )
                     }
                 }
@@ -1591,7 +1594,9 @@ private fun SmileyCell(
         AsyncImage(
             model = smiley.url,
             contentDescription = smiley.code,
-            modifier = Modifier.size(iconSize),
+            modifier = Modifier
+                .size(iconSize)
+                .dimImageInDark(),
         )
     }
 }

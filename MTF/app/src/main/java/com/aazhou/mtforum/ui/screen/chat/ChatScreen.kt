@@ -56,6 +56,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -100,6 +101,7 @@ import com.aazhou.mtforum.ui.screen.threaddetail.formatRichComposerText
 import com.aazhou.mtforum.ui.screen.threaddetail.insertAtSelection
 import com.aazhou.mtforum.ui.screen.threaddetail.prepareUploadFile
 import com.aazhou.mtforum.ui.screen.threaddetail.snapSelectionOutOfSmiley
+import com.aazhou.mtforum.ui.theme.DarkBrightTextAlpha
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -114,6 +116,7 @@ fun ChatScreen(
     onUserClick: ((String) -> Unit)? = null,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     val viewModel: ChatViewModel = appViewModel {
         ChatViewModel(uid, targetName, it.repository, it.sessionStore)
     }
@@ -465,12 +468,25 @@ fun ChatScreen(
                         Spacer(Modifier.weight(1f))
 
                         val canSend = inputText.text.isNotBlank() && !isSending
+                        // 深色下主题色被提亮，白字/白图标对比不足；同搜索按钮，按背景亮度取前景
+                        // 并压暗背景；深色下亮色前景再压到 DarkBrightTextAlpha
+                        val sendForeground = if (primaryColor.luminance() > 0.5f) {
+                            Color(0xFF111827)
+                        } else {
+                            if (isDark) Color.White.copy(alpha = DarkBrightTextAlpha) else Color.White
+                        }
+                        val sendBackground =
+                            if (canSend) {
+                                if (isDark) primaryColor.copy(alpha = 0.5f) else primaryColor
+                            } else {
+                                primaryColor.copy(alpha = 0.35f)
+                            }
 
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
                                 .clip(CircleShape)
-                                .background(if (canSend) primaryColor else primaryColor.copy(alpha = 0.35f))
+                                .background(sendBackground)
                                 .clickable(enabled = canSend) {
                                     val msg = inputText.text
                                     viewModel.sendMessage(msg) {
@@ -483,13 +499,13 @@ fun ChatScreen(
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
                                     strokeWidth = 2.dp,
-                                    color = Color.White,
+                                    color = sendForeground,
                                 )
                             } else {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_send),
                                     contentDescription = "发送",
-                                    tint = Color.White,
+                                    tint = sendForeground,
                                     modifier = Modifier.size(18.dp),
                                 )
                             }
@@ -591,6 +607,14 @@ private fun ChatBubbleItem(
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
     val primaryColor = MaterialTheme.colorScheme.primary
+    // 深色下主题色被提亮，白色前景对比不足；按背景亮度取前景，且深色下亮色前景统一
+    // 压到 DarkBrightTextAlpha（同全局文字规范）
+    val bubbleForeground =
+        if (primaryColor.luminance() > 0.5f) {
+            if (isDark) Color(0xFF111827).copy(alpha = DarkBrightTextAlpha) else Color(0xFF111827)
+        } else {
+            if (isDark) Color.White.copy(alpha = DarkBrightTextAlpha) else Color.White
+        }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -636,7 +660,12 @@ private fun ChatBubbleItem(
                     )
                     .then(
                         if (message.isSelf) {
-                            Modifier.background(primaryColor.copy(alpha = 0.69f))
+                            // 浅色模式用 69% 主题色，深色模式压到 50%：叠加在深色底上更融，
+                            // 白字对比度也随之提高（同搜索按钮）
+                            Modifier.background(
+                                if (isDark) primaryColor.copy(alpha = 0.5f)
+                                else primaryColor.copy(alpha = 0.69f),
+                            )
                         } else {
                             Modifier
                                 .then(
@@ -655,7 +684,7 @@ private fun ChatBubbleItem(
                     text = message.text,
                     fontSize = 15.sp,
                     lineHeight = 21.sp,
-                    color = if (message.isSelf) Color.White else bodyTextColor(),
+                    color = if (message.isSelf) bubbleForeground else bodyTextColor(),
                 )
             }
             if (!message.time.isNullOrBlank()) {
