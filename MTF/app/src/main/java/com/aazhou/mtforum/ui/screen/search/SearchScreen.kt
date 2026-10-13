@@ -59,9 +59,11 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -117,7 +119,7 @@ fun SearchScreen(
     val forumState by viewModel.forumState.collectAsStateWithLifecycle()
     val userState by viewModel.userState.collectAsStateWithLifecycle()
 
-    var input by remember { mutableStateOf(viewModel.keyword) }
+    var input by remember { mutableStateOf(TextFieldValue(viewModel.keyword)) }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
 
@@ -135,7 +137,7 @@ fun SearchScreen(
     val performSearch: (String) -> Unit = { query ->
         val trimmed = query.trim()
         if (trimmed.isNotEmpty()) {
-            input = trimmed
+            input = TextFieldValue(trimmed, selection = TextRange(trimmed.length))
             keyboardController?.hide()
             viewModel.submit(trimmed)
             val updated = (listOf(trimmed) + historyList.filterNot { it.equals(trimmed, ignoreCase = true) }).take(12)
@@ -225,13 +227,13 @@ fun SearchScreen(
                             ),
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = { performSearch(input) }),
+                            keyboardActions = KeyboardActions(onSearch = { performSearch(input.text) }),
                             modifier = Modifier
                                 .weight(1f)
                                 .focusRequester(focusRequester),
                             decorationBox = { innerTextField ->
                                 Box(contentAlignment = Alignment.CenterStart) {
-                                    if (input.isEmpty()) {
+                                    if (input.text.isEmpty()) {
                                         Text(
                                             "输入关键词搜索帖子...",
                                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp),
@@ -244,7 +246,7 @@ fun SearchScreen(
                         )
 
                         AnimatedVisibility(
-                            visible = input.isNotEmpty(),
+                            visible = input.text.isNotEmpty(),
                             enter = fadeIn(),
                             exit = fadeOut(),
                         ) {
@@ -252,7 +254,7 @@ fun SearchScreen(
                                 modifier = Modifier
                                     .size(24.dp)
                                     .clip(CircleShape)
-                                    .clickable { input = "" },
+                                    .clickable { input = TextFieldValue("") },
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
@@ -283,7 +285,7 @@ fun SearchScreen(
                             .height(36.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .background(buttonBackground)
-                            .clickable { performSearch(input) }
+                            .clickable { performSearch(input.text) }
                             .padding(horizontal = 14.dp),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -443,7 +445,7 @@ fun SearchScreen(
                         }
                     }
                     is UiState.Loading -> LoadingBox()
-                    is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
+                    is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input.text) })
                     is UiState.Success -> {
                         val result = current.data
                         if (result.threads.isEmpty()) {
@@ -491,7 +493,7 @@ fun SearchScreen(
                         when (val current = forumState) {
                             null -> EmptyBox("输入关键词搜索圈子")
                             is UiState.Loading -> LoadingBox()
-                            is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
+                            is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input.text) })
                             is UiState.Success -> {
                                 val forums = current.data
                                 if (forums.isEmpty()) {
@@ -517,7 +519,7 @@ fun SearchScreen(
                         when (val current = userState) {
                             null -> EmptyBox("输入关键词搜索用户")
                             is UiState.Loading -> LoadingBox()
-                            is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input) })
+                            is UiState.Error -> ErrorBox(current.message, { viewModel.submit(input.text) })
                             is UiState.Success -> {
                                 val users = current.data
                                 if (users.isEmpty()) {
