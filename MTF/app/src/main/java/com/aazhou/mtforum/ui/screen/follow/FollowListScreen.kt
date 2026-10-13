@@ -1,9 +1,9 @@
 package com.aazhou.mtforum.ui.screen.follow
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,7 +30,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -575,35 +574,52 @@ private fun FollowUserCard(
                 )
             }
         }
-        Column(horizontalAlignment = Alignment.End) {
+        Spacer(Modifier.width(8.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             if (showRemark) {
-                Text(
-                    if (remark != null) "修改备注" else "备注",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                    color = colors.textSecondary,
+                Box(
                     modifier = Modifier
-                        .padding(bottom = 6.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable(onClick = onRemark)
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                )
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .border(0.8.dp, colors.divider, CircleShape)
+                        .clickable(onClick = onRemark),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_edit_two),
+                        contentDescription = "备注",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
             }
-            OutlinedButton(
-                onClick = onToggleFollow,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (user.isFollowing) colors.textSecondary else MaterialTheme.colorScheme.primary,
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    if (user.isFollowing) colors.divider else MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.6f else 0.4f),
-                ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            val isFollowed = user.isFollowing
+            Box(
+                modifier = Modifier
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .then(
+                        if (isFollowed) {
+                            Modifier
+                                .border(0.8.dp, colors.divider, RoundedCornerShape(14.dp))
+                                .background(colors.surface)
+                        } else {
+                            Modifier
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                        },
+                    )
+                    .clickable(onClick = onToggleFollow)
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    if (user.isFollowing) "已关注" else "+ 关注",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
+                    if (isFollowed) "已关注" else "+ 关注",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    fontWeight = if (isFollowed) FontWeight.Normal else FontWeight.Medium,
+                    color = if (isFollowed) colors.textSecondary else accentTextColor(),
                 )
             }
         }
