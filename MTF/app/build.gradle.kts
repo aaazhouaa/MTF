@@ -1,3 +1,5 @@
+import java.io.FileInputStream
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -20,10 +22,26 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        val keystoreProps = rootProject.file("../../.secrets/mtf/keystore.properties")
+        val props = Properties()
+        if (keystoreProps.exists()) {
+            FileInputStream(keystoreProps).use { props.load(it) }
+        }
+        if (props.isNotEmpty()) {
+            create("release") {
+                storeFile = file(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // release 复用 debug 签名，产出可直接安装的包
-            signingConfig = signingConfigs.getByName("debug")
+            // 优先用正式签名（仓库外 .secrets/mtf/keystore.properties），缺失时回退 debug 签名
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

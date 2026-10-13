@@ -10,4 +10,5 @@
 .cxx
 /local.properties
 *.keystore
+/signing/
 /.kotlin
