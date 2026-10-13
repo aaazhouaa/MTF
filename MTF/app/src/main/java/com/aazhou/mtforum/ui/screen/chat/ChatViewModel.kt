@@ -2,6 +2,8 @@ package com.aazhou.mtforum.ui.screen.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aazhou.mtforum.data.cache.CacheKeys
+import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.model.ChatConversation
 import com.aazhou.mtforum.data.model.ChatMessage
 import com.aazhou.mtforum.data.repo.ForumRepository
@@ -15,16 +17,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 
 class ChatViewModel(
     val touid: String,
     initialTargetName: String?,
     private val repository: ForumRepository,
     private val sessionStore: SessionStore,
+    private val contentCache: ContentCache,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState<ChatConversation>>(UiState.Loading)
     val state: StateFlow<UiState<ChatConversation>> = _state.asStateFlow()
+
+    private val cacheJson = Json { ignoreUnknownKeys = true }
 
     private val _targetName = MutableStateFlow(initialTargetName?.ifBlank { null } ?: "聊天")
     val targetName: StateFlow<String> = _targetName.asStateFlow()
@@ -49,29 +55,61 @@ class ChatViewModel(
     }
 
     fun load() {
-        _state.value = UiState.Loading
         viewModelScope.launch {
-            _state.value = try {
-                val conversation = repository.chatConversation(touid)
-                conversation.targetName?.takeIf { it.isNotBlank() }?.let {
-                    _targetName.value = it
-                }
-                val convAvatar = conversation.messages.firstOrNull { !it.isSelf && !it.avatarUrl.isNullOrBlank() }?.avatarUrl
-                if (!convAvatar.isNullOrBlank()) {
-                    _targetAvatarUrl.value = convAvatar
-                } else if (_targetAvatarUrl.value.isNullOrBlank()) {
-                    launch {
-                        runCatching { repository.userProfile(touid).avatarUrl }
-                            .getOrNull()?.takeIf { it.isNotBlank() }?.let {
-                                _targetAvatarUrl.value = it
-                            }
-                    }
-                }
-                UiState.Success(conversation)
-            } catch (e: Exception) {
-                UiState.Error(e.message ?: "加载聊天记录失败")
+            // 先用磁盘快照秒开历史记录，后台再拉最新覆盖
+            val cached = readDiskCache()
+            if (cached != null) {
+                applyConversation(cached)
+            } else {
+                _state.value = UiState.Loading
+            }
+            reload()
+        }
+    }
+
+    private suspend fun reload() {
+        try {
+            val conversation = repository.chatConversation(touid)
+            applyConversation(conversation)
+            writeDiskCache(conversation)
+        } catch (e: Exception) {
+            // 已有缓存顶着就别清屏，只在什么都没拿到时才报错
+            if ((_state.value as? UiState.Success) == null) {
+                _state.value = UiState.Error(e.message ?: "加载聊天记录失败")
             }
         }
+    }
+
+    private fun applyConversation(conversation: ChatConversation) {
+        conversation.targetName?.takeIf { it.isNotBlank() }?.let {
+            _targetName.value = it
+        }
+        val convAvatar = conversation.messages.firstOrNull { !it.isSelf && !it.avatarUrl.isNullOrBlank() }?.avatarUrl
+        if (!convAvatar.isNullOrBlank()) {
+            _targetAvatarUrl.value = convAvatar
+        } else if (_targetAvatarUrl.value.isNullOrBlank()) {
+            viewModelScope.launch {
+                runCatching { repository.userProfile(touid).avatarUrl }
+                    .getOrNull()?.takeIf { it.isNotBlank() }?.let {
+                        _targetAvatarUrl.value = it
+                    }
+            }
+        }
+        _state.value = UiState.Success(conversation)
+    }
+
+    private suspend fun readDiskCache(): ChatConversation? =
+        contentCache.read(CacheKeys.chat(touid), CacheKeys.LIST_TTL, allowExpired = true) {
+            cacheJson.decodeFromString<ChatConversation>(it)
+        }
+
+    private suspend fun writeDiskCache(conversation: ChatConversation) {
+        contentCache.write(
+            key = CacheKeys.chat(touid),
+            ttlMillis = CacheKeys.LIST_TTL,
+            value = conversation,
+            encode = { cacheJson.encodeToString(ChatConversation.serializer(), it) },
+        )
     }
 
     fun sendMessage(text: String, onSent: () -> Unit) {
@@ -118,6 +156,7 @@ class ChatViewModel(
                     runCatching {
                         val refreshed = repository.chatConversation(touid)
                         _state.value = UiState.Success(refreshed)
+                        writeDiskCache(refreshed)
                     }
                 } else {
                     AppToast.show(result.exceptionOrNull()?.message ?: "发送失败")

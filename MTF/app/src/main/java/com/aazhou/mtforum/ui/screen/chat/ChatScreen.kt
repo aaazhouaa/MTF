@@ -118,7 +118,7 @@ fun ChatScreen(
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
     val viewModel: ChatViewModel = appViewModel {
-        ChatViewModel(uid, targetName, it.repository, it.sessionStore)
+        ChatViewModel(uid, targetName, it.repository, it.sessionStore, it.contentCache)
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val displayName by viewModel.targetName.collectAsStateWithLifecycle()

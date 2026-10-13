@@ -48,4 +48,7 @@ object CacheKeys {
 
     /** 个人中心按 uid 分槽：换账号后不闪出上一个账号的资料。 */
     fun profile(uid: String): String = "profile|$uid"
+
+    /** 私聊会话按对方 uid 分槽：不同聊天对象不互相覆盖。 */
+    fun chat(touid: String): String = "chat|$touid"
 }

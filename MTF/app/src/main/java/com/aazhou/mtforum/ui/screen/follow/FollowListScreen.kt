@@ -576,6 +576,18 @@ private fun FollowUserCard(
             }
         }
         Column(horizontalAlignment = Alignment.End) {
+            if (showRemark) {
+                Text(
+                    if (remark != null) "修改备注" else "备注",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    color = colors.textSecondary,
+                    modifier = Modifier
+                        .padding(bottom = 6.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(onClick = onRemark)
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                )
+            }
             OutlinedButton(
                 onClick = onToggleFollow,
                 shape = RoundedCornerShape(16.dp),
@@ -592,18 +604,6 @@ private fun FollowUserCard(
                     if (user.isFollowing) "已关注" else "+ 关注",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                )
-            }
-            if (showRemark) {
-                Text(
-                    if (remark != null) "修改备注" else "备注",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                    color = colors.textSecondary,
-                    modifier = Modifier
-                        .padding(top = 6.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable(onClick = onRemark)
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
             }
         }
