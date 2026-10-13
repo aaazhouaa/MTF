@@ -164,11 +164,26 @@ class ChatViewModel(
 
                 val result = repository.sendPrivateMessage(touid, formhash, trimmed)
                 if (result.isSuccess) {
-                    // 静默拉取最新服务端状态；拉不到就留下本地那条已发送的消息
+                    // 站点会话页对刚发的这条有同步延迟：网页端发完也是把气泡直接插进页面、
+                    // 再靠轮询增量补齐。此刻拿快照整体替换会把刚上屏的气泡抹掉，表现为
+                    // 发完不显示、退出重进才回来。故以快照为准（对方新消息不丢），
+                    // 快照里还没收录的那条自己消息按条数判定后补回末尾。
+                    // 不用文本比对：图片消息本地是 BBCode 原文，服务端只剩图后的字，永远对不上。
                     runCatching {
                         val refreshed = repository.chatConversation(touid)
-                        _state.value = UiState.Success(refreshed)
-                        writeDiskCache(refreshed)
+                        val local = (_state.value as? UiState.Success)?.data
+                        val pendingLocal = local?.messages.orEmpty().filter { it.sending }
+                        val confirmedSelf = local?.messages.orEmpty().count { it.isSelf && !it.sending }
+                        val synced = refreshed.messages.count { it.isSelf } > confirmedSelf
+                        val merged = if (pendingLocal.isEmpty() || synced) {
+                            refreshed
+                        } else {
+                            refreshed.copy(
+                                messages = refreshed.messages + pendingLocal.map { it.copy(sending = false) },
+                            )
+                        }
+                        _state.value = UiState.Success(merged)
+                        writeDiskCache(merged)
                     }.onFailure {
                         dropSendingFlag(pendingId)
                     }
