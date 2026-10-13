@@ -1,5 +1,6 @@
 package com.aazhou.mtforum
 
+import com.aazhou.mtforum.data.model.BACKGROUND_TABS
 import android.content.Context
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
@@ -25,7 +26,7 @@ class NoticePollWorker(context: Context, params: WorkerParameters) :
         val container = (applicationContext as? MtfApp)?.container ?: return Result.failure()
         if (!container.httpClient.isLoggedIn()) return Result.success()
         val fresh = try {
-            container.noticeChecker.check()
+            container.noticeChecker.check(BACKGROUND_TABS)
         } catch (e: Exception) {
             // 网络/风控失败交给系统退避重试，不丢这一轮的检测
             container.logger.warn("Notice", "后台消息轮询失败，交给系统退避重试", e)

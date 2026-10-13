@@ -19,7 +19,7 @@ data class NoticeListPage(
 /**
  * 消息提醒分类页：取数与分页解析。
  *
- * 站点把提醒内容按类别分页（`home.php?mod=space&do=notice&view=X&page=N&mobile=2`，
+ * 站点把提醒内容按类别分页（`home.php?mod=space&do=notice&view=X&type=Y&page=N&mobile=2`，
  * 每页一条列表），行结构交给 [ForumParser.parseNotices]；总页数在这里自己解——站点这
  * 套模板的分页器是链接式 `div.pg`（页码在查询串里、另有「共 N 页」），和帖子列表同
  * 一套 markup，下拉式 `div.comiis_page` 也一并认。页码解不出来时总页数恒为 1，翻页
@@ -27,10 +27,14 @@ data class NoticeListPage(
  */
 class NoticeRepo(private val http: HttpClient) {
 
-    suspend fun notices(view: String, page: Int = 1): NoticeListPage = withContext(Dispatchers.IO) {
-        val html = http.get(
-            http.url("home.php?mod=space&do=notice&view=$view&page=$page&mobile=2"),
-        )
+    suspend fun notices(view: String, type: String? = null, page: Int = 1): NoticeListPage =
+        withContext(Dispatchers.IO) {
+            val typeQuery = if (type == null) "" else "&type=$type"
+            val html = http.get(
+                http.url(
+                    "home.php?mod=space&do=notice&view=$view$typeQuery&page=$page&mobile=2",
+                ),
+            )
         val parsed = ForumParser.parseNotices(html)
         if (parsed.loggedOut) return@withContext NoticeListPage(loggedOut = true)
         NoticeListPage(

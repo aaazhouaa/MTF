@@ -278,6 +278,9 @@ data class HomeData(
  *
  * [text] 为站点渲染的提醒正文，[timeText] 是页面上的相对/绝对时间文本；
  * [tid] 为关联主题，站点未给帖子链接时为 null（该条不可点击）。
+ *
+ * [pid] 是「查看」链接指向的楼层：网页端点它直达那条回复，客户端进帖后按它定位。
+ * [ignoreAuthorid] 与 [ignoreType] 来自行内屏蔽链接，缺任一项就不给屏蔽入口。
  */
 @Serializable
 data class Notice(
@@ -289,6 +292,12 @@ data class Notice(
     val avatarUrl: String? = null,
     /** 该条提醒关联用户的 uid；点头像进入其个人主页，为 null 时不可点。 */
     val uid: String? = null,
+    /** 「查看」链接带的楼层 pid（redirect&goto=findpost&pid=）；系统类提醒没有。 */
+    val pid: String? = null,
+    /** 屏蔽链接里的 authorid：要屏蔽的那位用户。 */
+    val ignoreAuthorid: String? = null,
+    /** 屏蔽链接里的 type：屏蔽哪一类提醒（post/friend/…），提交时原样带回。 */
+    val ignoreType: String? = null,
 )
 
 /** 消息提醒页解析结果；[loggedOut] 为 true 表示页面被重定向到了登录表单。 */
@@ -313,20 +322,78 @@ data class AtUser(
     val subtitle: String = "",
 )
 
-/** 消息提醒页顶部的分类（对应网页端「消息提醒」入口）。 */
-enum class NoticeCategory(
+/** 消息提醒的一级分类：对应网页端「消息提醒」入口菜单的那几项。 */
+enum class NoticeGroup(val title: String) {
+    PM("我的消息"),
+    FANS("我的粉丝"),
+    MY_POST("我的帖子"),
+    INTERACTIVE("坛友互动"),
+    SYSTEM("系统提醒"),
+    APP("应用提醒"),
+}
+
+/**
+ * 消息提醒的二级子类：网页端每个 view 顶部那一排 Tab（`view=X&type=Y`）。
+ *
+ * 站点不带 type 的请求只返回默认子类（实测 `view=mypost` 与 `view=mypost&type=post`
+ * 内容完全相同），所以要拿全一类提醒必须把子类逐个列出来。[view] 为 do=notice 的
+ * view 参数，[type] 为 type 参数；[pmFilter] 非空的两类不走 notice 接口，走
+ * `do=pm&filter=`，站点把列表放在 inajax 回执里。
+ */
+enum class NoticeTab(
     val title: String,
-    /** 消息提醒的内容视图（view 参数）；私信两类不走消息提醒接口，为 null。 */
-    val viewKey: String? = null,
-    /** 私信/公共消息的 filter 参数：站点把这两类列表放在 inajax 回执里，整页 HTML 取不到。 */
+    val group: NoticeGroup,
+    val view: String? = null,
+    val type: String? = null,
     val pmFilter: String? = null,
 ) {
-    PRIVATE_PM("私人消息", pmFilter = "privatepm"),
-    ANNOUNCE_PM("公共消息", pmFilter = "announcepm"),
-    MY_POST("我的帖子", "mypost"),
-    INTERACTIVE("坛友互动", "interactive"),
-    SYSTEM("系统提醒", "system"),
+    PM_PRIVATE("私人消息", NoticeGroup.PM, pmFilter = "privatepm"),
+    PM_ANNOUNCE("公共消息", NoticeGroup.PM, pmFilter = "announcepm"),
+
+    POST("帖子", NoticeGroup.MY_POST, view = "mypost", type = "post"),
+    PCOMMENT("点评", NoticeGroup.MY_POST, view = "mypost", type = "pcomment"),
+    ACTIVITY("活动", NoticeGroup.MY_POST, view = "mypost", type = "activity"),
+    REWARD("悬赏", NoticeGroup.MY_POST, view = "mypost", type = "reward"),
+    GOODS("商品", NoticeGroup.MY_POST, view = "mypost", type = "goods"),
+    AT("提到我的", NoticeGroup.MY_POST, view = "mypost", type = "at"),
+
+    POKE("打招呼", NoticeGroup.INTERACTIVE, view = "interactive", type = "poke"),
+    FRIEND("好友", NoticeGroup.INTERACTIVE, view = "interactive", type = "friend"),
+    WALL("留言", NoticeGroup.INTERACTIVE, view = "interactive", type = "wall"),
+    COMMENT("评论", NoticeGroup.INTERACTIVE, view = "interactive", type = "comment"),
+    CLICK("挺你", NoticeGroup.INTERACTIVE, view = "interactive", type = "click"),
+    SHARE("分享", NoticeGroup.INTERACTIVE, view = "interactive", type = "sharenotice"),
+
+    SYSTEM("系统提醒", NoticeGroup.SYSTEM, view = "system"),
+    APP("应用提醒", NoticeGroup.APP, view = "app"),
+    ;
+
+    /** 未读记账与缓存 key 用的稳定标识。 */
+    val key: String get() = name
 }
+
+/** 该一级分类下的二级子类；「我的粉丝」不是提醒数据，返回空列表。 */
+fun NoticeGroup.tabs(): List<NoticeTab> = NoticeTab.entries.filter { it.group == this }
+
+/**
+ * 一级页预拉与后台轮询的子类集合：我的帖子 6 类 + 私信两类，共 8 个。
+ *
+ * 站点没有推送服务端，客户端只能自己定时查；一次 15 分钟的后台轮询只覆盖这里，
+ * 其余子类的未读等用户进到该分类时再记账（后台请求太多有触发站点限频的风险）。
+ */
+val PREFETCH_TABS: List<NoticeTab> = listOf(
+    NoticeTab.POST,
+    NoticeTab.PCOMMENT,
+    NoticeTab.ACTIVITY,
+    NoticeTab.REWARD,
+    NoticeTab.GOODS,
+    NoticeTab.AT,
+    NoticeTab.PM_PRIVATE,
+    NoticeTab.PM_ANNOUNCE,
+)
+
+/** 后台轮询用的同一份集合（15 分钟一次）。 */
+val BACKGROUND_TABS: List<NoticeTab> = PREFETCH_TABS
 
 /** 私信/公共消息列表页；[loggedOut] 为 true 表示接口把请求换成了登录跳转。 */
 data class PmPage(

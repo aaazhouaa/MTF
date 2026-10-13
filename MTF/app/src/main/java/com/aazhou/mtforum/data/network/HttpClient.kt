@@ -30,11 +30,20 @@ import java.util.concurrent.TimeUnit
 /** 条件 GET 取回的正文，[etag] 是本次响应带的校验值，下次原样回传即可。 */
 data class FetchedPage(val body: String, val etag: String?)
 
+/**
+ * 把 Location 头解析成完整地址。
+ *
+ * 站点给的是带查询串与片段的相对地址（`forum.php?mod=viewthread&…&page=N#pidX`），
+ * 必须用 [HttpUrl.resolve]：它按当前 URL 的目录拼相对路径，并原样保留查询串与片段。
+ * 早先拿 encodedPath 拼会把整串塞进 path，`page=` 就取不出来，楼层定位随之失效。
+ */
+internal fun resolveRedirectLocation(base: HttpUrl, location: String): String? =
+    base.resolve(location.trim())?.toString()
+
 class HttpClient(
     val baseUrl: String = BASE_URL,
     val cookieStore: CookieStore = CookieStore(),
 ) {
-
     val host: String = baseUrl.toHttpUrlOrNull()?.host ?: "bbs.binmt.cc"
 
     private val rateLimiter = RateLimiter()
@@ -209,13 +218,7 @@ class HttpClient(
             .newCall(request).execute().use { response ->
                 if (!response.isRedirect) return null
                 val location = response.header("Location") ?: return null
-                // 站点多数给绝对地址；给相对地址时按当前 host 拼完整
-                return if (location.startsWith("http")) {
-                    location
-                } else {
-                    response.request.url.newBuilder().encodedPath(location.removePrefix("/")).build()
-                        .toString()
-                }
+                return resolveRedirectLocation(response.request.url, location)
             }
     }
 

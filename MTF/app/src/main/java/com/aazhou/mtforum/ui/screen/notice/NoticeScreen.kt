@@ -5,12 +5,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,15 +18,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -41,124 +32,103 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
+import com.aazhou.mtforum.NoticeNotifier
+import com.aazhou.mtforum.NoticePollWorker
 import com.aazhou.mtforum.R
-import com.aazhou.mtforum.data.model.Notice
-import com.aazhou.mtforum.data.model.NoticeCategory
-import com.aazhou.mtforum.data.model.PrivateMessage
+import com.aazhou.mtforum.data.model.NoticeGroup
 import com.aazhou.mtforum.data.repo.NoticeRepo
-import com.aazhou.mtforum.image.smallImageRequest
-import com.aazhou.mtforum.ui.common.EmptyBox
-import com.aazhou.mtforum.ui.common.ErrorBox
-import com.aazhou.mtforum.ui.common.LoadingBox
+import com.aazhou.mtforum.ui.common.AppToast
+import com.aazhou.mtforum.ui.common.MtfSwitchRow
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
-import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
-import com.aazhou.mtforum.ui.common.onDoubleTapToTop
-import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.screen.login.LoginDialog
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.bodyTextColor
-import com.aazhou.mtforum.ui.theme.dimImageInDark
-import kotlinx.coroutines.launch
 
-/** 消息提醒页：对应网页端「我的」→「消息提醒」。 */
+/**
+ * 消息提醒一级页：对应网页端「消息提醒」入口（home.php?mod=space&do=notice）。
+ *
+ * 网页那一页只是个分类菜单，点进去才是各子类的列表，这里照做：菜单 6 项 + 底部
+ * 后台轮询开关。「我的粉丝」在站点里也挂在这个菜单下，但不是提醒数据，跳到关注/粉丝页。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NoticeScreen(
     onBack: () -> Unit,
-    onThreadClick: (tid: String) -> Unit,
-    onUserClick: (String) -> Unit,
-    onChatClick: ((uid: String, name: String) -> Unit)? = null,
+    onGroupClick: (NoticeGroup) -> Unit,
+    onFansClick: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val context = LocalContext.current
+    val container = context.container()
     val viewModel: NoticeViewModel = appViewModel {
         NoticeViewModel(
             it.repository,
             NoticeRepo(it.httpClient),
-            it.contentCache,
             it.noticeUnreadStore,
+            it.noticePollStore,
             onRead = { ids -> it.markNoticesRead(ids) },
         )
     }
-    val currentCategory by viewModel.category.collectAsStateWithLifecycle()
-    val unreadCategories by viewModel.unreadCategories.collectAsStateWithLifecycle()
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
-    val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
-    val hasNext by viewModel.hasNext.collectAsStateWithLifecycle()
-    val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
-
-    // 五个分类与 Pager 页一一对应，左右滑动即可切 tab
-    val categories = NoticeCategory.entries.toList()
-    val pagerState = rememberPagerState(initialPage = categories.indexOf(currentCategory)) { categories.size }
-    val currentCategoryIndex = categories.indexOf(currentCategory)
-    // tab 高亮跟手：页码滑过中点就翻转，不等停稳，否则「页面过去了 tab 慢一拍」。
-    // 数据仍按停稳后的分类走（见下面 settledPage），所以高亮可能比内容早半拍
-    val selectedCategory = categories.getOrElse(pagerState.currentPage) { currentCategory }
-
-    // 点分类项：滚到对应页，数据由下面的停稳回调加载
-    var aligned by remember { mutableStateOf(false) }
-    LaunchedEffect(currentCategory) {
-        if (currentCategoryIndex >= 0 &&
-            pagerState.currentPage != currentCategoryIndex &&
-            pagerState.targetPage != currentCategoryIndex
-        ) {
-            // 首次对齐走瞬时滚动：进页面时磁盘快照会把 currentCategory 改到真正该停的
-            // 那一页，此刻 animate 会让用户看到 pager 自己滑一下
-            if (aligned) {
-                pagerState.animateScrollToPage(currentCategoryIndex)
-            } else {
-                pagerState.scrollToPage(currentCategoryIndex)
-                aligned = true
-            }
-        }
-    }
-    // 左右滑动切 tab：停稳后才切换分类，滑动途中不换数据
-    LaunchedEffect(pagerState.settledPage) {
-        val cat = categories[pagerState.settledPage]
-        if (cat != currentCategory) viewModel.selectCategory(cat)
-    }
-
-    // 申请通知权限
-    val context = LocalContext.current
-    val container = context.container()
+    val unreadTabs by viewModel.unreadTabs.collectAsStateWithLifecycle()
+    val pollEnabled by viewModel.pollEnabled.collectAsStateWithLifecycle()
     var showLoginDialog by remember { mutableStateOf(false) }
+
+    // 开开关时要通知权限：Android 13+ 没有 POST_NOTIFICATIONS 就发不出系统通知。
+    // 默认关闭时不再一进页面就弹申请，改成用户主动开启时再问。
+    var pendingEnable by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { }
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+    ) { granted ->
+        val want = pendingEnable
+        pendingEnable = false
+        if (granted && want) {
+            viewModel.setPollEnabled(true)
+            NoticePollWorker.enqueue(context)
+        } else if (!granted && want) {
+            AppToast.show("未授予通知权限，无法开启后台提醒")
+        }
+    }
+
+    fun togglePoll(want: Boolean) {
+        if (!want) {
+            viewModel.setPollEnabled(false)
+            NoticePollWorker.cancel(context)
+            // 关掉后别在通知栏留着一条数不对的「N 条新消息提醒」
+            NoticeNotifier.cancel(context)
+            return
+        }
+        if (!container.isLoggedIn()) {
+            AppToast.show("请先登录后再开启后台提醒")
+            return
+        }
+        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
-        ) {
+        if (granted) {
+            viewModel.setPollEnabled(true)
+            NoticePollWorker.enqueue(context)
+        } else {
+            pendingEnable = true
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
@@ -178,160 +148,52 @@ fun NoticeScreen(
                         )
                     }
                 },
-                modifier = Modifier.onDoubleTapToTop {
-                    scope.launch { listState.scrollToTop() }
-                },
+                modifier = Modifier.fillMaxWidth(),
                 expandedHeight = MtfTopBarHeight,
             )
         },
     ) { padding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
+            contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
         ) {
-            // 顶部五个分类入口：整齐排成一排，紧凑精致
-            NoticeCategoryBar(
-                selected = selectedCategory,
-                unreadCategories = unreadCategories,
-                onSelect = { cat ->
-                    viewModel.selectCategory(cat)
-                    scope.launch { listState.scrollToTop() }
-                },
-            )
-
-            // 下方随选中的分类展示对应列表：外层 Pager 提供左右滑动切 tab，
-            // 只有当前分类那一页渲染内容——列表状态是页面级共享的，
-            // 两页同时渲染等于两个 LazyColumn 持同一个 LazyListState
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-            ) { page ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(colors.background),
-                ) {
-                    if (page == currentCategoryIndex) {
-                        when (val current = state) {
-                        is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
-                        is UiState.Error -> {
-                            if (!container.isLoggedIn() || current.message.contains("登录")) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                                        modifier = Modifier
-                                            .padding(horizontal = 32.dp)
-                                            .widthIn(max = 320.dp)
-                                            .clip(RoundedCornerShape(20.dp))
-                                            .background(colors.quoteBackground)
-                                            .padding(horizontal = 24.dp, vertical = 28.dp),
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(52.dp)
-                                                .clip(CircleShape)
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Icon(
-                                                painter = painterResource(R.drawable.ic_lock_outline),
-                                                contentDescription = null,
-                                                tint = accentTextColor(),
-                                                modifier = Modifier.size(26.dp),
-                                            )
-                                        }
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text(
-                                                text = "需要登录账号",
-                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                                color = bodyTextColor(),
-                                            )
-                                            Spacer(Modifier.height(4.dp))
-                                            Text(
-                                                text = "请先登录后查看消息提醒与互动通知",
-                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
-                                                color = colors.textSecondary,
-                                            )
-                                        }
-                                        androidx.compose.material3.Button(
-                                            onClick = { showLoginDialog = true },
-                                            shape = RoundedCornerShape(12.dp),
-                                            modifier = Modifier.fillMaxWidth().height(40.dp),
-                                        ) {
-                                            Text("立即登录", fontWeight = FontWeight.SemiBold)
-                                        }
-                                    }
-                                }
+            items(NoticeGroup.entries.toList()) { group ->
+                NoticeMenuRow(
+                    group = group,
+                    hasUnread = group in unreadTabs.map { it.group }.toSet(),
+                    onClick = {
+                        when (group) {
+                            NoticeGroup.FANS -> onFansClick()
+                            else -> if (container.isLoggedIn()) {
+                                onGroupClick(group)
                             } else {
-                                ErrorBox(
-                                    message = current.message,
-                                    onRetry = { viewModel.loadCategory(currentCategory) },
-                                    modifier = Modifier.fillMaxSize(),
-                                )
+                                showLoginDialog = true
                             }
                         }
-                        is UiState.Success -> {
-                            val content = current.data
-                            if (content.isEmpty()) {
-                                val emptyText = when (currentCategory) {
-                                    NoticeCategory.PRIVATE_PM -> "暂无私信消息"
-                                    NoticeCategory.ANNOUNCE_PM -> "暂无公共消息"
-                                    NoticeCategory.MY_POST -> "暂无帖子提醒"
-                                    NoticeCategory.INTERACTIVE -> "暂无互动提醒"
-                                    NoticeCategory.SYSTEM -> "暂无系统提醒"
-                                }
-                                EmptyBox(emptyText, Modifier.fillMaxSize())
-                            } else {
-                                PullToRefreshBox(
-                                    isRefreshing = refreshing,
-                                    onRefresh = {
-                                        viewModel.refresh()
-                                        // 刷新会把列表换回第 1 页：不复位滚动位置的话，
-                                        // 原先停在很后面的视口会被钳到新列表末尾，而新提醒
-                                        // 按时间倒序排在最前面，正好被推到视口外看不见
-                                        scope.launch { listState.scrollToTop() }
-                                    },
-                                    modifier = Modifier.fillMaxSize(),
-                                ) {
-                                    Crossfade(targetState = content, label = "notice_content") { target ->
-                                        when (target) {
-                                            is NoticeContentState.Notices -> {
-                                                NoticeListView(
-                                                    listState = listState,
-                                                    notices = target.items,
-                                                    onUserClick = onUserClick,
-                                                    onThreadClick = onThreadClick,
-                                                    hasNext = hasNext,
-                                                    loadingMore = loadingMore,
-                                                    onLoadMore = { viewModel.loadMore() },
-                                                )
-                                            }
-                                            is NoticeContentState.PrivateMessages -> {
-                                                PrivateMessageListView(
-                                                    listState = listState,
-                                                    items = target.items,
-                                                    onUserClick = onUserClick,
-                                                    onChatClick = onChatClick,
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        }
-                    } else {
-                        // 滑过来的那一页数据还没切过来：给个加载态，不留一片空白
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(Modifier.size(26.dp))
-                        }
+                    },
+                )
+                HorizontalDivider(color = colors.divider.copy(alpha = 0.6f), thickness = 0.5.dp)
+            }
+            item(key = "poll-switch") {
+                Surface(color = colors.background) {
+                    Column {
+                        Spacer(Modifier.height(10.dp))
+                        MtfSwitchRow(
+                            title = "后台消息提醒",
+                            subtitle = "开启后每 15 分钟在后台检查一次，有新消息发通知；" +
+                                "关闭时只在打开 App 或消息页时检查",
+                            checked = pollEnabled,
+                            onCheckedChange = { togglePoll(it) },
+                        )
+                        Text(
+                            text = "站点没有推送服务，后台检查是客户端自己定时发请求，" +
+                                "默认关闭；开启后更费电与流量。",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = colors.textSecondary,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        )
                     }
                 }
             }
@@ -344,134 +206,45 @@ fun NoticeScreen(
             onSuccess = {
                 showLoginDialog = false
                 container.refreshCurrentUserAsync()
-                viewModel.loadCategory(currentCategory)
+                viewModel.prefetch()
             },
         )
     }
 }
 
-/**
- * 顶部固定分类区：排成一排 5 列，扁平紧凑、圆润雅致，与顶栏自然衔接。
- */
+/** 一级菜单的一项：圆角图标 + 分类名，右上角圆点表示该分类下有未读子类。 */
 @Composable
-private fun NoticeCategoryBar(
-    selected: NoticeCategory,
-    unreadCategories: Set<NoticeCategory>,
-    onSelect: (NoticeCategory) -> Unit,
-) {
-    val colors = LocalMtfColors.current
-
-    Surface(
-        color = colors.topBar,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CategoryItem(
-                    category = NoticeCategory.PRIVATE_PM,
-                    iconRes = R.drawable.ic_notice_pm,
-                    isSelected = selected == NoticeCategory.PRIVATE_PM,
-                    hasUnread = NoticeCategory.PRIVATE_PM in unreadCategories,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onSelect(NoticeCategory.PRIVATE_PM) },
-                )
-                CategoryItem(
-                    category = NoticeCategory.ANNOUNCE_PM,
-                    iconRes = R.drawable.ic_notice_announce,
-                    isSelected = selected == NoticeCategory.ANNOUNCE_PM,
-                    hasUnread = NoticeCategory.ANNOUNCE_PM in unreadCategories,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onSelect(NoticeCategory.ANNOUNCE_PM) },
-                )
-                CategoryItem(
-                    category = NoticeCategory.MY_POST,
-                    iconRes = R.drawable.ic_notice_mypost,
-                    isSelected = selected == NoticeCategory.MY_POST,
-                    hasUnread = NoticeCategory.MY_POST in unreadCategories,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onSelect(NoticeCategory.MY_POST) },
-                )
-                CategoryItem(
-                    category = NoticeCategory.INTERACTIVE,
-                    iconRes = R.drawable.ic_notice_interactive,
-                    isSelected = selected == NoticeCategory.INTERACTIVE,
-                    hasUnread = NoticeCategory.INTERACTIVE in unreadCategories,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onSelect(NoticeCategory.INTERACTIVE) },
-                )
-                CategoryItem(
-                    category = NoticeCategory.SYSTEM,
-                    iconRes = R.drawable.ic_notice_system,
-                    isSelected = selected == NoticeCategory.SYSTEM,
-                    hasUnread = NoticeCategory.SYSTEM in unreadCategories,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onSelect(NoticeCategory.SYSTEM) },
-                )
-            }
-            HorizontalDivider(color = colors.divider, thickness = 0.5.dp)
-        }
-    }
-}
-
-/** 单个分类图标项：选中统一采用主题主色。 */
-@Composable
-private fun CategoryItem(
-    category: NoticeCategory,
-    iconRes: Int,
-    isSelected: Boolean,
-    /** 该分类有没看过的新消息：图标右上角贴一颗主题色圆点。 */
+private fun NoticeMenuRow(
+    group: NoticeGroup,
     hasUnread: Boolean,
-    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
     val isDark = LocalIsDarkTheme.current
     val primaryColor = MaterialTheme.colorScheme.primary
 
-    val itemBg = if (isSelected) {
-        primaryColor.copy(alpha = if (isDark) 0.22f else 0.12f)
-    } else {
-        if (isDark) colors.quoteBackground.copy(alpha = 0.5f) else colors.quoteBackground
-    }
-
-    val iconTint = if (isSelected) primaryColor else colors.iconSecondary
-
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.background)
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
+            .padding(horizontal = 16.dp, vertical = 11.dp),
     ) {
-        // 圆形图标
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(38.dp)
-                .clip(CircleShape)
-                .background(itemBg)
-                .then(
-                    if (isSelected) {
-                        Modifier.border(1.5.dp, primaryColor, CircleShape)
-                    } else {
-                        Modifier
-                    },
-                ),
+                .clip(RoundedCornerShape(12.dp))
+                .background(colors.quoteBackground),
         ) {
             Icon(
-                painter = painterResource(iconRes),
-                contentDescription = category.title,
-                tint = iconTint,
+                painter = painterResource(group.iconRes()),
+                contentDescription = null,
+                tint = accentTextColor(),
                 modifier = Modifier.size(20.dp),
             )
             if (hasUnread) {
-                // 未读圆点与首页消息图标同一画法：主题色小圆点贴在图标右上角，无空隙
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -481,249 +254,24 @@ private fun CategoryItem(
                 )
             }
         }
-        Spacer(Modifier.height(5.dp))
+        Spacer(Modifier.width(12.dp))
         Text(
-            text = category.title,
-            style = MaterialTheme.typography.bodySmall.copy(
-                fontSize = 11.5.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            text = group.title,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
             ),
-            color = if (isSelected) accentTextColor() else colors.textSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            color = bodyTextColor(),
         )
     }
 }
 
-/** 提醒列表（我的帖子 / 坛友互动 / 系统提醒）。 */
-@Composable
-private fun NoticeListView(
-    listState: androidx.compose.foundation.lazy.LazyListState,
-    notices: List<Notice>,
-    onUserClick: (String) -> Unit,
-    onThreadClick: (tid: String) -> Unit,
-    hasNext: Boolean,
-    loadingMore: Boolean,
-    onLoadMore: () -> Unit,
-) {
-    // 滑到接近末尾时自动追加下一页
-    val shouldLoadMore by remember(notices) {
-        derivedStateOf {
-            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            val total = listState.layoutInfo.totalItemsCount
-            total > 0 && last >= total - 3
-        }
-    }
-    LaunchedEffect(shouldLoadMore, hasNext) {
-        if (shouldLoadMore && hasNext) onLoadMore()
-    }
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 4.dp, bottom = bottomBarContentPadding()),
-    ) {
-        items(notices, key = { it.id }) { notice ->
-            NoticeRow(
-                notice = notice,
-                onUserClick = onUserClick,
-                onClick = {
-                    notice.tid?.let { tid -> onThreadClick(tid) }
-                },
-            )
-        }
-        if (loadingMore) {
-            item(key = "notice-loading-more") {
-                Box(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(Modifier.size(22.dp))
-                }
-            }
-        }
-    }
-}
-
-/** 私信消息列表。 */
-@Composable
-private fun PrivateMessageListView(
-    listState: androidx.compose.foundation.lazy.LazyListState,
-    items: List<PrivateMessage>,
-    onUserClick: (String) -> Unit,
-    onChatClick: ((String, String) -> Unit)? = null,
-) {
-    val colors = LocalMtfColors.current
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 4.dp, bottom = bottomBarContentPadding()),
-    ) {
-        items(items, key = { it.plid ?: it.touid ?: it.username }) { pm ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        val touid = pm.touid
-                        if (!touid.isNullOrBlank() && onChatClick != null) {
-                            onChatClick(touid, pm.username)
-                        } else {
-                            touid?.let(onUserClick)
-                        }
-                    }
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(42.dp)) {
-                        AsyncImage(
-                            model = smallImageRequest(pm.avatarUrl),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(CircleShape)
-                                .background(colors.quoteBackground)
-                                .dimImageInDark(),
-                        )
-                        if (pm.unread) {
-                            Box(
-                                modifier = Modifier
-                                    .size(10.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFFFF4D4F))
-                                    .align(Alignment.TopEnd),
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                text = pm.username,
-                                style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
-                                fontWeight = FontWeight.SemiBold,
-                                color = bodyTextColor(),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (!pm.timeText.isNullOrBlank()) {
-                                Text(
-                                    text = pm.timeText,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                    color = colors.textSecondary,
-                                )
-                            }
-                        }
-                        if (pm.summary.isNotBlank()) {
-                            Text(
-                                text = pm.summary,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                                color = colors.textSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Canvas(
-                    Modifier
-                        .padding(start = 54.dp)
-                        .fillMaxWidth()
-                        .height(0.5.dp),
-                ) {
-                    drawLine(
-                        color = colors.divider,
-                        start = Offset(0f, size.height / 2f),
-                        end = Offset(size.width, size.height / 2f),
-                        strokeWidth = size.height,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** 单条提醒：头像 + 正文 + 时间，站点给了主题链接才可点击。 */
-@Composable
-private fun NoticeRow(notice: Notice, onUserClick: (String) -> Unit, onClick: () -> Unit) {
-    val colors = LocalMtfColors.current
-    val clickable = notice.tid != null
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-            .then(
-                if (clickable) Modifier.clickable(onClick = onClick) else Modifier,
-            ),
-    ) {
-        Row(verticalAlignment = Alignment.Top) {
-            val avatarUrl = notice.avatarUrl
-            if (avatarUrl != null) {
-                AsyncImage(
-                    model = smallImageRequest(avatarUrl),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(colors.quoteBackground)
-                        .dimImageInDark()
-                        .then(
-                            notice.uid?.let { uid -> Modifier.clickable { onUserClick(uid) } }
-                                ?: Modifier,
-                        ),
-                )
-            } else {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(colors.quoteBackground),
-                ) {
-                    Icon(
-                        painterResource(R.drawable.ic_mail_line),
-                        contentDescription = null,
-                        tint = accentTextColor(),
-                        modifier = Modifier.size(17.dp),
-                    )
-                }
-            }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    notice.text,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
-                    color = bodyTextColor(),
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (!notice.timeText.isNullOrBlank()) {
-                    Text(
-                        notice.timeText,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                        color = colors.textSecondary,
-                        modifier = Modifier.padding(top = 5.dp),
-                    )
-                }
-                Spacer(Modifier.height(7.dp))
-                Canvas(
-                    Modifier
-                        .padding(end = 4.dp)
-                        .fillMaxWidth()
-                        .height(0.5.dp),
-                ) {
-                    drawLine(
-                        color = colors.divider,
-                        start = Offset(0f, size.height / 2f),
-                        end = Offset(size.width, size.height / 2f),
-                        strokeWidth = size.height,
-                    )
-                }
-            }
-        }
-    }
+/** 一级菜单各项的图标；「应用提醒」与「我的粉丝」没有专属图标，用近义向量图顶位。 */
+private fun NoticeGroup.iconRes(): Int = when (this) {
+    NoticeGroup.PM -> R.drawable.ic_notice_pm
+    NoticeGroup.FANS -> R.drawable.ic_people
+    NoticeGroup.MY_POST -> R.drawable.ic_notice_mypost
+    NoticeGroup.INTERACTIVE -> R.drawable.ic_notice_interactive
+    NoticeGroup.SYSTEM -> R.drawable.ic_notice_system
+    NoticeGroup.APP -> R.drawable.ic_card_view
 }

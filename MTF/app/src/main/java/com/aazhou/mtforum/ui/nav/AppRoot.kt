@@ -39,7 +39,9 @@ import com.aazhou.mtforum.ui.screen.home.HomeScreen
 import com.aazhou.mtforum.ui.screen.logs.LogDetailScreen
 import com.aazhou.mtforum.ui.screen.logs.LogsScreen
 import com.aazhou.mtforum.ui.screen.login.LoginScreen
+import com.aazhou.mtforum.data.model.NoticeGroup
 import com.aazhou.mtforum.ui.screen.notice.NoticeScreen
+import com.aazhou.mtforum.ui.screen.notice.NoticeTabScreen
 import com.aazhou.mtforum.ui.screen.postedit.PostEditScreen
 import com.aazhou.mtforum.ui.screen.profile.ProfileScreen
 import com.aazhou.mtforum.ui.screen.search.SearchScreen
@@ -69,6 +71,8 @@ object Routes {
     /** 编辑自己的帖子/评论：站点 tid/pid 决定改主题（带标题）还是改评论。 */
     const val EDIT_POST = "edit_post/{tid}/{pid}/{fid}/{name}"
     const val NOTICE = "notice"
+    /** 消息提醒二级页：某个一级分类下的子类列表。 */
+    const val NOTICE_TAB = "notice/{group}"
     const val DOWNLOADS = "downloads"
     const val DOWNLOADED_THREAD = "downloaded/{tid}"
     const val LOGS = "logs"
@@ -83,7 +87,11 @@ object Routes {
     fun followList(type: String = "following") = "follow_list?type=$type"
 
     fun forum(fid: String, name: String) = "forum/$fid/${Uri.encode(name)}"
-    fun thread(tid: String) = "thread/$tid"
+    fun thread(tid: String, pid: String? = null) =
+        if (pid.isNullOrBlank()) "thread/$tid" else "thread/$tid?pid=$pid"
+
+    /** 消息提醒二级页：[group] 取 [NoticeGroup] 的 name。 */
+    fun noticeTab(group: NoticeGroup) = "notice/${group.name}"
 
     fun user(uid: String) = "user/$uid"
     fun userPosts(uid: String) = "user_posts/$uid"
@@ -275,7 +283,23 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
             composable(Routes.NOTICE) {
                 NoticeScreen(
                     onBack = { navController.popBackStack() },
-                    onThreadClick = { tid -> navController.navigate(Routes.thread(tid)) },
+                    // 网页端菜单点进去就是该分类的子类列表；「我的粉丝」不是提醒，跳关注/粉丝页
+                    onGroupClick = { group -> navController.navigate(Routes.noticeTab(group)) },
+                    onFansClick = { navController.navigate(Routes.followList("follower")) },
+                )
+            }
+            composable(
+                Routes.NOTICE_TAB,
+                arguments = listOf(navArgument("group") { type = NavType.StringType }),
+            ) { entry ->
+                val group = entry.arguments?.getString("group")
+                    ?.let { name -> NoticeGroup.entries.firstOrNull { it.name == name } }
+                    ?: NoticeGroup.MY_POST
+                NoticeTabScreen(
+                    group = group,
+                    onBack = { navController.popBackStack() },
+                    // 「查看」带 pid：进帖后定位到那条回复所在的位置
+                    onThreadClick = { tid, pid -> navController.navigate(Routes.thread(tid, pid)) },
                     // 消息里的头像进对应用户的个人主页
                     onUserClick = navigateToUser,
                     onChatClick = { uid, name -> navController.navigate(Routes.chat(uid, name)) },
@@ -322,10 +346,18 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
                 Routes.THREAD,
                 arguments = listOf(
                     navArgument("tid") { type = NavType.StringType },
+                    // 可选查询参数：消息提醒的「查看」带楼层 pid，普通进帖不带
+                    navArgument("pid") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
                 ),
             ) { entry ->
                 ThreadDetailScreen(
                     tid = entry.arguments?.getString("tid").orEmpty(),
+                    // 消息提醒跳进来时带上要定位的楼层；普通进帖不带
+                    targetPid = entry.arguments?.getString("pid"),
                     onBack = { navController.popBackStack() },
                     onUserClick = navigateToUser,
                     // 正文里的站内帖子链接在 App 内继续看帖，不进浏览器

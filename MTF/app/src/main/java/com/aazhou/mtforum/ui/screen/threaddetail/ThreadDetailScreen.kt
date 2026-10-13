@@ -159,6 +159,13 @@ fun ThreadDetailScreen(
     onThreadClick: (String) -> Unit,
     /** 编辑自己的首帖：跳到整页编辑（带标题）。参数为 tid/pid/fid/版块名。 */
     onEditThread: (String, String, String, String) -> Unit = { _, _, _, _ -> },
+    /**
+     * 进来就要定位的楼层（消息提醒的「查看」带它）；null 表示普通进帖。
+     *
+     * 站点没有「跳到某楼」的接口，只有 redirect&goto=findpost 的中转：问它要这一楼
+     * 现在的页码，再按正序口径把那一页拉回来（见 ViewModel.locateFloor）。
+     */
+    targetPid: String? = null,
 ) {
     val context = LocalContext.current
     val colors = LocalMtfColors.current
@@ -357,6 +364,30 @@ fun ThreadDetailScreen(
         val lastIndex = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
         listState.scrollToItem(anchor.index.coerceAtMost(lastIndex), anchor.offset)
         viewModel.consumePendingScrollAnchor()
+    }
+
+    // 消息提醒跳进来带了楼层：每次上屏都试一次，目标楼真的在列表里才滚过去。
+    // 首屏那一页可能比目标楼所在页后回来，早先那次找不到就继续等，不按错的位置硬滚
+    val pendingLocatePid by viewModel.pendingLocatePid.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingLocatePid, state) {
+        val pid = pendingLocatePid ?: return@LaunchedEffect
+        withFrameNanos { }
+        val posts = (state as? UiState.Success)?.data?.posts.orEmpty()
+        // 列表前面固定有首帖与评论区头两项，与切倒序时算评论区顶部用的是同一套偏移
+        val opPost = posts.firstOrNull { it.isFirstPost } ?: posts.firstOrNull()
+        // 下标要按界面上真正渲染的那些行算：灌水楼默认折叠，它们不在列表里
+        val visible = posts.filter { it !== opPost }
+            .filter { foldExpanded || it.pid !in waterPidsState }
+        val position = visible.indexOfFirst { it.pid == pid }
+        if (position < 0) return@LaunchedEffect
+        listState.scrollToItem((if (opPost != null) 2 else 1) + position, 0)
+        viewModel.consumeLocatePid()
+    }
+
+    // 消息提醒跳进来带了楼层：首屏加载落定后就地定位到那一楼
+    LaunchedEffect(targetPid) {
+        val pid = targetPid?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        viewModel.locateFloor(pid)
     }
 
     val page = (state as? UiState.Success)?.data

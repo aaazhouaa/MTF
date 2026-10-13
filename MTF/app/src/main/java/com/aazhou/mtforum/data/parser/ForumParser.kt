@@ -898,6 +898,13 @@ object ForumParser {
             "|\\d+\\s*(分钟|小时|天|秒)前",
     )
 
+    /** 「查看」链接里的楼层 pid：网页端靠它跳到那条回复所在的位置。 */
+    private val RE_NOTICE_PID = Regex("""[?&]pid=(\d+)""")
+
+    /** 屏蔽链接里的两个参数：屏蔽哪位用户（authorid）与哪一类提醒（type）。 */
+    private val RE_IGNORE_AUTHORID = Regex("""[?&]authorid=(\d+)""")
+    private val RE_IGNORE_TYPE = Regex("""[?&]type=([A-Za-z_]+)""")
+
     /** 提醒行里指向主题的链接：移动模板用 redirect&goto=findpost&ptid=TID，旧式用 thread-TID。 */
     private val RE_NOTICE_TID = Regex("""(?:ptid|tid)=(\d+)""")
 
@@ -994,6 +1001,12 @@ object ForumParser {
                     ?: RE_TID.find(href)?.groupValues?.get(1)
             }
             .firstOrNull()
+        // 「查看」是行尾那个 class=lit 的链接，带 goto=findpost&pid=；取不到再退回正文里
+        // 任意带 pid 的链接（标题链接同样带 pid），保证能定位到具体楼层
+        val pid = li.select(".ntc_body a[href]").asSequence()
+            .map { it.attr("href") }
+            .mapNotNull { href -> RE_NOTICE_PID.find(href)?.groupValues?.get(1) }
+            .firstOrNull()
         // 帖子标题超长时截断：提醒行只有一行多点，长标题会把正文挤没了
         val titleLink = body?.select("a[href]")?.firstOrNull {
             RE_NOTICE_TID.containsMatchIn(it.attr("href"))
@@ -1004,8 +1017,13 @@ object ForumParser {
         }
         // 站点给每条提醒一个稳定 id（屏蔽链接的 a_note_NNNN）；列表 key 用它，
         // 新消息插到前面时后面的行不会因为下标平移而整批重建
-        val noteId = li.selectFirst("a[id^=a_note_]")?.id()?.removePrefix("a_note_")
+        val ignoreLink = li.selectFirst("a[id^=a_note_]")
+        val noteId = ignoreLink?.id()?.removePrefix("a_note_")
         val id = noteId ?: tid ?: "notice-$index"
+        // 屏蔽入口的两个参数同在这条链接上；系统类提醒没有它，两项自然为 null
+        val ignoreHref = ignoreLink?.attr("href").orEmpty()
+        val ignoreAuthorid = RE_IGNORE_AUTHORID.find(ignoreHref)?.groupValues?.get(1)
+        val ignoreType = RE_IGNORE_TYPE.find(ignoreHref)?.groupValues?.get(1)
         // 互动类提醒的头像链接：a.notice_img 包着头像，href 带 uid=；系统类提醒没有它，两项自然为 null
         val avatarLink = li.selectFirst("a.notice_img")
         val avatarUrl = avatarLink?.selectFirst("img")?.attr("src")?.trim()?.takeIf { it.isNotBlank() }
@@ -1017,6 +1035,9 @@ object ForumParser {
             tid = tid,
             avatarUrl = avatarUrl,
             uid = uid,
+            pid = pid,
+            ignoreAuthorid = ignoreAuthorid,
+            ignoreType = ignoreType,
         )
     }
 

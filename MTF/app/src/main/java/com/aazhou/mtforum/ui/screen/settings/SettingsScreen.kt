@@ -72,6 +72,7 @@ import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.log.LogLevel
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.MtfConfirmDialog
+import com.aazhou.mtforum.ui.common.MtfSwitchRow
 import com.aazhou.mtforum.ui.common.MtfContentDialog
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.container
@@ -194,7 +195,7 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = colors.divider.copy(alpha = 0.6f), thickness = 0.5.dp)
 
-                SettingsSwitchRow(
+                MtfSwitchRow(
                     title = "跟随系统深色模式",
                     subtitle = "关闭后固定为浅色，可用首页顶栏按钮切深色",
                     checked = darkOverride == null,
@@ -205,7 +206,7 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = colors.divider.copy(alpha = 0.6f), thickness = 0.5.dp)
 
-                SettingsSwitchRow(
+                MtfSwitchRow(
                     title = "深色模式压暗图片",
                     subtitle = "关闭后帖子配图与全屏查看按原始亮度显示",
                     checked = dimImagesInDark,
@@ -356,45 +357,6 @@ private fun SettingsSection(
         ) {
             content()
         }
-    }
-}
-
-@Composable
-private fun SettingsSwitchRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    val colors = LocalMtfColors.current
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.5.sp,
-                ),
-                color = bodyTextColor(),
-            )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                color = colors.textSecondary,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-        Spacer(Modifier.width(8.dp))
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-        )
     }
 }
 

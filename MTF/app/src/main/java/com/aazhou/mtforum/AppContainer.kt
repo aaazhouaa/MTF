@@ -6,6 +6,7 @@ import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.download.ThreadArchiveStore
 import com.aazhou.mtforum.data.log.AppLogger
 import com.aazhou.mtforum.data.log.LogStore
+import com.aazhou.mtforum.data.model.BACKGROUND_TABS
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.repo.ActionStore
@@ -14,6 +15,7 @@ import com.aazhou.mtforum.data.repo.DraftStore
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.LogSettingsStore
 import com.aazhou.mtforum.data.repo.NoticeChecker
+import com.aazhou.mtforum.data.repo.NoticePollStore
 import com.aazhou.mtforum.data.repo.NoticeUnreadStore
 import com.aazhou.mtforum.data.repo.CheckInManager
 import com.aazhou.mtforum.data.repo.SessionStore
@@ -48,8 +50,10 @@ class AppContainer(application: Application) {
     val smileyStore = SmileyStore(application)
     val repository = ForumRepository(httpClient, smileyStore)
     val noticeUnreadStore = NoticeUnreadStore(application)
-    /** 后台消息轮询（15 分钟一次）；进应用时也由 [checkNoticesNow] 顺手调一次。 */
+    /** 后台消息轮询（15 分钟一次）；进应用时也顺手调一次。 */
     val noticeChecker = NoticeChecker(repository, noticeUnreadStore)
+    /** 后台轮询开关（消息提醒页底部那一项），缺省关闭。 */
+    val noticePollStore = NoticePollStore(application)
 
     /** 是否有未读新消息：首页消息图标上的小圆点以此为准。 */
     val unreadNotices: StateFlow<Boolean> =
@@ -111,12 +115,15 @@ class AppContainer(application: Application) {
                 // 进应用先查一次消息：红点要反映真实未读，不能只等 15 分钟的后台轮询。
                 // 失败无所谓，下一轮轮询还会再查；不发通知（用户已经在应用里）。
                 appScope.launch {
-                    runCatching { noticeChecker.check() }.onFailure { e ->
+                    runCatching { noticeChecker.check(BACKGROUND_TABS) }.onFailure { e ->
                         logger.warn("Notice", "进应用时查询消息失败", e)
                     }
                 }
             }
-            NoticePollWorker.enqueue(appContext)
+            // 后台轮询默认关闭（见 NoticePollStore）：只有用户在消息提醒页开过才排期
+            appScope.launch {
+                if (noticePollStore.enabled.first()) NoticePollWorker.enqueue(appContext)
+            }
         }
     }
 
