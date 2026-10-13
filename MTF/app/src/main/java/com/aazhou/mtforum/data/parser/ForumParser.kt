@@ -976,8 +976,11 @@ object ForumParser {
             .replace('\u00A0', ' ')
             .trim()
         if (raw.isEmpty()) return null
-        val time = RE_NOTICE_TIME.findAll(li.selectFirst("h2")?.text() ?: raw)
-            .lastOrNull()?.value
+        // 站点用 &nbsp; 撑空白，Jsoup 转成不换行空格；正则的 \s 匹配不到它，
+        // 会丢掉相对时间（「2 小时前」整段落空）或日词后的钟点（「昨天 20:28」只剩「昨天」）。
+        val time = RE_NOTICE_TIME.findAll(
+            (li.selectFirst("h2")?.text() ?: raw).replace('\u00A0', ' '),
+        ).lastOrNull()?.value
         var text = raw
         if (time != null && text.endsWith(time)) text = text.dropLast(time.length).trim()
         // 行尾的「查看」是跳转操作链接，不是正文

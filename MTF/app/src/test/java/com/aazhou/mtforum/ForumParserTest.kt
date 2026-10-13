@@ -894,6 +894,31 @@ class ForumParserTest {
     }
 
     @Test
+    fun noticeTimeKeepsNbspSeparatedRelativeTimeAndClock() {
+        // 站点时间文本里用的是 &nbsp;（Jsoup 转成不换行空格），正则 \s 匹配不到它；
+        // 归到普通空格后，「2 小时前」整段不落空、「昨天 20:28」不丢钟点
+        val html = """
+            <html><body>
+            <div class="comiis_notices_box"><div class="comiis_notice_list"><ul>
+              <li class="b_b bg_f cl">
+                <div class="ntc_body"><a href="space-uid-1.html">someone</a> 回复了您的帖子
+                  <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=1&amp;pid=2">标题</a></div>
+                <h2 class="f_d"><a id="a_note_100" class="dialog">屏蔽</a>2&nbsp;小时前</h2>
+              </li>
+              <li class="b_b bg_f cl">
+                <div class="ntc_body"><a href="space-uid-2.html">someone</a> 回复了您的帖子
+                  <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=1&amp;pid=3">标题</a></div>
+                <h2 class="f_d">昨天&nbsp;20:28</h2>
+              </li>
+            </ul></div></div>
+            </body></html>
+        """.trimIndent()
+        val notices = ForumParser.parseNotices(html).notices
+        assertEquals("2 小时前", notices[0].timeText)
+        assertEquals("昨天 20:28", notices[1].timeText)
+    }
+
+    @Test
     fun noticesCategoryMenuIsNotTreatedAsNotice() {
         // 默认页（不带 view）只有类别菜单，没有任何提醒内容
         val html = """
