@@ -499,7 +499,7 @@ fun SearchScreen(
                                 } else {
                                     LazyColumn(
                                         state = listStates[page],
-                                        contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                                        contentPadding = PaddingValues(top = 2.5.dp, bottom = bottomBarContentPadding()),
                                         modifier = Modifier.fillMaxSize(),
                                     ) {
                                         items(forums, key = { it.fid }) { forum ->
@@ -525,7 +525,7 @@ fun SearchScreen(
                                 } else {
                                     LazyColumn(
                                         state = listStates[page],
-                                        contentPadding = PaddingValues(bottom = bottomBarContentPadding()),
+                                        contentPadding = PaddingValues(top = 2.5.dp, bottom = bottomBarContentPadding()),
                                         modifier = Modifier.fillMaxSize(),
                                     ) {
                                         items(users, key = { it.uid }) { user ->
@@ -601,85 +601,93 @@ private fun clearSearchHistory(context: Context) {
     sp.edit().remove(KEY_HISTORY).apply()
 }
 
-/** 圈子搜索结果行。 */
+/** 圈子搜索结果卡片：与帖子卡片同一套外壳（surface 底 + 12dp 圆角 + 6dp 外边距 + 10dp 内边距）。 */
 @Composable
 private fun ForumResultRow(
     forum: Forum,
     onClick: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 2.5.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(colors.surface)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 10.dp, vertical = 13.dp),
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(colors.quoteBackground),
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_home),
-                contentDescription = null,
-                tint = colors.iconSecondary,
-                modifier = Modifier.size(18.dp),
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colors.quoteBackground),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_home),
+                    contentDescription = null,
+                    tint = colors.iconSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                forum.name,
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                color = bodyTextColor(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(12.dp))
-        Text(
-            forum.name,
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
-            color = bodyTextColor(),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
-/** 用户搜索结果行。 */
+/** 用户搜索结果卡片：与帖子卡片同一套外壳（surface 底 + 12dp 圆角 + 6dp 外边距 + 10dp 内边距）。 */
 @Composable
 private fun UserResultRow(
     user: AtUser,
     onClick: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 2.5.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(colors.surface)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 10.dp, vertical = 13.dp),
     ) {
-        AsyncImage(
-            model = smallImageRequest(user.avatarUrl),
-            contentDescription = null,
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(colors.quoteBackground)
-                .dimImageInDark(),
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                user.name,
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
-                color = bodyTextColor(),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AsyncImage(
+                model = smallImageRequest(user.avatarUrl),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(colors.quoteBackground)
+                    .dimImageInDark(),
             )
-            if (user.subtitle.isNotBlank()) {
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
                 Text(
-                    user.subtitle,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                    color = colors.textSecondary,
+                    user.name,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                    color = bodyTextColor(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (user.subtitle.isNotBlank()) {
+                    Text(
+                        user.subtitle,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
