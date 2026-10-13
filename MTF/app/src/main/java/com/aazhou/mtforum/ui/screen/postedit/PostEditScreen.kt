@@ -61,6 +61,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -113,6 +114,8 @@ import com.aazhou.mtforum.ui.screen.threaddetail.filterAtUsers
 import com.aazhou.mtforum.ui.screen.threaddetail.formatRichComposerText
 import com.aazhou.mtforum.ui.screen.threaddetail.insertAtSelection
 import com.aazhou.mtforum.ui.screen.threaddetail.prepareUploadFile
+import com.aazhou.mtforum.ui.theme.DarkBrightTextAlpha
+import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
 import kotlinx.coroutines.delay
@@ -689,7 +692,7 @@ fun PostEditScreen(
                                     singleLine = true,
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                                     textStyle = TextStyle(
-                                        color = colors.textPrimary,
+                                        color = bodyTextColor(),
                                         fontSize = 17.sp,
                                         fontWeight = FontWeight.Bold,
                                     ),
@@ -934,6 +937,7 @@ private fun PostEditTopBar(
     onSubmit: () -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val isDark = LocalIsDarkTheme.current
     val primaryColor = MaterialTheme.colorScheme.primary
 
     Row(
@@ -960,7 +964,7 @@ private fun PostEditTopBar(
                 text = if (editing) "编辑" else "发布新帖",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = colors.textPrimary,
+                color = bodyTextColor(),
             )
             Text(
                 text = forumName,
@@ -973,12 +977,22 @@ private fun PostEditTopBar(
         Spacer(Modifier.width(8.dp))
 
         // 发布胶囊按钮
+        // 深色下主题色被提亮，白字对比不足：按背景亮度取前景并压到 DarkBrightTextAlpha
+        val submitForeground = if (primaryColor.luminance() > 0.5f) {
+            Color(0xFF111827)
+        } else {
+            if (isDark) Color.White.copy(alpha = DarkBrightTextAlpha) else Color.White
+        }
+        val submitBackground =
+            if (canSubmit && !isSending) {
+                if (isDark) primaryColor.copy(alpha = 0.5f) else primaryColor
+            } else {
+                colors.textHint.copy(alpha = 0.25f)
+            }
         Box(
             modifier = Modifier
                 .clip(AbsoluteRoundedCornerShape(50))
-                .background(
-                    if (canSubmit && !isSending) primaryColor else colors.textHint.copy(alpha = 0.25f),
-                )
+                .background(submitBackground)
                 .clickable(enabled = canSubmit && !isSending, onClick = onSubmit)
                 .padding(horizontal = 16.dp, vertical = 7.dp),
             contentAlignment = Alignment.Center,
@@ -986,7 +1000,7 @@ private fun PostEditTopBar(
             if (isSending) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
-                    color = Color.White,
+                    color = submitForeground,
                     strokeWidth = 2.dp,
                 )
             } else {
@@ -994,7 +1008,7 @@ private fun PostEditTopBar(
                     text = if (editing) "保存" else "发布",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (canSubmit) Color.White else colors.textHint,
+                    color = if (canSubmit) submitForeground else colors.textHint,
                 )
             }
         }

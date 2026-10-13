@@ -81,6 +81,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -120,6 +121,7 @@ import com.aazhou.mtforum.data.parser.SmileyPack
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.ImagePreview
 import com.aazhou.mtforum.ui.common.awaitImeSettled
+import com.aazhou.mtforum.ui.theme.DarkBrightTextAlpha
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -570,14 +572,27 @@ internal fun ReplyComposer(
                 } else {
                     val publishReady = value.text.isNotBlank()
                     val primaryColor = MaterialTheme.colorScheme.primary
+                    val isDark = LocalIsDarkTheme.current
+                    // 深色下主题色被提亮，白字对比不足：按背景亮度取前景并压到 DarkBrightTextAlpha
+                    val publishForeground = if (primaryColor.luminance() > 0.5f) {
+                        Color(0xFF111827)
+                    } else {
+                        if (isDark) Color.White.copy(alpha = DarkBrightTextAlpha) else Color.White
+                    }
+                    val publishBackground =
+                        if (publishReady) {
+                            if (isDark) primaryColor.copy(alpha = 0.5f) else primaryColor.copy(alpha = 0.69f)
+                        } else {
+                            colors.textHint.copy(alpha = 0.2f)
+                        }
                     Text(
                         if (editing) "保存" else "发布",
                         style = MaterialTheme.typography.labelLarge,
-                        color = if (publishReady) Color.White else colors.textHint,
+                        color = if (publishReady) publishForeground else colors.textHint,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .background(
-                                if (publishReady) primaryColor.copy(alpha = 0.69f) else colors.textHint.copy(alpha = 0.2f),
+                                publishBackground,
                                 AbsoluteRoundedCornerShape(50),
                             )
                             .clickable(enabled = publishReady, onClick = onSend)
