@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,7 +56,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -92,7 +92,6 @@ import com.aazhou.mtforum.ui.common.awaitImeSettled
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.screen.threaddetail.AtSuggestionStrip
 import com.aazhou.mtforum.ui.screen.threaddetail.AtUserPickerPage
-import com.aazhou.mtforum.ui.screen.threaddetail.ComposerScrollTracker
 import com.aazhou.mtforum.ui.screen.threaddetail.ComposerSubBarHeight
 import com.aazhou.mtforum.ui.screen.threaddetail.ComposerToolButton
 import com.aazhou.mtforum.ui.screen.threaddetail.DefaultSmileyCodes
@@ -202,8 +201,13 @@ fun PostEditScreen(
     val subjectFocusRequester = remember { FocusRequester() }
     val messageFocusRequester = remember { FocusRequester() }
     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
-    val messageScrollTracker = remember { ComposerScrollTracker() }
-    var messageFieldHeight by remember { mutableIntStateOf(0) }
+    // 正文滚动交给外层容器承载：字段内部滚动拿不到真实滚动量，bringIntoView 也滚不动光标，
+    // 表情贴图更是据此漂移。ScrollState 是唯一真源，光标滚动与表情定位都从它算
+    val messageScrollState = rememberScrollState()
+    // 正文盒子（滚动视口）的高度 px：滚到光标时用它做下界
+    var messageBoxHeightPx by remember { mutableIntStateOf(0) }
+    // 正文盒子视口高度的 dp 版本：让字段至少撑满视口，内容少时点空白处也能落光标
+    var messageBoxHeightDp by remember { mutableStateOf(0.dp) }
 
     val imeInsets = WindowInsets.ime
     val imeHeight = with(density) { imeInsets.getBottom(density).toDp() }
@@ -228,6 +232,32 @@ fun PostEditScreen(
     // 光标停在正文末尾，接着写不用先拖到尾
     LaunchedEffect(Unit) {
         if (!editing) messageFocusRequester.requestFocus()
+    }
+
+    // 键盘完全升起后把光标滚进可视区：刚弹起时字段视口还没缩到位，等连续稳定帧确认
+    // 键盘停稳后再滚。滚动由外层 ScrollState 承载，直接按光标矩形滚到可视区底部之上
+    LaunchedEffect(imeHeight > 0.dp) {
+        if (!(imeHeight > 0.dp)) return@LaunchedEffect
+        var lastPx = -1
+        var stableFrames = 0
+        while (true) {
+            withFrameNanos { }
+            val px = imeInsets.getBottom(density)
+            if (px > 0) {
+                if (px == lastPx) stableFrames++ else { lastPx = px; stableFrames = 0 }
+                if (stableFrames >= STABLE_KEYBOARD_FRAMES) break
+            } else {
+                return@LaunchedEffect
+            }
+        }
+        // 滚动量 = 光标矩形底部 - 内容区高度（正文盒子自身高度）：保证光标落在底部之上
+        val cursorRect = textLayout
+            ?.takeIf { it.layoutInput.text.text == message.text }
+            ?.getCursorRect(message.selection.max.coerceIn(0, message.text.length))
+        if (cursorRect != null) {
+            val target = (cursorRect.bottom - messageBoxHeightPx).coerceAtLeast(0f).toInt()
+            messageScrollState.scrollTo(target)
+        }
     }
 
     // 监控软键盘高度
@@ -358,15 +388,6 @@ fun PostEditScreen(
             )
         }
     }
-
-    // 表情贴图按文本坐标画，而 onTextLayout 的坐标是未滚动的：正文比输入框高时字段
-    // 自行滚动把光标挪进视野，不减掉这个滚动量表情会整体停在原位、漂到输入框外
-    val messageScrollOffset = textLayout
-        ?.takeIf { it.layoutInput.text.text == message.text }
-        ?.let {
-            messageScrollTracker.update(it, message.selection, messageFieldHeight)
-            messageScrollTracker.offset
-        } ?: 0f
 
     fun onComposerMessageChange(next: TextFieldValue) {
         viewModel.onMessageChange((message.composerDeletionResult(next) ?: next).snapSelectionOutOfSmiley(smileyByCode))
@@ -768,13 +789,20 @@ fun PostEditScreen(
                         )
                         Spacer(Modifier.height(12.dp))
 
-                        // 正文输入框与表情 Overlay：输入框填满整张卡片，点卡片任意位置都能落光标；
-                        // 正文比卡片高时输入框自己内部滚动，Overlay 跟着同一份滚动量走
+                        // 正文输入框与表情 Overlay：滚动交给外层容器（verticalScroll），输入框与
+                        // 贴图同处一个滚动容器、随 ScrollState 一起滚，表情不再漂移；滚动量是
+                        // ScrollState 真值，键盘弹起后能可靠滚到光标。字段仍撑满可视高度，
+                        // 点卡片空白处也能落光标
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f)
-                                .heightIn(min = 80.dp),
+                                .heightIn(min = 80.dp)
+                                // onSizeChanged 必须在 verticalScroll 之前（更外层）：否则它测量的是
+                                // 可滚动内容的高度（文本总高），而不是视口高度，滚到光标时算出的
+                                // 目标偏移恒为 0、等于没滚
+                                .onSizeChanged { messageBoxHeightPx = it.height; messageBoxHeightDp = with(density) { it.height.toDp() } }
+                                .verticalScroll(messageScrollState),
                         ) {
                             BasicTextField(
                                 value = message,
@@ -788,21 +816,12 @@ fun PostEditScreen(
                                 visualTransformation = smileyVisualTransformation,
                                 onTextLayout = { textLayout = it },
                                 modifier = Modifier
-                                    .fillMaxSize()
+                                    .fillMaxWidth()
+                                    .heightIn(min = messageBoxHeightDp)
                                     .focusRequester(messageFocusRequester)
-                                    .onFocusChanged { if (it.isFocused) switchToKeyboard(focusMessage = false) }
-                                    .onSizeChanged { messageFieldHeight = it.height },
-                                // 表情贴图层垫在输入框下面：光标与选区仍由输入框自己画，不会被图片盖住
+                                    .onFocusChanged { if (it.isFocused) switchToKeyboard(focusMessage = false) },
                                 decorationBox = { innerTextField ->
-                                    Box(Modifier.fillMaxSize()) {
-                                        SmileyOverlay(
-                                            text = message.text,
-                                            layout = textLayout,
-                                            smileyByCode = smileyByCode,
-                                            scrollOffset = messageScrollOffset,
-                                            // 与输入框可视区同尺寸：滚出可视区的表情由它裁掉
-                                            modifier = Modifier.matchParentSize().clipToBounds(),
-                                        )
+                                    Box(Modifier.fillMaxWidth()) {
                                         if (message.text.isEmpty()) {
                                             Text(
                                                 "请在这里输入帖子正文，分享你的见解或交流提问…",
@@ -817,6 +836,16 @@ fun PostEditScreen(
                                     }
                                 },
                             )
+                            // 表情贴图与输入框同处滚动容器：随 ScrollState 一起滚，表情不再漂移。
+                            // 两者在同一未滚动坐标系里，容器滚动整体平移，无需额外减 scrollOffset
+                            val layout = textLayout
+                            if (layout != null) {
+                                SmileyOverlay(
+                                    text = message.text,
+                                    layout = layout,
+                                    smileyByCode = smileyByCode,
+                                )
+                            }
                         }
 
                         // 已上传图片附件缩略列表

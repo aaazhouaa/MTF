@@ -544,6 +544,28 @@ fun ChatScreen(
                     }
                 }
 
+                // 键盘完全升起后把列表滚到底：键盘升起是逐帧动画，若在刚弹起时滚底，
+                // 后续动画继续把列表视口压矮，最后一条消息又被顶出视野。等连续稳定帧
+                // 确认键盘停稳后再滚，最新消息才稳得住
+                LaunchedEffect(imeHeight > 0.dp) {
+                    if (!(imeHeight > 0.dp) || messages.isEmpty()) return@LaunchedEffect
+                    var lastPx = -1
+                    var stableFrames = 0
+                    while (true) {
+                        withFrameNanos { }
+                        val px = imeInsets.getBottom(density)
+                        if (px > 0) {
+                            if (px == lastPx) stableFrames++ else { lastPx = px; stableFrames = 0 }
+                            if (stableFrames >= STABLE_KEYBOARD_FRAMES) {
+                                listState.scrollToItem(messages.size - 1)
+                                break
+                            }
+                        } else {
+                            break
+                        }
+                    }
+                }
+
                 if (messages.isEmpty()) {
                     Box(
                         modifier = Modifier
