@@ -24,14 +24,21 @@ private val Context.noticeUnreadDataStore by preferencesDataStore(name = "mtf_no
  * 分类级未读（消息页 tab 圆点）是另一套账：全局那份按「看过消息页」一次性清空，
  * 无法回答「哪个 tab 有新东西」，故每个子类各存一份已看 id 与未读标志，
  * 由 [onCategoryPolled] / [markCategoryRead] 维护。
+ *
+ * 私信另记一份：私信列表每行是一个会话，id 取 plid/touid，同一会话再来新消息
+ * 行 id 不变，id 差集判不出「新」；站点自己给私信行打了未读标记，故私信单独用
+ * [setPmUnread] 记账。
  */
 class NoticeUnreadStore(private val context: Context) {
 
     private val seenKey = stringSetPreferencesKey("seen_ids")
     private val unreadKey = booleanPreferencesKey("unread")
+    private val pmUnreadKey = booleanPreferencesKey("pm_unread")
 
     val hasUnread: Flow<Boolean> =
-        context.noticeUnreadDataStore.data.map { it[unreadKey] ?: false }
+        context.noticeUnreadDataStore.data.map { prefs ->
+            (prefs[unreadKey] ?: false) || (prefs[pmUnreadKey] ?: false)
+        }
 
     /** 轮询结果：把 [ids] 记为新基线，返回其中新出现的 id（空表示没有新消息）。 */
     suspend fun onPolled(ids: List<String>): List<String> {
@@ -53,7 +60,19 @@ class NoticeUnreadStore(private val context: Context) {
             // 页面没取到列表时不更新基线，否则会把这些 id 误判成下次的新消息
             if (ids.isNotEmpty()) prefs[seenKey] = ids.toSet()
             prefs[unreadKey] = false
+            // 看过消息页一并灭掉私信红点：下次轮询若站点仍标未读会再点亮
+            prefs[pmUnreadKey] = false
         }
+    }
+
+    /**
+     * 私信是否有未读：站点在私信行上标了未读，任一会话未读即点亮全局红点。
+     *
+     * 与提醒那份分开存：提醒由 id 差集驱动、看消息页即消；私信由站点标记驱动，
+     * 只能在站点自己清除标记（用户真读过会话）后回落。
+     */
+    suspend fun setPmUnread(unread: Boolean) {
+        context.noticeUnreadDataStore.edit { it[pmUnreadKey] = unread }
     }
 
     /** 有未读的子类：消息页各 tab 右上角的圆点以它为准。 */

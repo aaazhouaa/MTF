@@ -2,7 +2,11 @@ package com.aazhou.mtforum
 
 import android.app.Application
 import android.content.Context
+import android.os.SystemClock
 import android.webkit.CookieManager
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.download.ThreadArchiveStore
 import com.aazhou.mtforum.data.log.AppLogger
@@ -24,13 +28,16 @@ import com.aazhou.mtforum.data.repo.SmileyStore
 import com.aazhou.mtforum.data.repo.ThemeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /** 应用级依赖容器：手动 DI，避免引入注解处理框架。 */
@@ -38,6 +45,13 @@ class AppContainer(application: Application) {
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val appContext: Context = application
+
+    /** 上次前台查消息的单调时间与节流锁，见 [refreshNoticesIfDue]。 */
+    private val noticeRefreshLock = Any()
+    private var lastNoticeRefreshAt = 0L
+
+    /** 前台定时查询任务：回前台启动、退后台取消，见 [startForegroundPolling]。 */
+    private var foregroundPollJob: Job? = null
 
     val sessionStore = SessionStore(application)
     val themeStore = ThemeStore(application)
@@ -90,6 +104,21 @@ class AppContainer(application: Application) {
         httpClient.onLog = { level, tag, message, throwable ->
             logger.log(level, tag, message, throwable)
         }
+        // 消息刷新随进程前后台启停：回前台先补查一次（onCreate 那次只覆盖冷启动），
+        // 此后靠前台定时器续上——应用一直停在前面时没有别的入口，红点会一直停住。
+        ProcessLifecycleOwner.get().lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                override fun onStart(owner: LifecycleOwner) {
+                    refreshNoticesIfDue()
+                    startForegroundPolling()
+                }
+
+                override fun onStop(owner: LifecycleOwner) {
+                    foregroundPollJob?.cancel()
+                    foregroundPollJob = null
+                }
+            },
+        )
         // 等级一改立即生效；设置页改完后新日志就按新等级入库
         appScope.launch { logSettings.level.collect { logger.setLevel(it) } }
         appScope.launch {
@@ -112,18 +141,55 @@ class AppContainer(application: Application) {
                 )
             }
             if (httpClient.isLoggedIn()) {
-                refreshCurrentUser()
                 // 进应用先查一次消息：红点要反映真实未读，不能只等 15 分钟的后台轮询。
-                // 失败无所谓，下一轮轮询还会再查；不发通知（用户已经在应用里）。
-                appScope.launch {
-                    runCatching { noticeChecker.check(BACKGROUND_TABS) }.onFailure { e ->
-                        logger.warn("Notice", "进应用时查询消息失败", e)
-                    }
-                }
+                // 与资料请求各走各的：两件事互不依赖，合并会白白多等一个往返
+                refreshNoticesIfDue()
+                refreshCurrentUser()
             }
             // 后台轮询默认关闭（见 NoticePollStore）：只有用户在消息提醒页开过才排期
             appScope.launch {
                 if (noticePollStore.enabled.first()) NoticePollWorker.enqueue(appContext)
+            }
+        }
+    }
+
+    /**
+     * 前台期间的定时查询：应用一直停在前台时，回前台那一次之后就没入口了。
+     *
+     * 随进程前后台启停（[onStop] 取消），后台不白耗电量与请求；未登录时循环空转，
+     * 由 [refreshNoticesIfDue] 拦住不发请求。
+     */
+    private fun startForegroundPolling() {
+        if (foregroundPollJob?.isActive == true) return
+        foregroundPollJob = appScope.launch {
+            while (isActive) {
+                delay(FOREGROUND_REFRESH_INTERVAL_MS)
+                refreshNoticesIfDue()
+            }
+        }
+    }
+
+    /**
+     * 距上次查询超过 [NOTICE_REFRESH_MIN_INTERVAL_MS] 才真正发请求。
+     *
+     * 回前台与冷启动都走这里，频繁切前台不能每次都打 8 个请求（站点有限频），
+     * 故用单调时间做一次节流；未登录不发请求。
+     */
+    private fun refreshNoticesIfDue() {
+        if (!httpClient.isLoggedIn()) return
+        val now = SystemClock.elapsedRealtime()
+        synchronized(noticeRefreshLock) {
+            if (lastNoticeRefreshAt != 0L &&
+                now - lastNoticeRefreshAt < NOTICE_REFRESH_MIN_INTERVAL_MS
+            ) {
+                return
+            }
+            lastNoticeRefreshAt = now
+        }
+        appScope.launch {
+            // 失败无所谓，下一轮轮询还会再查；不发通知（用户已经在应用里）。
+            runCatching { noticeChecker.check(BACKGROUND_TABS) }.onFailure { e ->
+                logger.warn("Notice", "查询消息失败", e)
             }
         }
     }
@@ -211,3 +277,9 @@ class AppContainer(application: Application) {
         appScope.launch { sessionStore.clearSession() }
     }
 }
+
+/** 两次前台查消息的最小间隔：频繁切前台时不至于每次都发一轮请求。 */
+private const val NOTICE_REFRESH_MIN_INTERVAL_MS = 60_000L
+
+/** 前台驻留时的定时查询周期；大于上面的节流间隔，否则会被节流拦掉。 */
+private const val FOREGROUND_REFRESH_INTERVAL_MS = 90_000L
