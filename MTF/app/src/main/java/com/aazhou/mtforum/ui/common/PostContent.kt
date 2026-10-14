@@ -41,7 +41,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -254,7 +256,7 @@ private fun ContentBlockView(
 }
 
 /**
- * 已解锁的「回复可见」隐藏内容：站点同款淡黄底卡片 + 顶部「本帖隐藏的内容」标签，
+ * 已解锁的「回复可见」隐藏内容：卡片底色 + 左侧主题色竖条，顶部「本帖隐藏的内容」标签，
  * 内部各块由 [inner] 按正文规则渲染，链接可点、图片进全帖序列。
  */
 @Composable
@@ -263,19 +265,25 @@ private fun HiddenContentCard(
     inner: @Composable (ContentBlock) -> Unit,
 ) {
     val colors = LocalMtfColors.current
+    val accent = MaterialTheme.colorScheme.primary.copy(alpha = 0.31f)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clip(RoundedCornerShape(6.dp))
-            .background(colors.hiddenBackground)
-            .border(0.6.dp, colors.divider, RoundedCornerShape(6.dp))
+            .background(colors.surface)
+            .drawBehind {
+                drawRect(color = accent, size = Size(5.dp.toPx(), size.height))
+            }
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         Text(
             text = block.label,
-            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-            color = colors.hiddenLabel,
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontSize = 12.sp,
+                fontStyle = FontStyle.Italic,
+            ),
+            color = bodyTextColor(),
         )
         for (child in block.blocks) inner(child)
     }
