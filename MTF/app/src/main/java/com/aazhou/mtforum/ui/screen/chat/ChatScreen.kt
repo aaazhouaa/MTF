@@ -134,7 +134,6 @@ fun ChatScreen(
     val isSending by viewModel.isSending.collectAsStateWithLifecycle()
     val isUploading by viewModel.isUploading.collectAsStateWithLifecycle()
     val myAvatar by viewModel.myAvatarUrl.collectAsStateWithLifecycle()
-    val targetAvatar by viewModel.targetAvatarUrl.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -311,38 +310,6 @@ fun ChatScreen(
                 },
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 对方头像放在用户名前
-                        if (onUserClick != null) {
-                            if (!targetAvatar.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = smallImageRequest(targetAvatar),
-                                    contentDescription = "查看对方主页",
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(CircleShape)
-                                        .background(colors.quoteBackground)
-                                        .clickable(onClick = { onUserClick(uid) })
-                                        .dimImageInDark(),
-                                )
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(CircleShape)
-                                        .background(colors.quoteBackground)
-                                        .clickable(onClick = { onUserClick(uid) }),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_me),
-                                        contentDescription = "查看对方主页",
-                                        tint = colors.iconSecondary,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.width(8.dp))
-                        }
                         Text(
                             displayName,
                             style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
