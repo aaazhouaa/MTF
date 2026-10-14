@@ -692,4 +692,77 @@ class HtmlContentTest {
         val quote = parseContentBlocks(html).filterIsInstance<ContentBlock.Quote>().single()
         assertEquals("频道里面是你的账号被封了", quote.text)
     }
+
+    @Test
+    fun unlockedHiddenContentBecomesHiddenBlockWithClickableLink() {
+        // 解锁后站点把内容包在 div.comiis_quote 里，首个子元素是 h2.f_a 标签；
+        // 它是已解锁的隐藏内容，不是引用也不该只当纯文本
+        val html = "<div class=\"comiis_quote bg_h f_c\"><h2 class=\"f_a\">本帖隐藏的内容: </h2>" +
+            "https://github.com/aaazhouaa/MTF/releases</div>"
+        val hidden = parseContentBlocks(html).filterIsInstance<ContentBlock.Hidden>().single()
+        assertEquals("本帖隐藏的内容:", hidden.label)
+        val text = hidden.blocks.filterIsInstance<ContentBlock.Text>().single()
+        assertEquals("https://github.com/aaazhouaa/MTF/releases", text.text)
+        assertEquals(
+            "https://github.com/aaazhouaa/MTF/releases",
+            text.spans.single { it.linkUrl != null }.linkUrl,
+        )
+    }
+
+    @Test
+    fun unlockedHiddenContentKeepsAnchorLinkAndMultipleParagraphs() {
+        // 容器内带 <a> 的链接与 <br> 分隔的多行都要保留，不能被压成一行纯文本
+        val html = "<div class=\"comiis_quote bg_h f_c\"><h2 class=\"f_a\">本帖隐藏的内容: </h2>" +
+            "<a href=\"https://pan.baidu.com/s/abc\">度盘下载</a><br />密码：4xq6</div>"
+        val hidden = parseContentBlocks(html).filterIsInstance<ContentBlock.Hidden>().single()
+        val text = hidden.blocks.filterIsInstance<ContentBlock.Text>().single()
+        assertEquals("度盘下载\n密码：4xq6", text.text)
+        val span = text.spans.single { it.linkUrl != null }
+        assertEquals("https://pan.baidu.com/s/abc", span.linkUrl)
+        assertEquals("度盘下载", text.text.substring(span.start, span.end))
+    }
+
+    @Test
+    fun lockedHiddenPromptIsStillAQuoteNotHidden() {
+        // 锁定态容器里没有 h2.f_a 标签，仍是引用块路径（锁定提示由 ForumParser 剥除）
+        val html = "<div class=\"comiis_quote bg_h f_c\">游客，如果您要查看本帖隐藏内容请回复</div>正文"
+        val blocks = parseContentBlocks(html)
+        assertTrue(blocks.none { it is ContentBlock.Hidden })
+        assertTrue(blocks.first() is ContentBlock.Quote)
+    }
+
+    @Test
+    fun imagesInsideUnlockedHiddenContentStayInCard() {
+        // 已解锁隐藏内容里的图片属于卡片内容，不能被提到卡片外面（那是锁定态的补救）
+        val html = "正文<div class=\"comiis_quote bg_h f_c\"><h2 class=\"f_a\">本帖隐藏的内容: </h2>" +
+            "<img src=\"https://cdn.binmt.cc/data/attachment/forum/p.jpg\" /></div>"
+        val blocks = parseContentBlocks(html)
+        assertTrue(blocks.none { it is ContentBlock.Image })
+        val hidden = blocks.filterIsInstance<ContentBlock.Hidden>().single()
+        assertEquals(
+            "https://cdn.binmt.cc/data/attachment/forum/p.jpg",
+            hidden.blocks.filterIsInstance<ContentBlock.Image>().single().url,
+        )
+    }
+
+    @Test
+    fun unlockedHiddenContentImageEntersImageSequence() {
+        // 全帖图片序列（全屏查看/离线下载）要递归进隐藏内容卡片收图
+        val html = "<div class=\"comiis_quote bg_h f_c\"><h2 class=\"f_a\">本帖隐藏的内容: </h2>" +
+            "<img src=\"https://cdn.binmt.cc/data/attachment/forum/p.jpg\" /></div>"
+        assertEquals(
+            listOf("https://cdn.binmt.cc/data/attachment/forum/p.jpg"),
+            com.aazhou.mtforum.ui.common.collectImageUrls(html),
+        )
+    }
+
+    @Test
+    fun hiddenContentTextEntersPlainText() {
+        // 复制正文取纯文本时隐藏内容也要在，不能整块丢
+        val html = "正文<div class=\"comiis_quote bg_h f_c\"><h2 class=\"f_a\">本帖隐藏的内容: </h2>" +
+            "https://github.com/aaazhouaa/MTF</div>"
+        val text = com.aazhou.mtforum.ui.common.plainTextOf(html)
+        assertTrue(text.contains("正文"))
+        assertTrue(text.contains("https://github.com/aaazhouaa/MTF"))
+    }
 }

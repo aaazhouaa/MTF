@@ -21,6 +21,15 @@ private const val SMILEY_CHAR_BASE = 0xE000
  */
 sealed interface ContentBlock {
     data class Quote(val text: String) : ContentBlock
+
+    /**
+     * 已解锁的「回复可见」隐藏内容。
+     *
+     * 站点解锁后把内容输出在 div.comiis_quote 里，首个子元素是 h2.f_a（「本帖隐藏的内容」）；
+     * 锁定态的同一个容器里只有「请回复」提示、没有该标签，两种状态靠它区分。
+     * [blocks] 是容器内部内容按正文解析的结果，链接/图片/多段与正文同规则。
+     */
+    data class Hidden(val label: String, val blocks: List<ContentBlock>) : ContentBlock
     data class Text(
         val text: String,
         val smiles: Map<Char, String> = emptyMap(),
@@ -65,23 +74,29 @@ sealed interface ContentBlock {
 /**
  * 按正文原顺序提取全部图片地址，供全屏查看器把单图与其它图片串成一组左右翻页。
  */
-fun collectImageUrls(html: String): List<String> =
-    parseContentBlocks(html).flatMap { block ->
+fun collectImageUrls(html: String): List<String> = collectImageUrls(parseContentBlocks(html))
+
+private fun collectImageUrls(blocks: List<ContentBlock>): List<String> =
+    blocks.flatMap { block ->
         when (block) {
             is ContentBlock.Image -> listOf(block.url)
             is ContentBlock.ImageGroup -> block.urls
+            is ContentBlock.Hidden -> collectImageUrls(block.blocks)
             else -> emptyList()
         }
     }
 
 /** 正文的纯文本（用于复制评论内容），图片/表格不产出文本。 */
-fun plainTextOf(html: String): String =
-    parseContentBlocks(html)
+fun plainTextOf(html: String): String = plainTextOf(parseContentBlocks(html))
+
+private fun plainTextOf(blocks: List<ContentBlock>): String =
+    blocks
         .mapNotNull { block ->
             when (block) {
                 is ContentBlock.Text -> block.text.takeIf { it.isNotBlank() }
                 is ContentBlock.Quote -> block.text.takeIf { it.isNotBlank() }
                 is ContentBlock.CodeBlock -> block.lines.joinToString("\n").takeIf { it.isNotBlank() }
+                is ContentBlock.Hidden -> plainTextOf(block.blocks).takeIf { it.isNotBlank() }
                 else -> null
             }
         }
@@ -170,6 +185,7 @@ private fun parseContentBlocksUncached(html: String): List<ContentBlock> {
  *
  * 「回复可见」的正文整块被站点包在 comiis_quote 里，引用块渲染只取文本，若不在拆块前
  * 把其中图片移出，这些附件图会随容器一起被当作引用文字丢掉。
+ * 已解锁的隐藏内容容器是例外：它的图片属于卡片内容，要留在卡片里。
  */
 private fun hoistQuoteImages(html: String): String {
     if ("<img" !in html.lowercase()) return html
@@ -177,6 +193,7 @@ private fun hoistQuoteImages(html: String): String {
     val quotes = doc.select("div.comiis_quote, div.locked")
     if (quotes.isEmpty()) return html
     for (quote in quotes) {
+        if (hiddenLabelElement(quote) != null) continue
         val images = quote.select("img")
         if (images.isEmpty()) continue
         for (img in images) {
@@ -186,6 +203,13 @@ private fun hoistQuoteImages(html: String): String {
     }
     return doc.body().html()
 }
+
+/**
+ * 站点「隐藏内容」标签元素：解锁后的隐藏内容容器里首个 h2.f_a（文案「本帖隐藏的内容」）。
+ * 锁定态的同一容器里只有「请回复」提示、不存在该元素，据此区分两种状态。
+ */
+private fun hiddenLabelElement(element: Element): Element? =
+    element.children().firstOrNull { it.tagName() == "h2" && it.hasClass("f_a") }
 
 /**
  * 去掉正文首尾多余的换行与空白。
@@ -435,6 +459,17 @@ private fun quoteBodyText(element: Element): String {
     private fun appendElement(element: Element, style: InlineStyle) {
         if (element.hasClass("comiis_quote")) {
             flushText()
+            val labelEl = hiddenLabelElement(element)
+            if (labelEl != null) {
+                // 已解锁的隐藏内容：摘掉站点标签后把内部内容当正文解析，链接与图片照常生效
+                val inner = BlocksBuilder()
+                inner.appendNodes(element.childNodes().filter { it !== labelEl })
+                val hidden = dropEdgeBlankBlocks(groupImages(inner.build()))
+                if (hidden.isNotEmpty()) {
+                    blocks.add(ContentBlock.Hidden(label = labelEl.text().trim(), blocks = hidden))
+                }
+                return
+            }
             val quote = quoteBodyText(element)
             if (quote.isNotEmpty()) blocks.add(ContentBlock.Quote(quote))
             return

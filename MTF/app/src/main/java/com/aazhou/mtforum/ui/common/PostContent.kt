@@ -131,94 +131,156 @@ private fun PostContentBody(
     modifier: Modifier,
 ) {
     val blocks = remember(html) { parseContentBlocks(html) }
-    val colors = LocalMtfColors.current
     Column(modifier) {
         if (quote != null && quote.text.isNotBlank()) QuoteCard(quote)
         for (block in blocks) {
-            when (block) {
-                is ContentBlock.Quote -> {
-                    Text(
-                        text = AnnotatedString(block.text),
-                        style = bodyStyle.copy(fontSize = 13.sp),
-                        color = colors.quoteContent,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(colors.quoteBackground)
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                    )
-                }
-                is ContentBlock.Text -> {
-                    val text = block.text.trim('\n')
-                    if (text.isNotBlank()) {
-                        val linkColor = accentTextColor()
-                        val codeBg = colors.quoteBackground
-                        val style = remember(block, bodyStyle) { block.derivedStyle(bodyStyle) }
-                        // 回调经 state 间接引用：链接注解串按正文缓存，重组不会重建，
-                        // 而 onLinkClick 每次重组都是新实例，直接进 key 会让长文反复重建
-                        val linkClick by rememberUpdatedState(onLinkClick)
-                        val body = remember(
-                            text,
-                            block.smiles,
-                            block.spans,
-                            linkColor,
-                            codeBg,
-                        ) {
-                            buildBodyText(
-                                text = text,
-                                smiles = block.smiles,
-                                spans = block.spans,
-                                baseFontSize = style.fontSize,
-                                linkColor = linkColor,
-                                codeBackground = codeBg,
-                                onLinkClick = linkClick,
-                            )
-                        }
-                        Text(
-                            text = body,
-                            inlineContent = remember(block.smiles) { smileyInlineContent(block.smiles) },
-                            style = style,
-                            modifier = Modifier.padding(vertical = 2.dp),
-                        )
-                    }
-                }
-                is ContentBlock.Image -> SingleImage(
-                    url = block.url,
-                    onImageClick = onImageClick?.let { click ->
-                        // 单图也放进全帖图片序列，全屏查看时可左右翻到其它图
-                        val urls = pageImages.ifEmpty { listOf(block.url) }
-                        val index = urls.indexOf(block.url).coerceAtLeast(0)
-                        return@let { click(urls, index) }
-                    },
-                    modifier = Modifier.padding(vertical = 4.dp),
-                )
-                is ContentBlock.ImageGroup -> ImageGrid(
-                    urls = block.urls,
-                    onImageClick = onImageClick?.let { click ->
-                        { url ->
-                            // 图组也放进全帖图片序列：与单图一致，点击组内任意一张都能翻看全帖所有图
-                            val urls = pageImages.ifEmpty { block.urls }
-                            val index = urls.indexOf(url).coerceAtLeast(0)
-                            click(urls, index)
-                        }
-                    },
-                )
-                is ContentBlock.Video -> InlineVideo(
-                    url = block.url,
-                    poster = block.poster,
-                    onPlay = onVideoClick?.let { click -> { click(block.url) } },
-                )
-                is ContentBlock.Attachment -> PostAttachment(
-                    block = block,
-                    onClick = onAttachmentClick,
-                )
-                is ContentBlock.Table -> PostTable(block, bodyStyle)
-                is ContentBlock.CodeBlock -> PostCodeBlock(block, bodyStyle)
-            }
+            ContentBlockView(
+                block = block,
+                bodyStyle = bodyStyle,
+                onImageClick = onImageClick,
+                onVideoClick = onVideoClick,
+                onLinkClick = onLinkClick,
+                onAttachmentClick = onAttachmentClick,
+                pageImages = pageImages,
+            )
         }
     }
 }
+
+/** 渲染单个正文块；正文与隐藏内容卡片内的块共用同一套排版规则。 */
+@Composable
+private fun ContentBlockView(
+    block: ContentBlock,
+    bodyStyle: TextStyle,
+    onImageClick: ((urls: List<String>, index: Int) -> Unit)?,
+    onVideoClick: ((url: String) -> Unit)?,
+    onLinkClick: ((url: String) -> Unit)?,
+    onAttachmentClick: ((fileName: String, url: String) -> Unit)?,
+    pageImages: List<String>,
+) {
+    val colors = LocalMtfColors.current
+    when (block) {
+        is ContentBlock.Quote -> {
+            Text(
+                text = AnnotatedString(block.text),
+                style = bodyStyle.copy(fontSize = 13.sp),
+                color = colors.quoteContent,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(colors.quoteBackground)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+        }
+        is ContentBlock.Hidden -> HiddenContentCard(block) { inner ->
+            ContentBlockView(
+                block = inner,
+                bodyStyle = bodyStyle,
+                onImageClick = onImageClick,
+                onVideoClick = onVideoClick,
+                onLinkClick = onLinkClick,
+                onAttachmentClick = onAttachmentClick,
+                pageImages = pageImages,
+            )
+        }
+        is ContentBlock.Text -> {
+            val text = block.text.trim('\n')
+            if (text.isNotBlank()) {
+                val linkColor = accentTextColor()
+                val codeBg = colors.quoteBackground
+                val style = remember(block, bodyStyle) { block.derivedStyle(bodyStyle) }
+                // 回调经 state 间接引用：链接注解串按正文缓存，重组不会重建，
+                // 而 onLinkClick 每次重组都是新实例，直接进 key 会让长文反复重建
+                val linkClick by rememberUpdatedState(onLinkClick)
+                val body = remember(
+                    text,
+                    block.smiles,
+                    block.spans,
+                    linkColor,
+                    codeBg,
+                ) {
+                    buildBodyText(
+                        text = text,
+                        smiles = block.smiles,
+                        spans = block.spans,
+                        baseFontSize = style.fontSize,
+                        linkColor = linkColor,
+                        codeBackground = codeBg,
+                        onLinkClick = linkClick,
+                    )
+                }
+                Text(
+                    text = body,
+                    inlineContent = remember(block.smiles) { smileyInlineContent(block.smiles) },
+                    style = style,
+                    modifier = Modifier.padding(vertical = 2.dp),
+                )
+            }
+        }
+        is ContentBlock.Image -> SingleImage(
+            url = block.url,
+            onImageClick = onImageClick?.let { click ->
+                // 单图也放进全帖图片序列，全屏查看时可左右翻到其它图
+                val urls = pageImages.ifEmpty { listOf(block.url) }
+                val index = urls.indexOf(block.url).coerceAtLeast(0)
+                return@let { click(urls, index) }
+            },
+            modifier = Modifier.padding(vertical = 4.dp),
+        )
+        is ContentBlock.ImageGroup -> ImageGrid(
+            urls = block.urls,
+            onImageClick = onImageClick?.let { click ->
+                { url ->
+                    // 图组也放进全帖图片序列：与单图一致，点击组内任意一张都能翻看全帖所有图
+                    val urls = pageImages.ifEmpty { block.urls }
+                    val index = urls.indexOf(url).coerceAtLeast(0)
+                    click(urls, index)
+                }
+            },
+        )
+        is ContentBlock.Video -> InlineVideo(
+            url = block.url,
+            poster = block.poster,
+            onPlay = onVideoClick?.let { click -> { click(block.url) } },
+        )
+        is ContentBlock.Attachment -> PostAttachment(
+            block = block,
+            onClick = onAttachmentClick,
+        )
+        is ContentBlock.Table -> PostTable(block, bodyStyle)
+        is ContentBlock.CodeBlock -> PostCodeBlock(block, bodyStyle)
+    }
+}
+
+/**
+ * 已解锁的「回复可见」隐藏内容：站点同款淡黄底卡片 + 顶部「本帖隐藏的内容」标签，
+ * 内部各块由 [inner] 按正文规则渲染，链接可点、图片进全帖序列。
+ */
+@Composable
+private fun HiddenContentCard(
+    block: ContentBlock.Hidden,
+    inner: @Composable (ContentBlock) -> Unit,
+) {
+    val colors = LocalMtfColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(colors.hiddenBackground)
+            .border(0.6.dp, colors.divider, RoundedCornerShape(6.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = block.label,
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+            color = colors.hiddenLabel,
+        )
+        for (child in block.blocks) inner(child)
+    }
+}
+
 
 /**
  * 一段正文的注解串：先放笑脸占位，再叠加局部样式与链接。

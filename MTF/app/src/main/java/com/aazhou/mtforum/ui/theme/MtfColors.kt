@@ -20,6 +20,8 @@ data class MtfColors(
     val iconSecondary: Color,
     val quoteBackground: Color,
     val quoteContent: Color,
+    val hiddenBackground: Color,
+    val hiddenLabel: Color,
     val gold: Color,
 )
 
@@ -34,6 +36,9 @@ val LightMtfColors = MtfColors(
     iconSecondary = Color(0xFF64748B),
     quoteBackground = Color(0xFFF1F5F9),
     quoteContent = Color(0xFF475569),
+    // 站点隐藏内容卡：淡黄底 + 橙色「本帖隐藏的内容」标签
+    hiddenBackground = Color(0xFFFFFDEF),
+    hiddenLabel = Color(0xFFFF9900),
     gold = Color(0xFFF59E0B),
 )
 
@@ -48,6 +53,8 @@ val DarkMtfColors = MtfColors(
     iconSecondary = Color(0xFF8B98A5),
     quoteBackground = Color(0xFF1E262F),
     quoteContent = Color(0xFF9BA7B4),
+    hiddenBackground = Color(0xFF26261C),
+    hiddenLabel = Color(0xFFFFB74D),
     gold = Color(0xFFF59E0B),
 )
 

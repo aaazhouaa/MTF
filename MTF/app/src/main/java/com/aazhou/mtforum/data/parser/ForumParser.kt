@@ -531,11 +531,13 @@ object ForumParser {
         val firstPost = li.selectFirst("div.comiis_postli_topv1") != null
         // 「回复可见」隐藏内容：站点把锁定提示包在 div.comiis_quote（或 div.locked）里，
         // 与真正的引用回复（含 blockquote / 「发表于」）能区分；命中提示文案才算锁定。
+        // 已解锁的隐藏内容容器带 h2.f_a 标签，它得留给正文解析器渲染成卡片，不能当提示摘掉。
         // 提示只是站点排版用的说明，正文里留着与客户端锁卡重复，据此置标志位后摘除节点；
         // 标志位是 HiddenContentCard 的唯一来源，晚了摘会让解锁入口一起消失。
         val hiddenNodes = if (firstPost) {
             contentEl?.select("div.locked, div.comiis_quote")?.filter {
                 it.selectFirst("blockquote") == null &&
+                    it.selectFirst("h2.f_a") == null &&
                     !it.text().contains("发表于") &&
                     RE_HIDDEN_PROMPT.containsMatchIn(it.text())
             }.orEmpty()

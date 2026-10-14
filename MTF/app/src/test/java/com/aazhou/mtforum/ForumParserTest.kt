@@ -453,6 +453,26 @@ class ForumParserTest {
     }
 
     @Test
+    fun unlockedHiddenContentIsNotTreatedAsLockedPrompt() {
+        // 已解锁的隐藏内容容器里带 h2.f_a 标签，内容得留在正文里渲染成卡片；
+        // 否则会被当成「请回复」提示整块摘掉，明明已解锁反而什么都不剩
+        val html = """
+            <html><head><title>帖子</title></head><body>
+            <div class="comiis_postli" id="pid1">
+              <div class="comiis_postli_top comiis_postli_topv1"></div>
+              <div class="comiis_a">
+                正文内容
+                <div class="comiis_quote bg_h f_c"><h2 class="f_a">本帖隐藏的内容: </h2>https://github.com/aaazhouaa/MTF</div>
+              </div>
+            </div></body></html>
+        """.trimIndent()
+        val post = ForumParser.parseThreadPage(html, 1).posts.single()
+        assertTrue(!post.hasHiddenContent)
+        assertTrue(post.contentHtml.contains("h2"))
+        assertTrue(post.contentHtml.contains("https://github.com/aaazhouaa/MTF"))
+    }
+
+    @Test
     fun plainQuoteWithoutPidStillParses() {
         val html = """
             <html><head><title>帖子</title></head><body>
