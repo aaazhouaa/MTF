@@ -21,6 +21,11 @@ private val Context.noticeUnreadDataStore by preferencesDataStore(name = "mtf_no
  * 第一次轮询时集合还是空的，只记基线不亮红点：否则刚装好应用就把历史未读
  * 全算成新消息，一进来就是一颗点。
  *
+ * 亮红点的那批「新出现的 id」另存一份待看集合：红点原先只有「进一级页」一条清除路径，
+ * 而一级页的预拉只在其 ViewModel 创建时跑一次，从二级页返回不会重跑——于是在二级页
+ * 里看着新消息到达也灭不掉红点。二级页把对应分类标记为已读时，据此扣减待看集合，
+ * 扣空即灭红点。
+ *
  * 分类级未读（消息页 tab 圆点）是另一套账：全局那份按「看过消息页」一次性清空，
  * 无法回答「哪个 tab 有新东西」，故每个子类各存一份已看 id 与未读标志，
  * 由 [onCategoryPolled] / [markCategoryRead] 维护。
@@ -32,6 +37,7 @@ private val Context.noticeUnreadDataStore by preferencesDataStore(name = "mtf_no
 class NoticeUnreadStore(private val context: Context) {
 
     private val seenKey = stringSetPreferencesKey("seen_ids")
+    private val pendingKey = stringSetPreferencesKey("pending_ids")
     private val unreadKey = booleanPreferencesKey("unread")
     private val pmUnreadKey = booleanPreferencesKey("pm_unread")
 
@@ -49,7 +55,10 @@ class NoticeUnreadStore(private val context: Context) {
             // 首轮只建基线：见类注释
             fresh = if (seen.isEmpty()) emptyList() else ids.filterNot { it in seen }
             prefs[seenKey] = ids.toSet()
-            if (fresh.isNotEmpty()) prefs[unreadKey] = true
+            if (fresh.isNotEmpty()) {
+                prefs[pendingKey] = prefs[pendingKey].orEmpty() + fresh
+                prefs[unreadKey] = true
+            }
         }
         return fresh
     }
@@ -59,6 +68,7 @@ class NoticeUnreadStore(private val context: Context) {
         context.noticeUnreadDataStore.edit { prefs ->
             // 页面没取到列表时不更新基线，否则会把这些 id 误判成下次的新消息
             if (ids.isNotEmpty()) prefs[seenKey] = ids.toSet()
+            prefs[pendingKey] = emptySet()
             prefs[unreadKey] = false
             // 看过消息页一并灭掉私信红点：下次轮询若站点仍标未读会再点亮
             prefs[pmUnreadKey] = false
@@ -103,11 +113,24 @@ class NoticeUnreadStore(private val context: Context) {
         return fresh
     }
 
-    /** 看过某分类：以这批 id 为已读，圆点灭掉。 */
+    /**
+     * 看过某分类：以这批 id 为已读，圆点灭掉；这批 id 若正是全局红点的来源，全局账一并认账。
+     *
+     * 私信另算：全局私信红点由站点标记驱动、没有可比对的 id，看过私信列表即当作已看
+     * （与 [markRead] 同一口径）；站点仍标未读会在下次轮询再点亮。
+     */
     suspend fun markCategoryRead(category: NoticeTab, ids: List<String>) {
         context.noticeUnreadDataStore.edit { prefs ->
             if (ids.isNotEmpty()) prefs[categorySeenKey(category)] = ids.toSet()
             prefs[categoryUnreadKey(category)] = false
+            if (category.pmFilter != null) {
+                // 私信 id 是会话的 plid/touid，与提醒 id 不同体系，不能拿去扣提醒的待看集合
+                prefs[pmUnreadKey] = false
+            } else {
+                val left = prefs[pendingKey].orEmpty() - ids.toSet()
+                prefs[pendingKey] = left
+                if (left.isEmpty()) prefs[unreadKey] = false
+            }
         }
     }
 }
