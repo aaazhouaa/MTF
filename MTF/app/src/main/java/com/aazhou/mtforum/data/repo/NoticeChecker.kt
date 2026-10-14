@@ -27,12 +27,17 @@ class NoticeChecker(
     suspend fun check(tabs: List<NoticeTab>): List<Notice> {
         val pmTabs = tabs.filter { it.pmFilter != null }
         val noticeTabs = tabs.filter { it.view != null }
-        val (notices, pmPages) = coroutineScope {
-            val noticesDeferred = async { repository.notices(noticeTabs).notices }
+        val (fetch, pmPages) = coroutineScope {
+            val noticesDeferred = async { repository.notices(noticeTabs) }
             val pmDeferred = pmTabs.map { tab ->
                 async { runCatching { repository.pmMessages(tab.pmFilter!!) }.getOrNull() }
             }
             noticesDeferred.await() to pmDeferred.awaitAll()
+        }
+        // 分类记账与全局红点在同一批请求返回时一起写：首页红点点亮的那一刻，
+        // 消息页各分类圆点也已经是现成的，进页面不必再等一轮预拉请求
+        for ((tab, items) in fetch.perTab) {
+            unreadStore.onCategoryPolled(tab, items.map { it.id })
         }
         var pmUnread = false
         var pmHasResult = false
@@ -46,6 +51,7 @@ class NoticeChecker(
             pmUnread = pmUnread || page.messages.any { it.unread }
         }
         if (pmHasResult) unreadStore.setPmUnread(pmUnread)
+        val notices = fetch.merged
         if (notices.isEmpty()) return emptyList()
         val freshIds = unreadStore.onPolled(notices.map { it.id }).toSet()
         return notices.filter { it.id in freshIds }

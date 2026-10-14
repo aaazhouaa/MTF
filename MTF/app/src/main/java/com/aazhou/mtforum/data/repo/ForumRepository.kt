@@ -12,7 +12,6 @@ import com.aazhou.mtforum.data.model.LikeResult
 import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
 import com.aazhou.mtforum.data.model.Notice
-import com.aazhou.mtforum.data.model.NoticePage
 import com.aazhou.mtforum.data.model.NoticeTab
 import com.aazhou.mtforum.data.model.PmPage
 import com.aazhou.mtforum.data.model.PrivateMessage
@@ -553,42 +552,46 @@ class ForumRepository(
     }
 
     /**
-     * 消息提醒：把 [tabs] 里各子类的第一页合并成一条列表。
+     * 消息提醒：把 [tabs] 里各子类的第一页各拉一份，再合并成一条列表。
      *
      * 站点把提醒内容按 view+type 分页，且不带 type 只返回默认子类，故要把子类逐个
      * 列出来各拉一份；私信两类（[NoticeTab.pmFilter] 非空）不是 Notice，跳过。
      * 未登录时每一份都会被换成登录表单，此时返回 loggedOut，不再多打请求。
      */
-    suspend fun notices(tabs: List<NoticeTab>): NoticePage = withContext(Dispatchers.IO) {
-        val requests = tabs.mapNotNull { tab ->
-            val view = tab.view ?: return@mapNotNull null
-            view to tab.type
-        }.distinct()
+    suspend fun notices(tabs: List<NoticeTab>): NoticeFetch = withContext(Dispatchers.IO) {
+        val noticeTabs = tabs.filter { it.view != null }
         val pages = coroutineScope {
-            requests.map { (view, type) ->
+            noticeTabs.map { tab ->
                 async {
-                    val query = if (type == null) {
+                    val view = tab.view ?: return@async null
+                    val query = if (tab.type == null) {
                         "home.php?mod=space&do=notice&view=$view&mobile=2"
                     } else {
-                        "home.php?mod=space&do=notice&view=$view&type=$type&mobile=2"
+                        "home.php?mod=space&do=notice&view=$view&type=${tab.type}&mobile=2"
                     }
                     runCatching { ForumParser.parseNotices(http.get(http.url(query))) }.getOrNull()
                 }
             }.awaitAll()
         }
+        val perTab = mutableMapOf<NoticeTab, List<Notice>>()
         val merged = mutableListOf<Notice>()
         var loggedOut = false
-        for (page in pages) {
+        for ((tab, page) in noticeTabs.zip(pages)) {
             if (page == null) continue
             if (page.loggedOut) {
                 loggedOut = true
                 continue
             }
+            perTab[tab] = page.notices
             merged += page.notices
         }
         // id 用站点给的提醒 id：新消息插到前面时下标会平移，位置 id 会让后面的行
         // 整批重建；同一 id 只留一条，避免列表 key 重复
-        NoticePage(notices = merged.distinctBy { it.id }, loggedOut = loggedOut && merged.isEmpty())
+        NoticeFetch(
+            perTab = perTab,
+            merged = merged.distinctBy { it.id },
+            loggedOut = loggedOut && merged.isEmpty(),
+        )
     }
 
     /**

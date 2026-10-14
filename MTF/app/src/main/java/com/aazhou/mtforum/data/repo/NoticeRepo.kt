@@ -1,6 +1,7 @@
 package com.aazhou.mtforum.data.repo
 
 import com.aazhou.mtforum.data.model.Notice
+import com.aazhou.mtforum.data.model.NoticeTab
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.parser.ForumParser
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +14,18 @@ data class NoticeListPage(
     val notices: List<Notice> = emptyList(),
     /** 站点分页器给出的总页数；没有分页器（只有一页）为 1。 */
     val totalPages: Int = 1,
+    val loggedOut: Boolean = false,
+)
+
+/**
+ * 一次多子类提醒查询的结果。
+ *
+ * [perTab] 各子类各自的列表不能丢：分类未读是各 tab 各记一份账的，合并成一条后
+ * 就分辨不出哪条属于哪个 tab。
+ */
+data class NoticeFetch(
+    val perTab: Map<NoticeTab, List<Notice>> = emptyMap(),
+    val merged: List<Notice> = emptyList(),
     val loggedOut: Boolean = false,
 )
 
