@@ -184,6 +184,9 @@ fun PostEditScreen(
 
     var panel by remember { mutableStateOf(PostComposerPanel.None) }
     var activeInsertKind by remember { mutableStateOf<InsertKind?>(null) }
+    // 打开内联条那一刻的选区：内联条的输入框抢走焦点后，正文选区会被输入法压成光标，
+    // 确认插入时再读 message.selection 就落到了末尾，选中的文字也换不掉
+    var pendingSelection by remember { mutableStateOf<TextRange?>(null) }
     var inlineUrlInput by remember { mutableStateOf("") }
     var inlineTitleInput by remember { mutableStateOf("") }
     var hideContentInput by remember { mutableStateOf("") }
@@ -393,6 +396,19 @@ fun PostEditScreen(
         viewModel.onMessageChange((message.composerDeletionResult(next) ?: next).snapSelectionOutOfSmiley(smileyByCode))
     }
 
+    /** 按打开内联条时记下的选区写入标记：有选中就替换掉选中的文字，没选中就在光标处插入。 */
+    fun insertAtRange(inserted: String) {
+        val current = message
+        val target = pendingSelection ?: current.selection
+        val start = minOf(target.min, target.max).coerceIn(0, current.text.length)
+        val end = maxOf(target.min, target.max).coerceIn(0, current.text.length)
+        val merged = current.text.substring(0, start) + inserted + current.text.substring(end)
+        viewModel.onMessageChange(
+            current.copy(text = merged, selection = TextRange(start + inserted.length)),
+        )
+        pendingSelection = null
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -530,7 +546,7 @@ fun PostEditScreen(
                             },
                             onConfirm = {
                                 val tag = buildHideTag(hideContentInput, hideCreditsInput, hideDaysInput)
-                                viewModel.insertTextAtSelection(tag)
+                                insertAtRange(tag)
                                 hideContentInput = ""
                                 hideCreditsInput = ""
                                 hideDaysInput = ""
@@ -571,7 +587,7 @@ fun PostEditScreen(
                                     InsertKind.Code -> "[code]${inlineUrlInput.trim()}[/code]"
                                     InsertKind.Hide -> ""
                                 }
-                                viewModel.insertTextAtSelection(tag)
+                                insertAtRange(tag)
                                 inlineUrlInput = ""
                                 inlineTitleInput = ""
                                 activeInsertKind = null
@@ -611,13 +627,15 @@ fun PostEditScreen(
                                     messageFocusRequester.requestFocus()
                                     keyboard?.show()
                                 } else {
-                                    inlineUrlInput = selected
-                                    inlineTitleInput = ""
+                                    // 选中的文字是「显示文字」，不是网址：与评论面板一致
+                                    inlineUrlInput = ""
+                                    inlineTitleInput = selected
                                     if (kind == InsertKind.Hide) {
                                         hideContentInput = selected
                                         hideCreditsInput = ""
                                         hideDaysInput = ""
                                     }
+                                    pendingSelection = message.selection
                                     activeInsertKind = kind
                                     panel = PostComposerPanel.None
                                 }
