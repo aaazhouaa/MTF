@@ -15,6 +15,7 @@ import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.SmileyStore
 import com.aazhou.mtforum.ui.screen.threaddetail.insertAtSelection
 import com.aazhou.mtforum.ui.screen.threaddetail.normalizeAtMentions
+import com.aazhou.mtforum.ui.screen.threaddetail.withAttachTags
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -62,6 +63,15 @@ class PostEditViewModel(
 
     /** 编辑态回填的主题分类 id：分类列表随编辑页才回来，先记下等它就绪。 */
     private var pendingTypeId: String? = null
+
+    /**
+     * 进入编辑时该楼挂着的附件 aid：提交时与正文里还引用的那些对比，差集就是被删掉的图。
+     *
+     * 只从正文摘标记的话图仍挂在帖子上——站点解除附件关联靠的是独立的 deleteattach
+     * 请求，编辑表单本身不带任何删除语义的字段。取附件列表而不取正文标记：标记会被
+     * 用户改来改去，拿它当依据一改就残缺，差集算出来是空，删除就静默失效。
+     */
+    private var editInitialAids: Set<String> = emptySet()
 
     private val _loadingInit = MutableStateFlow(true)
     val loadingInit: StateFlow<Boolean> = _loadingInit.asStateFlow()
@@ -112,7 +122,9 @@ class PostEditViewModel(
                 val data = repository.fetchEditPostInit(editTid!!, editPid!!)
                 _editData.value = data
                 _subject.value = data.subject.orEmpty()
-                _message.value = TextFieldValue(data.message)
+                // 站点回的正文不一定带着这些标记（同评论编辑），没有就补齐再回填，
+                // 正文和缩略图得一一对应，删标记才等于删图
+                _message.value = TextFieldValue(withAttachTags(data.message, data.attachments.map { it.aid }))
                 // 站点把已挂的图片附件单列在编辑表单里，回填成缩略图：只取正文的话，
                 // 里面的 [attachimg] 标记在输入框里只是段弱化文字，编辑页一张图都看不见
                 _uploadedImages.value = data.attachments.map {
@@ -123,6 +135,7 @@ class PostEditViewModel(
                         remoteUrl = it.url,
                     )
                 }
+                editInitialAids = data.attachments.mapTo(HashSet()) { it.aid }
                 if (data.permissionDenied != null) {
                     _state.value = PostState.Error(data.permissionDenied)
                 }
@@ -357,11 +370,19 @@ class PostEditViewModel(
         _state.value = PostState.Sending
         viewModelScope.launch {
             try {
+                val text = normalizeAtMentions(_message.value.text, _atUsers.value)
+                // 进入时挂着、现在正文里不再引用的附件，就是这次要删掉的
+                val deletedAids = editInitialAids - repository.attachAidsIn(text).toSet()
+                // 删除要先于提交：站点用独立的 deleteattach 请求解除关联，
+                // 编辑表单本身不带任何删除语义的字段
+                for (aid in deletedAids) {
+                    repository.deleteAttach(editTid!!, editPid!!, aid, formhash)
+                }
                 val result = repository.editPost(
                     tid = editTid!!,
                     pid = editPid!!,
                     formhash = formhash,
-                    message = normalizeAtMentions(_message.value.text, _atUsers.value),
+                    message = text,
                     subject = if (isFirstPost) subject else null,
                 )
                 _state.value = if (result.success) {

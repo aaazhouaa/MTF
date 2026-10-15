@@ -29,7 +29,7 @@ import kotlinx.coroutines.withContext
 private val RE_ATTACH_TAG_AID = Regex("""\[attachimg\](\d+)\[/attachimg\]""", RegexOption.IGNORE_CASE)
 
 /** 给正文补齐 `[attachimg]<aid>[/attachimg]` 标记：原本没有的按原顺序追加到末尾。 */
-private fun withAttachTags(message: String, aids: List<String>): String {
+internal fun withAttachTags(message: String, aids: List<String>): String {
     if (aids.isEmpty()) return message
     val present = RE_ATTACH_TAG_AID.findAll(message).map { it.groupValues[1] }.toSet()
     val missing = aids.filterNot { it in present }
