@@ -119,7 +119,13 @@ fun SearchScreen(
     val forumState by viewModel.forumState.collectAsStateWithLifecycle()
     val userState by viewModel.userState.collectAsStateWithLifecycle()
 
-    var input by remember { mutableStateOf(TextFieldValue(viewModel.keyword)) }
+    // 从结果页返回时本页会重组、输入框状态重建：不指定选区的话光标回到开头，
+    // 光标位置与键盘聚焦看起来就「跑到前面」了，这里把光标落在已有文字末尾
+    var input by remember {
+        mutableStateOf(
+            TextFieldValue(viewModel.keyword, TextRange(viewModel.keyword.length)),
+        )
+    }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
 
