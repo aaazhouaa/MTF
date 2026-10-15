@@ -9,7 +9,6 @@ import com.aazhou.mtforum.data.model.NoticeTab
 import com.aazhou.mtforum.data.model.tabs
 import com.aazhou.mtforum.data.repo.ForumRepository
 import com.aazhou.mtforum.data.repo.NoticeRepo
-import com.aazhou.mtforum.data.repo.NoticeUnreadStore
 import com.aazhou.mtforum.ui.common.UiState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -39,7 +38,6 @@ class NoticeTabViewModel(
     private val repository: ForumRepository,
     private val noticeRepo: NoticeRepo,
     private val contentCache: ContentCache,
-    private val unreadStore: NoticeUnreadStore,
 ) : ViewModel() {
 
     private val tabs: List<NoticeTab> = group.tabs()
@@ -82,11 +80,6 @@ class NoticeTabViewModel(
     fun selectTab(tab: NoticeTab) {
         if (tab !in tabs) return
         _currentTab.value = tab
-        val content = memoryCache[tab] ?: (_tabStates.value[tab]?.state as? UiState.Success)?.data
-        val ids = content?.noticeIds().orEmpty()
-        if (ids.isNotEmpty()) {
-            viewModelScope.launch { unreadStore.markCategoryRead(tab, ids) }
-        }
     }
 
     /** 下拉刷新当前子类：回到第 1 页，已追加的页一并作废。 */
@@ -176,15 +169,6 @@ class NoticeTabViewModel(
         memoryCache[tab] = content
         publish(tab, content)
         writeDiskCache(tab, content)
-        // tab 圆点：新内容里出现没看过的 id 就点亮；正在看的子类顺手记为已读
-        val ids = content.noticeIds()
-        unreadStore.onCategoryPolled(tab, ids)
-        if (_currentTab.value == tab) markRead(tab, ids)
-    }
-
-    private suspend fun markRead(tab: NoticeTab, ids: List<String>) {
-        if (ids.isEmpty()) return
-        unreadStore.markCategoryRead(tab, ids)
     }
 
     private fun publish(tab: NoticeTab, content: NoticeContentState) {

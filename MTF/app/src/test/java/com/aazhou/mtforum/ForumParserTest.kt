@@ -1,6 +1,7 @@
 package com.aazhou.mtforum
 
 import com.aazhou.mtforum.data.parser.ForumParser
+import com.aazhou.mtforum.data.model.NoticeGroup
 import com.aazhou.mtforum.ui.common.ContentBlock
 import com.aazhou.mtforum.ui.common.collectImageUrls
 import com.aazhou.mtforum.ui.common.parseContentBlocks
@@ -1316,6 +1317,35 @@ class ForumParserTest {
         val page = ForumParser.parsePmMessages(response)
         assertEquals(false, page.loggedOut)
         assertEquals(0, page.messages.size)
+    }
+
+    @Test
+    fun `parseNoticeOverview returns groups with unread badge`() {
+        val html = """
+            <a href="https://bbs.binmt.cc/home.php?mod=space&amp;do=pm" class="kmdbt">
+              <i class="comiis_font f_d"></i>
+              <i class="comiis_font kmzico bg_0 f_f"></i>我的消息</a>
+            <a href="https://bbs.binmt.cc/home.php?mod=follow&amp;do=follower&amp;uid=1" class="kmdbt">
+              <span class="notice_r bg_del f_f">2</span>
+              <i class="comiis_font kmzico bg_0 f_f"></i>我的粉丝</a>
+            <a href="https://bbs.binmt.cc/home.php?mod=space&amp;do=notice&amp;view=mypost" class="kmdbt">
+              <i class="comiis_font f_d"></i>我的帖子</a>
+            <a href="https://bbs.binmt.cc/home.php?mod=space&amp;do=notice&amp;view=interactive" class="kmdbt">
+              <span class="notice_r bg_del f_f">1</span>坛友互动</a>
+            <a href="https://bbs.binmt.cc/home.php?mod=space&amp;do=notice&amp;view=system" class="kmdbt">系统提醒</a>
+            <a href="https://bbs.binmt.cc/home.php?mod=space&amp;do=notice&amp;view=app" class="kmdbt">应用提醒</a>
+        """.trimIndent()
+        val groups = ForumParser.parseNoticeOverview(html)
+        assertEquals(setOf(NoticeGroup.FANS, NoticeGroup.INTERACTIVE), groups)
+    }
+
+    @Test
+    fun `parseNoticeOverview returns empty when no badges`() {
+        val html = """
+            <a href="https://bbs.binmt.cc/home.php?mod=space&amp;do=pm" class="kmdbt">我的消息</a>
+            <a href="https://bbs.binmt.cc/home.php?mod=space&amp;do=notice&amp;view=system" class="kmdbt">系统提醒</a>
+        """.trimIndent()
+        assertEquals(emptySet<NoticeGroup>(), ForumParser.parseNoticeOverview(html))
     }
 
     @Test

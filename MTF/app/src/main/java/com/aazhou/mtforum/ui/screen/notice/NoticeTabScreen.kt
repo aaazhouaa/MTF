@@ -99,7 +99,6 @@ fun NoticeTabScreen(
             it.repository,
             NoticeRepo(it.httpClient),
             it.contentCache,
-            it.noticeUnreadStore,
         )
     }
     val tabStates by viewModel.tabStates.collectAsStateWithLifecycle()

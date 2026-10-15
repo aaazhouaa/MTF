@@ -321,6 +321,30 @@ enum class NoticeGroup(val title: String) {
     INTERACTIVE("坛友互动"),
     SYSTEM("系统提醒"),
     APP("应用提醒"),
+    ;
+
+    /**
+     * 依据 `do=notice` 总览页里某个入口链接的 href，判定它属于哪个分类。
+     *
+     * 入口链接形态（实测）：
+     * - 我的消息：`mod=space&do=pm`
+     * - 我的粉丝：`mod=follow&do=follower`
+     * - 我的帖子：`do=notice&view=mypost`
+     * - 坛友互动：`do=notice&view=interactive`
+     * - 系统提醒：`do=notice&view=system`
+     * - 应用提醒：`do=notice&view=app`
+     */
+    companion object {
+        fun fromEntryHref(href: String): NoticeGroup? = when {
+            href.contains("do=pm") -> PM
+            href.contains("do=follower") -> FANS
+            href.contains("view=mypost") -> MY_POST
+            href.contains("view=interactive") -> INTERACTIVE
+            href.contains("view=system") -> SYSTEM
+            href.contains("view=app") -> APP
+            else -> null
+        }
+    }
 }
 
 /**
@@ -365,26 +389,6 @@ enum class NoticeTab(
 
 /** 该一级分类下的二级子类；「我的粉丝」不是提醒数据，返回空列表。 */
 fun NoticeGroup.tabs(): List<NoticeTab> = NoticeTab.entries.filter { it.group == this }
-
-/**
- * 一级页预拉与后台轮询的子类集合：我的帖子 6 类 + 私信两类，共 8 个。
- *
- * 站点没有推送服务端，客户端只能自己定时查；一次 15 分钟的后台轮询只覆盖这里，
- * 其余子类的未读等用户进到该分类时再记账（后台请求太多有触发站点限频的风险）。
- */
-val PREFETCH_TABS: List<NoticeTab> = listOf(
-    NoticeTab.POST,
-    NoticeTab.PCOMMENT,
-    NoticeTab.ACTIVITY,
-    NoticeTab.REWARD,
-    NoticeTab.GOODS,
-    NoticeTab.AT,
-    NoticeTab.PM_PRIVATE,
-    NoticeTab.PM_ANNOUNCE,
-)
-
-/** 后台轮询用的同一份集合（15 分钟一次）。 */
-val BACKGROUND_TABS: List<NoticeTab> = PREFETCH_TABS
 
 /** 私信/公共消息列表页；[loggedOut] 为 true 表示接口把请求换成了登录跳转。 */
 data class PmPage(

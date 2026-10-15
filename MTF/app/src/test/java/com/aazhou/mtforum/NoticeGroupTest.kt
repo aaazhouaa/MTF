@@ -1,12 +1,9 @@
 package com.aazhou.mtforum
 
-import com.aazhou.mtforum.data.model.BACKGROUND_TABS
 import com.aazhou.mtforum.data.model.NoticeGroup
 import com.aazhou.mtforum.data.model.NoticeTab
-import com.aazhou.mtforum.data.model.PREFETCH_TABS
 import com.aazhou.mtforum.data.model.tabs
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -77,17 +74,5 @@ class NoticeGroupTest {
         // 未读记账与缓存 key 用 name，重名会让两个子类共用一份账
         val keys = NoticeTab.entries.map { it.key }
         assertEquals(keys.size, keys.distinct().size)
-    }
-
-    @Test
-    fun prefetchAndBackgroundCoverMyPostPlusPm() {
-        // 一级页预拉与后台轮询同一份集合：我的帖子 6 类 + 私信两类
-        assertEquals(8, PREFETCH_TABS.size)
-        assertEquals(PREFETCH_TABS, BACKGROUND_TABS)
-        assertEquals(
-            NoticeGroup.MY_POST.tabs() + NoticeGroup.PM.tabs(),
-            PREFETCH_TABS,
-        )
-        assertFalse(PREFETCH_TABS.any { it.group == NoticeGroup.INTERACTIVE })
     }
 }

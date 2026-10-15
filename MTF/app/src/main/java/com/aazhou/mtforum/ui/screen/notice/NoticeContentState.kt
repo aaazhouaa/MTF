@@ -22,12 +22,6 @@ sealed interface NoticeContentState {
     }
 }
 
-/** 该分类用于未读判据的 id：站点提醒 id，私信用会话 key（与列表 items 的 key 一致）。 */
-fun NoticeContentState.noticeIds(): List<String> = when (this) {
-    is NoticeContentState.Notices -> items.map { it.id }
-    is NoticeContentState.PrivateMessages -> items.map { it.plid ?: it.touid ?: it.username }
-}
-
 /** 消息提醒的缓存内容。 */
 @Serializable
 data class CachedNotices(

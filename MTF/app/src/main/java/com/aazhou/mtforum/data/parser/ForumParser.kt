@@ -11,6 +11,7 @@ import com.aazhou.mtforum.data.model.LikeResult
 import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
 import com.aazhou.mtforum.data.model.Notice
+import com.aazhou.mtforum.data.model.NoticeGroup
 import com.aazhou.mtforum.data.model.NoticePage
 import com.aazhou.mtforum.data.model.PmPage
 import com.aazhou.mtforum.data.model.PrivateMessage
@@ -1065,6 +1066,23 @@ object ForumParser {
             .maxOrNull()
             ?.coerceAtLeast(1)
             ?: 1
+    }
+
+    /**
+     * 解析「消息提醒」总览页（`home.php?mod=space&do=notice`）顶部分类入口的未读角标。
+     *
+     * 站点把每个分类的未读数渲染成入口链接里的 `span.notice_r`（有未读才渲染，未读 0 不渲染）。
+     * 返回有未读的 [NoticeGroup] 集合；任一处取不到都不抛异常，仅漏掉那一类。
+     */
+    fun parseNoticeOverview(html: String): Set<NoticeGroup> {
+        val document = doc(html)
+        val result = mutableSetOf<NoticeGroup>()
+        for (a in document.select("a[href]").filter { it.selectFirst(".notice_r") != null }) {
+            val group = NoticeGroup.fromEntryHref(a.attr("href")) ?: continue
+            val n = a.selectFirst(".notice_r")?.text()?.trim()?.toIntOrNull() ?: 0
+            if (n > 0) result += group
+        }
+        return result
     }
 
     /** 单个 li 转成提醒：正文取 .ntc_body（没有则整行），时间取 h2 里的时间段。 */

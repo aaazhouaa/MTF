@@ -12,6 +12,7 @@ import com.aazhou.mtforum.data.model.LikeResult
 import com.aazhou.mtforum.data.model.LikeUser
 import com.aazhou.mtforum.data.model.LoginResult
 import com.aazhou.mtforum.data.model.Notice
+import com.aazhou.mtforum.data.model.NoticeGroup
 import com.aazhou.mtforum.data.model.NoticeTab
 import com.aazhou.mtforum.data.model.PmPage
 import com.aazhou.mtforum.data.model.PrivateMessage
@@ -549,6 +550,16 @@ class ForumRepository(
         val profile = ForumParser.parseUserProfile(body)
         logMeResponse(body, profile)
         profile
+    }
+
+    /**
+     * 消息提醒总览：读 `do=notice` 页顶部分类入口的未读角标，返回有未读的分类集合。
+     *
+     * 这是未读的权威来源（站点服务端渲染），替代逐 view 拉列表猜账；一个请求拿全 6 类。
+     */
+    suspend fun noticeOverview(): Set<NoticeGroup> = withContext(Dispatchers.IO) {
+        val body = http.get(http.url("home.php?mod=space&do=notice&mobile=2"))
+        ForumParser.parseNoticeOverview(body)
     }
 
     /**

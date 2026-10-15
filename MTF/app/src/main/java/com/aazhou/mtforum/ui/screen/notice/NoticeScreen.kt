@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,12 +50,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aazhou.mtforum.NoticeNotifier
 import com.aazhou.mtforum.NoticePollWorker
 import com.aazhou.mtforum.R
 import com.aazhou.mtforum.data.model.NoticeGroup
-import com.aazhou.mtforum.data.repo.NoticeRepo
 import com.aazhou.mtforum.ui.common.AppToast
 import com.aazhou.mtforum.ui.common.MtfSwitchRow
 import com.aazhou.mtforum.ui.common.MtfTopBarHeight
@@ -90,15 +92,20 @@ fun NoticeScreen(
     val viewModel: NoticeViewModel = appViewModel {
         NoticeViewModel(
             it.repository,
-            NoticeRepo(it.httpClient),
             it.noticeUnreadStore,
             it.noticePollStore,
-            onRead = { ids -> it.markNoticesRead(ids) },
         )
     }
-    val unreadTabs by viewModel.unreadTabs.collectAsStateWithLifecycle()
+    val unreadGroups by viewModel.unreadGroups.collectAsStateWithLifecycle()
     val pollEnabled by viewModel.pollEnabled.collectAsStateWithLifecycle()
     var showLoginDialog by remember { mutableStateOf(false) }
+
+    // 进一级页与从二级页返回时都拉一次总览页刷新圆点；已读由站点在进二级页时处理。
+    // 进消息提醒页即把通知栏那条提醒撤掉
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        container.markNoticesRead()
+        viewModel.prefetch()
+    }
 
     var pendingEnable by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -195,7 +202,7 @@ fun NoticeScreen(
                         NoticeGroup.INTERACTIVE,
                     )
                     messageGroups.forEachIndexed { index, group ->
-                        val unreadCount = unreadTabs.count { it.group == group }
+                        val unreadCount = if (group in unreadGroups) 1 else 0
                         NoticeMenuRow(
                             group = group,
                             unreadCount = unreadCount,
@@ -229,7 +236,7 @@ fun NoticeScreen(
                         NoticeGroup.FANS,
                     )
                     systemGroups.forEachIndexed { index, group ->
-                        val unreadCount = unreadTabs.count { it.group == group }
+                        val unreadCount = if (group in unreadGroups) 1 else 0
                         NoticeMenuRow(
                             group = group,
                             unreadCount = unreadCount,

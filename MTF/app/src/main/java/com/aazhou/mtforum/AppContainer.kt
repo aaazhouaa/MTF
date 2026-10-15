@@ -11,7 +11,6 @@ import com.aazhou.mtforum.data.cache.ContentCache
 import com.aazhou.mtforum.data.download.ThreadArchiveStore
 import com.aazhou.mtforum.data.log.AppLogger
 import com.aazhou.mtforum.data.log.LogStore
-import com.aazhou.mtforum.data.model.BACKGROUND_TABS
 import com.aazhou.mtforum.data.model.UserProfile
 import com.aazhou.mtforum.data.network.HttpClient
 import com.aazhou.mtforum.data.repo.ActionStore
@@ -188,15 +187,29 @@ class AppContainer(application: Application) {
         }
         appScope.launch {
             // 失败无所谓，下一轮轮询还会再查；不发通知（用户已经在应用里）。
-            runCatching { noticeChecker.check(BACKGROUND_TABS) }.onFailure { e ->
+            runCatching { noticeChecker.check() }.onFailure { e ->
                 logger.warn("Notice", "查询消息失败", e)
             }
         }
     }
 
-    /** 看过消息页：把 [ids] 记为已读，红点随之灭掉。 */
-    fun markNoticesRead(ids: List<String>) {
-        appScope.launch { noticeUnreadStore.markRead(ids) }
+    /**
+     * 立即查一次消息（不做节流）：首页下拉刷新、返回首页等用户主动触发的时机用。
+     *
+     * 请求只有一个总览页（不拉列表正文），量很小；失败静默，下一轮再查。
+     */
+    fun refreshNotices() {
+        if (!httpClient.isLoggedIn()) return
+        appScope.launch {
+            runCatching { noticeChecker.check() }.onFailure { e ->
+                logger.warn("Notice", "查询消息失败", e)
+            }
+        }
+    }
+
+    /** 看过消息页：站点已把角标清零，本地未读状态同步清空。 */
+    fun markNoticesRead() {
+        appScope.launch { noticeUnreadStore.clear() }
         // 看过消息页即没有待看的新消息，通知栏那条提醒随之撤掉（autoCancel 只在点通知时生效）
         NoticeNotifier.cancel(appContext)
     }
@@ -279,7 +292,7 @@ class AppContainer(application: Application) {
 }
 
 /** 两次前台查消息的最小间隔：频繁切前台时不至于每次都发一轮请求。 */
-private const val NOTICE_REFRESH_MIN_INTERVAL_MS = 60_000L
+private const val NOTICE_REFRESH_MIN_INTERVAL_MS = 30_000L
 
 /** 前台驻留时的定时查询周期；大于上面的节流间隔，否则会被节流拦掉。 */
-private const val FOREGROUND_REFRESH_INTERVAL_MS = 90_000L
+private const val FOREGROUND_REFRESH_INTERVAL_MS = 30_000L

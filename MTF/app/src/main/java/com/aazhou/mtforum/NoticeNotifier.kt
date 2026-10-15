@@ -8,7 +8,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.aazhou.mtforum.data.model.Notice
+import com.aazhou.mtforum.data.model.NoticeGroup
 
 /**
  * 新消息系统通知。
@@ -21,8 +21,8 @@ object NoticeNotifier {
     private const val CHANNEL_ID = "notice"
     private const val NOTIFICATION_ID = 1001
 
-    fun show(context: Context, notices: List<Notice>) {
-        if (notices.isEmpty()) return
+    fun show(context: Context, groups: Set<NoticeGroup>) {
+        if (groups.isEmpty()) return
         createChannel(context)
         if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
 
@@ -38,13 +38,13 @@ object NoticeNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        // 原文里带帖子标题与「查看」之类的操作词，通知里只留前几条正文，避免一屏放不下
-        val lines = notices.take(3).map { it.text.replace(Regex("\\s+"), " ") }
+        // 只提示分类，不拉正文；用户点进应用后由消息提醒页看到具体内容
+        val text = groups.joinToString("、") { it.title }
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_mail_line)
-            .setContentTitle("${notices.size} 条新消息提醒")
-            .setContentText(lines.first())
-            .setStyle(NotificationCompat.BigTextStyle().bigText(lines.joinToString("\n")))
+            .setContentTitle("有新的消息提醒")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .setContentIntent(pending)
             .build()

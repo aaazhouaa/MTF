@@ -137,6 +137,7 @@ fun HomeScreen(
     // 每页一个列表状态并提升到页面作用域：切 tab 不丢滚动位置，也不重建已翻页的数据
     val listStates = HomeTabs.views.map { rememberLazyListState() }
 
+
     // 底栏重复点击「首页」：与双击顶栏同一效果，回当前分页的顶部。
     // 已处理到第几次必须记住：切 tab 时本页组合会被销毁再按 saveState 重建，不记住的话
     // 重建后同一 tick 会再触发一次，白丢恢复出来的滚动位置
@@ -200,7 +201,10 @@ fun HomeScreen(
                     refreshing = view in refreshing,
                     listState = listStates[page],
                     rankThreads = if (view == HomeTabs.HOT) hot?.hotThreads.orEmpty() else emptyList(),
-                    onRefresh = { viewModel.refresh(view) },
+                    onRefresh = {
+                        viewModel.refresh(view)
+                        container.refreshNotices()
+                    },
                     onRetry = { viewModel.retry(view) },
                     onLoadMore = { viewModel.loadMore(view) },
                     onThreadClick = onThreadClick,
