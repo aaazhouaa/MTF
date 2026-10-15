@@ -11,7 +11,7 @@ import androidx.compose.ui.unit.dp
 val BottomBarHeight = 56.dp
 
 /** 底栏距屏幕底部的距离（在系统导航栏避让之上再留的空白）。 */
-val BottomBarBottomMargin = 21.dp
+val BottomBarBottomMargin = 10.dp
 
 /** 顶栏内容行的上下留白：对照首页与帖子详情自绘顶栏的 10dp。 */
 val TopBarVerticalPadding = 10.dp
