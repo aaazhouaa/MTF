@@ -74,6 +74,7 @@ import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.SwipeTabIndicator
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.reportViewportAtTop
 import com.aazhou.mtforum.ui.common.scrollToNewest
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
@@ -94,7 +95,7 @@ data class FriendsTabState(
     val page: Int = 1,
     val loadingMore: Boolean = false,
     val hasNext: Boolean = true,
-    /** 第 1 页数据替换上屏的次数，供界面在顶部时把视口拉回最新。 */
+    /** 第 1 页数据替换上屏时、替换前视口贴顶才递增；界面据此把视口拉回最新。 */
     val resetScrollTick: Int = 0,
 )
 
@@ -123,7 +124,7 @@ class MyFriendsViewModel(
     private val _requestLoadingMore = MutableStateFlow(false)
     val requestLoadingMore: StateFlow<Boolean> = _requestLoadingMore.asStateFlow()
 
-    /** 好友请求的第 1 页数据替换次数：与各 tab 独立，供界面在顶部时把视口拉回最新。 */
+    /** 好友请求的第 1 页替换时、替换前视口贴顶才递增；界面据此把视口拉回最新。 */
     private val _requestResetTick = MutableStateFlow(0)
     val requestResetTick: StateFlow<Int> = _requestResetTick.asStateFlow()
 
@@ -137,6 +138,19 @@ class MyFriendsViewModel(
 
     fun consumeActionMessage() {
         _actionMessage.value = null
+    }
+
+    /**
+     * 各 tab（含好友请求 [VIEW_REQUEST]）的视口是否贴顶，由界面持续回报。
+     *
+     * 归位判据必须在数据替换**之前**取：替换后 LazyList 已按 item key 把旧首条锚回原处，
+     * 那时读到的 index 是「头部新插了几条」而不是用户位置。
+     */
+    private val viewportAtTop = mutableMapOf<String, Boolean>()
+
+    /** 界面回报某 tab 的视口位置；只在贴顶状态变化时被调用。 */
+    fun noteViewportAtTop(view: String, atTop: Boolean) {
+        viewportAtTop[view] = atTop
     }
 
     /** 下拉刷新中的目标（tab view 或好友请求）：与列表状态独立，刷新期间保留旧列表不清屏。 */
@@ -222,7 +236,9 @@ class MyFriendsViewModel(
                         state = UiState.Success(data.users),
                         page = 1,
                         hasNext = data.hasNext,
-                        resetScrollTick = it.resetScrollTick + 1,
+                        // 替换前贴顶才置位：中段用户不打扰，且由数据层在替换时取真值
+                        resetScrollTick = it.resetScrollTick +
+                            if (viewportAtTop[view] == true) 1 else 0,
                     )
                 }
                 saveToCache(uid, view)
@@ -299,7 +315,10 @@ class MyFriendsViewModel(
                 requestPage = 1
                 _requestHasNext.value = pageData.hasNext
                 _requestState.value = UiState.Success(pageData.requests)
-                _requestResetTick.value = _requestResetTick.value + 1
+                // 替换前贴顶才归位：好友请求同样会被新请求插到头部，判据同列表 tab
+                if (viewportAtTop[VIEW_REQUEST] == true) {
+                    _requestResetTick.value = _requestResetTick.value + 1
+                }
                 saveRequestsToCache(uid)
             }
             .onFailure { e ->
@@ -556,6 +575,7 @@ fun MyFriendsScreen(
                     hasNext = requestHasNext,
                     resetScrollTick = requestResetTick,
                     listState = listStates[page],
+                    onViewportAtTopChange = { viewModel.noteViewportAtTop(view, it) },
                     onRetry = { viewModel.retryRequests() },
                     onRefresh = { viewModel.refresh(view) },
                     onApprove = { viewModel.approveRequest(it) },
@@ -573,6 +593,7 @@ fun MyFriendsScreen(
                     listState = listStates[page],
                     emptyText = "暂无${tabs[page].first}信息",
                     pendingUid = friendPending,
+                    onViewportAtTopChange = { viewModel.noteViewportAtTop(view, it) },
                     onRetry = { viewModel.retry(view) },
                     onRefresh = { viewModel.refresh(view) },
                     onLoadMore = { viewModel.loadMore(view) },
@@ -595,6 +616,7 @@ private fun FriendsTab(
     listState: LazyListState,
     emptyText: String,
     pendingUid: String,
+    onViewportAtTopChange: (Boolean) -> Unit,
     onRetry: () -> Unit,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
@@ -602,7 +624,10 @@ private fun FriendsTab(
     onDelete: (FriendUserItem) -> Unit,
     onUnblock: (FriendUserItem) -> Unit,
 ) {
-    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 视口位置持续回报给数据层：归位判据只能在数据替换前取，替换后 LazyList 已按 key
+    // 把旧首条锚回原处，那时读到的 index 是「头部新插了几条」而非用户位置
+    listState.reportViewportAtTop(onViewportAtTopChange)
+    // 第 1 页数据替换后归位：要不要跳已由数据层在替换前定好，这里无条件执行。
     // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
     var lastResetTick by remember { mutableIntStateOf(tab.resetScrollTick) }
     LaunchedEffect(tab.resetScrollTick) {
@@ -683,8 +708,12 @@ private fun FriendRequestList(
     onApprove: (FriendRequestItem) -> Unit,
     onIgnore: (FriendRequestItem) -> Unit,
     onLoadMore: () -> Unit,
+    onViewportAtTopChange: (Boolean) -> Unit,
 ) {
-    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 视口位置持续回报给数据层：归位判据只能在数据替换前取，替换后 LazyList 已按 key
+    // 把旧首条锚回原处，那时读到的 index 是「头部新插了几条」而非用户位置
+    listState.reportViewportAtTop(onViewportAtTopChange)
+    // 第 1 页数据替换后归位：要不要跳已由数据层在替换前定好，这里无条件执行。
     // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
     var lastResetTick by remember { mutableIntStateOf(resetScrollTick) }
     LaunchedEffect(resetScrollTick) {

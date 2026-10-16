@@ -23,7 +23,7 @@ data class ForumTabState(
     val hasNext: Boolean = true,
     /** 下拉刷新中：与 [state] 独立，刷新期间保留旧列表不清屏。 */
     val refreshing: Boolean = false,
-    /** 第 1 页数据替换上屏的次数，供界面在顶部时把视口拉回最新。 */
+    /** 第 1 页数据替换上屏时、替换前视口贴顶才递增；界面据此把视口拉回最新。 */
     val resetScrollTick: Int = 0,
 )
 
@@ -36,6 +36,19 @@ class ThreadListViewModel(
     /** 各档位的列表状态，key 为档位；未加载过的档位不在表内。 */
     private val _tabStates = MutableStateFlow<Map<ForumSort, ForumTabState>>(emptyMap())
     val tabStates: StateFlow<Map<ForumSort, ForumTabState>> = _tabStates.asStateFlow()
+
+    /**
+     * 各档位的视口是否贴顶（由界面持续回报）。
+     *
+     * 归位判据必须在数据替换**之前**取：替换后 LazyList 已按 item key 把旧首条锚回原处，
+     * 那时读到的 index 是「头部新插了几条」而不是用户位置。
+     */
+    private val viewportAtTop = mutableMapOf<ForumSort, Boolean>()
+
+    /** 界面回报某档位的视口位置；只在贴顶状态变化时被调用。 */
+    fun noteViewportAtTop(sort: ForumSort, atTop: Boolean) {
+        viewportAtTop[sort] = atTop
+    }
 
     /** 一次性提示（如「新数据获取失败」）；界面展示后调 [consumeActionMessage] 清掉。 */
     private val _actionMessage = MutableStateFlow<String?>(null)
@@ -105,7 +118,9 @@ class ThreadListViewModel(
                         state = UiState.Success(data),
                         page = 1,
                         hasNext = data.hasNext,
-                        resetScrollTick = it.resetScrollTick + 1,
+                        // 替换前贴顶才置位：中段用户不打扰，且由数据层在替换时取真值
+                        resetScrollTick = it.resetScrollTick +
+                            if (viewportAtTop[sort] == true) 1 else 0,
                     )
                 }
                 saveToCache(sort)

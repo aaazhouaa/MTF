@@ -70,6 +70,7 @@ import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.SwipeTabIndicator
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.reportViewportAtTop
 import com.aazhou.mtforum.ui.common.scrollToNewest
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
@@ -89,7 +90,7 @@ data class FavoritesTabState(
     val page: Int = 1,
     val loadingMore: Boolean = false,
     val hasNext: Boolean = true,
-    /** 第 1 页数据替换上屏的次数，供界面在顶部时把视口拉回最新。 */
+    /** 第 1 页数据替换上屏时、替换前视口贴顶才递增；界面据此把视口拉回最新。 */
     val resetScrollTick: Int = 0,
 )
 
@@ -114,6 +115,19 @@ class MyFavoritesViewModel(
 
     fun consumeActionMessage() {
         _actionMessage.value = null
+    }
+
+    /**
+     * 各 tab 的视口是否贴顶（由界面持续回报）。
+     *
+     * 归位判据必须在数据替换**之前**取：替换后 LazyList 已按 item key 把旧首条锚回原处，
+     * 那时读到的 index 是「头部新插了几条」而不是用户位置。
+     */
+    private val viewportAtTop = mutableMapOf<String, Boolean>()
+
+    /** 界面回报某 tab 的视口位置；只在贴顶状态变化时被调用。 */
+    fun noteViewportAtTop(type: String, atTop: Boolean) {
+        viewportAtTop[type] = atTop
     }
 
     /** 下拉刷新中的 tab：与 [tabStates] 独立，刷新期间保留旧列表不清屏。 */
@@ -186,7 +200,9 @@ class MyFavoritesViewModel(
                         state = UiState.Success(data.items),
                         page = 1,
                         hasNext = data.hasNext,
-                        resetScrollTick = it.resetScrollTick + 1,
+                        // 替换前贴顶才置位：中段用户不打扰，且由数据层在替换时取真值
+                        resetScrollTick = it.resetScrollTick +
+                            if (viewportAtTop[type] == true) 1 else 0,
                     )
                 }
                 saveToCache(uid, type)
@@ -393,6 +409,7 @@ fun MyFavoritesScreen(
                 refreshing = type in refreshing,
                 listState = listStates[page],
                 removingKey = removingKey,
+                onViewportAtTopChange = { viewModel.noteViewportAtTop(type, it) },
                 onRetry = { viewModel.retry(type) },
                 onRefresh = { viewModel.refresh(type) },
                 onLoadMore = { viewModel.loadMore(type) },
@@ -430,13 +447,17 @@ private fun FavoritesTab(
     refreshing: Boolean,
     listState: LazyListState,
     removingKey: String,
+    onViewportAtTopChange: (Boolean) -> Unit,
     onRetry: () -> Unit,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onClick: (FavoriteItem) -> Unit,
     onDelete: (FavoriteItem) -> Unit,
 ) {
-    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 视口位置持续回报给数据层：归位判据只能在数据替换前取，替换后 LazyList 已按 key
+    // 把旧首条锚回原处，那时读到的 index 是「头部新插了几条」而非用户位置
+    listState.reportViewportAtTop(onViewportAtTopChange)
+    // 第 1 页数据替换后归位：要不要跳已由数据层在替换前定好，这里无条件执行。
     // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
     var lastResetTick by remember { mutableIntStateOf(tab.resetScrollTick) }
     LaunchedEffect(tab.resetScrollTick) {

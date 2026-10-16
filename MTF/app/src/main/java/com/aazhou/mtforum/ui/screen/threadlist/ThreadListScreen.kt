@@ -59,6 +59,7 @@ import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
+import com.aazhou.mtforum.ui.common.reportViewportAtTop
 import com.aazhou.mtforum.ui.common.scrollToNewest
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
@@ -177,6 +178,7 @@ fun ThreadListScreen(
             ForumThreadList(
                 tab = tab,
                 listState = listStates[page],
+                onViewportAtTopChange = { viewModel.noteViewportAtTop(sort, it) },
                 onRetry = { viewModel.retry(sort) },
                 onRefresh = { viewModel.refresh(sort) },
                 onLoadMore = { viewModel.loadMore(sort) },
@@ -198,6 +200,7 @@ fun ThreadListScreen(
 private fun ForumThreadList(
     tab: ForumTabState,
     listState: LazyListState,
+    onViewportAtTopChange: (Boolean) -> Unit,
     onRetry: () -> Unit,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
@@ -207,7 +210,10 @@ private fun ForumThreadList(
 ) {
     // 公告折叠态只活在本页组合里：切换档位或离开版块页即恢复默认折叠
     var announcementExpanded by remember { mutableStateOf(false) }
-    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 视口位置持续回报给数据层：归位判据只能在数据替换前取，替换后 LazyList 已按 key
+    // 把旧首条锚回原处，那时读到的 index 是「头部新插了几条」而非用户位置
+    listState.reportViewportAtTop(onViewportAtTopChange)
+    // 第 1 页数据替换后归位：要不要跳已由数据层在替换前定好，这里无条件执行。
     // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
     var lastResetTick by remember { mutableIntStateOf(tab.resetScrollTick) }
     LaunchedEffect(tab.resetScrollTick) {

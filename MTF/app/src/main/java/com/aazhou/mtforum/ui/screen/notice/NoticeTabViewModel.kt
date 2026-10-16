@@ -25,7 +25,7 @@ data class NoticeTabState(
     val refreshing: Boolean = false,
     val loadingMore: Boolean = false,
     val hasNext: Boolean = false,
-    /** 第 1 页数据替换上屏的次数，供界面在顶部时把视口拉回最新。 */
+    /** 第 1 页数据替换上屏时、替换前视口贴顶才递增；界面据此把视口拉回最新。 */
     val resetScrollTick: Int = 0,
 )
 
@@ -48,6 +48,19 @@ class NoticeTabViewModel(
     val tabStates: StateFlow<Map<NoticeTab, NoticeTabState>> = _tabStates.asStateFlow()
 
     private val _currentTab = MutableStateFlow(tabs.firstOrNull())
+
+    /**
+     * 各子类的视口是否贴顶（由界面持续回报）。
+     *
+     * 归位判据必须在数据替换**之前**取：替换后 LazyList 已按 item key 把旧首条锚回原处，
+     * 那时读到的 index 是「头部新插了几条」而不是用户位置。
+     */
+    private val viewportAtTop = mutableMapOf<NoticeTab, Boolean>()
+
+    /** 界面回报某子类的视口位置；只在贴顶状态变化时被调用。 */
+    fun noteViewportAtTop(tab: NoticeTab, atTop: Boolean) {
+        viewportAtTop[tab] = atTop
+    }
 
     private val cacheJson = Json { ignoreUnknownKeys = true }
 
@@ -123,8 +136,10 @@ class NoticeTabViewModel(
                 }
             }
             updateContent(tab, content)
-            // 提醒与私信都按时间倒序，新条目插在头部，故第 1 页到手即视为可归位
-            update(tab) { it.copy(resetScrollTick = it.resetScrollTick + 1) }
+            // 提醒与私信都按时间倒序，新条目插在头部；替换前贴顶才置位归位信号
+            if (viewportAtTop[tab] == true) {
+                update(tab) { it.copy(resetScrollTick = it.resetScrollTick + 1) }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

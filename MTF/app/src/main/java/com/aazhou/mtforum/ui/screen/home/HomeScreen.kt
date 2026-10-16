@@ -72,6 +72,7 @@ import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
+import com.aazhou.mtforum.ui.common.reportViewportAtTop
 import com.aazhou.mtforum.ui.common.scrollToNewest
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.TopBarActionIcons
@@ -203,6 +204,7 @@ fun HomeScreen(
                     refreshing = view in refreshing,
                     listState = listStates[page],
                     rankThreads = if (view == HomeTabs.HOT) hot?.hotThreads.orEmpty() else emptyList(),
+                    onViewportAtTopChange = { viewModel.noteViewportAtTop(view, it) },
                     onRefresh = {
                         viewModel.refresh(view)
                         container.refreshNotices()
@@ -241,6 +243,7 @@ private fun FeedPage(
     refreshing: Boolean,
     listState: LazyListState,
     rankThreads: List<Thread>,
+    onViewportAtTopChange: (Boolean) -> Unit,
     onRefresh: () -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
@@ -261,7 +264,10 @@ private fun FeedPage(
         }
         rankWasMissing = rankThreads.isEmpty()
     }
-    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 视口位置持续回报给数据层：归位判据只能在数据替换前取，替换后 LazyList 已按 key
+    // 把旧首条锚回原处，那时读到的 index 是「头部新插了几条」而非用户位置
+    listState.reportViewportAtTop(onViewportAtTopChange)
+    // 第 1 页数据替换后归位：要不要跳已由数据层在替换前定好，这里无条件执行。
     // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
     var lastResetTick by remember { mutableIntStateOf(feed.resetScrollTick) }
     LaunchedEffect(feed.resetScrollTick) {
