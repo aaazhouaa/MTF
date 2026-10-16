@@ -263,8 +263,16 @@ data class UserProfile(
 @Serializable
 data class SearchResult(
     val threads: List<Thread>,
-    val hasNext: Boolean,
-)
+    /**
+     * 站点「下一页」链接的绝对地址，null 表示已到末页。
+     *
+     * 搜索结果靠查询串里的 searchid 定位，页码参数单独给会被站点丢掉（当成新搜索、
+     * 回到第一页），因此翻页只能顺着站点自己给的这个地址走。
+     */
+    val nextUrl: String? = null,
+) {
+    val hasNext: Boolean get() = nextUrl != null
+}
 
 /** 首页数据：热版推荐 + 热帖排行。 */
 @Serializable

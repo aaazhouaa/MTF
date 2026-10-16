@@ -130,6 +130,48 @@ class ForumParserTest {
     }
 
     @Test
+    fun searchResultKeepsSiteNextPageUrl() {
+        // 搜索结果的翻页只能顺站点给的链接走：带 searchid 的连接，页码参数单独给会被站点丢掉
+        val html = """
+            <html><body>
+              <div class="comiis_forumlist"><ul>
+                <li class="forumlist_li"><div class="mmlist_li_box"><h2>
+                  <a href="https://bbs.binmt.cc/thread-174806-1-1.html">MT管理器2.26.10正式版</a>
+                </h2></div></li>
+              </ul></div>
+              <div class="pg"><strong>1</strong>
+                <a href="search.php?mod=forum&amp;searchid=416&amp;orderby=lastpost&amp;ascdesc=desc&amp;searchsubmit=yes&amp;page=2&amp;mobile=2" class="nxt">下一页</a>
+              </div>
+            </body></html>
+        """.trimIndent()
+        val result = ForumParser.parseSearchResult(html)
+        assertEquals(1, result.threads.size)
+        assertTrue(result.hasNext)
+        assertEquals(
+            "https://bbs.binmt.cc/search.php?mod=forum&searchid=416&orderby=lastpost&ascdesc=desc&searchsubmit=yes&page=2&mobile=2",
+            result.nextUrl,
+        )
+    }
+
+    @Test
+    fun searchResultWithoutNextLinkIsLastPage() {
+        val html = """
+            <html><body>
+              <div class="comiis_forumlist"><ul>
+                <li class="forumlist_li"><div class="mmlist_li_box"><h2>
+                  <a href="https://bbs.binmt.cc/thread-130318-1-1.html">末页帖</a>
+                </h2></div></li>
+              </ul></div>
+              <div class="pg"><a href="search.php?mod=forum&amp;searchid=416&amp;page=49&amp;mobile=2">49</a><strong>50</strong></div>
+            </body></html>
+        """.trimIndent()
+        val result = ForumParser.parseSearchResult(html)
+        assertEquals(1, result.threads.size)
+        assertNull(result.nextUrl)
+        assertEquals(false, result.hasNext)
+    }
+
+    @Test
     fun parsesForumPage() {
         val page = ForumParser.parseForumPage(forumPageHtml, 1)
         assertEquals(1, page.announcements.size)

@@ -531,12 +531,21 @@ class ForumRepository(
         http.get(url)
     }
 
-    suspend fun search(keyword: String, page: Int): SearchResult = withContext(Dispatchers.IO) {
+    /**
+     * 搜索帖子（第一页）。
+     *
+     * 站点把结果集挂在会话里，翻页必须用返回的 nextUrl（带 searchid），不能另拼页码。
+     */
+    suspend fun search(keyword: String): SearchResult = withContext(Dispatchers.IO) {
         val encoded = java.net.URLEncoder.encode(keyword, "UTF-8")
         ForumParser.parseSearchResult(
-            http.get(http.url("search.php?mod=forum&searchsubmit=yes&srchtxt=$encoded&page=$page&mobile=2")),
-            page,
+            http.get(http.url("search.php?mod=forum&searchsubmit=yes&srchtxt=$encoded&mobile=2")),
         )
+    }
+
+    /** 搜索结果的下一页：url 取自上一页的 [SearchResult.nextUrl]。 */
+    suspend fun searchNext(url: String): SearchResult = withContext(Dispatchers.IO) {
+        ForumParser.parseSearchResult(http.get(url))
     }
 
     /**

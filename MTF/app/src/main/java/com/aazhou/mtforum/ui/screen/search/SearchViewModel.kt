@@ -51,8 +51,9 @@ class SearchViewModel(
 
     var keyword: String = ""
         private set
-    var page: Int = 1
-        private set
+
+    /** 当前结果集的下一页地址；null 表示已到末页。 */
+    private var nextUrl: String? = null
 
     private val cacheJson = Json { ignoreUnknownKeys = true }
 
@@ -74,28 +75,28 @@ class SearchViewModel(
         }
     }
 
-    fun search(keyword: String, page: Int = 1) {
+    fun search(keyword: String) {
         if (keyword.isBlank()) return
         val trimmed = keyword.trim()
         this.keyword = trimmed
-        this.page = page
-        val targetPage = page
+        this.nextUrl = null
         viewModelScope.launch {
             // 同一关键词的旧结果先摆出来，不走全屏转圈；过期的也照摆，刷新失败保留旧内容
-            if (targetPage == 1) {
-                val cached = contentCache.read(
-                    CacheKeys.search(trimmed),
-                    CacheKeys.LIST_TTL,
-                    allowExpired = true,
-                ) {
-                    cacheJson.decodeFromString<SearchResult>(it)
-                }
-                if (cached != null) _state.value = UiState.Success(cached)
+            val cached = contentCache.read(
+                CacheKeys.search(trimmed),
+                CacheKeys.LIST_TTL,
+                allowExpired = true,
+            ) {
+                cacheJson.decodeFromString<SearchResult>(it)
+            }
+            if (cached != null) {
+                _state.value = UiState.Success(cached)
+                nextUrl = cached.nextUrl
             }
             if (_state.value == null) _state.value = UiState.Loading
             _state.value = try {
-                val result = repository.search(trimmed, targetPage)
-                this@SearchViewModel.page = targetPage
+                val result = repository.search(trimmed)
+                this@SearchViewModel.nextUrl = result.nextUrl
                 saveToCache(result)
                 UiState.Success(result)
             } catch (e: Exception) {
@@ -114,21 +115,25 @@ class SearchViewModel(
     fun loadMore() {
         if (_loadingMore.value) return
         val current = (_state.value as? UiState.Success)?.data ?: return
-        if (!current.hasNext) return
+        val target = current.nextUrl ?: return
         _loadingMore.value = true
         viewModelScope.launch {
-            runCatching { repository.search(keyword, page + 1) }
+            runCatching { repository.searchNext(target) }
                 .onSuccess { next ->
-                    page += 1
+                    nextUrl = next.nextUrl
                     // 现读当前列表：缓存刚上屏、首屏请求还在飞时翻页就会并发打进来，
-                    // 用请求前的旧快照拼会把首屏新结果整块盖掉
+                    // 用请求前的旧快照拼会把首屏新结果整块盖掉。站点结果集会被新帖顶动，
+                    // 相邻页可能重复返回同一条，按 tid 去重否则 LazyColumn 重复 key 崩溃。
                     val latest = (_state.value as? UiState.Success)?.data ?: current
-                    val merged = SearchResult(latest.threads + next.threads, next.hasNext)
+                    val merged = SearchResult(
+                        threads = (latest.threads + next.threads).distinctBy { it.tid },
+                        nextUrl = next.nextUrl,
+                    )
                     _state.value = UiState.Success(merged)
                     saveToCache(merged)
                 }
                 .onFailure {
-                    _state.value = UiState.Success(current.copy(hasNext = false))
+                    _state.value = UiState.Success(current.copy(nextUrl = null))
                 }
             _loadingMore.value = false
         }

@@ -1255,10 +1255,19 @@ object ForumParser {
         return null
     }
 
-    /** 搜索结果页；结构与版块页帖子列表一致。 */
-    fun parseSearchResult(html: String, page: Int): SearchResult {
-        val pageData = parseForumPage(html, page)
-        return SearchResult(threads = pageData.threads, hasNext = pageData.hasNext)
+    /**
+     * 搜索结果页；结构与版块页帖子列表一致。
+     *
+     * 翻页地址取站点的「下一页」链接：搜索结果按 searchid 在服务端定位，页码参数被站点
+     * 丢弃（每次都会新建一次搜索并回到第一页），只有链接里的 searchid 能翻到第二页之后。
+     */
+    fun parseSearchResult(html: String): SearchResult {
+        val document = doc(html)
+        val pageData = parseForumPage(html, 1)
+        return SearchResult(
+            threads = pageData.threads,
+            nextUrl = document.selectFirst("a.nxt")?.absUrl("href")?.takeIf { it.isNotBlank() },
+        )
     }
 
     /**
