@@ -74,14 +74,7 @@ class NoticeTabViewModel(
         loadJob = viewModelScope.launch {
             val cached = memoryCache[tab] ?: readDiskCache(tab)
             if (cached != null) publish(tab, cached)
-            // 自动拉取也走下拉刷新的指示器：缓存已上屏时圆圈转起来，才看得到在拉数据。
-            // finally 复位：切 tab 会取消上一个 job，不复位会把旧 tab 的圆圈永远留在屏幕上
-            update(tab) { it.copy(refreshing = true) }
-            try {
-                reload(tab)
-            } finally {
-                update(tab) { it.copy(refreshing = false) }
-            }
+            reload(tab)
         }
     }
 

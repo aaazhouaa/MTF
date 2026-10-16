@@ -135,10 +135,7 @@ class MyPostsViewModel(
                     )
                 }
             }
-            // 自动拉取也走下拉刷新的指示器：有缓存时列表已上屏，圆圈转起来才看得到在拉数据
-            _refreshing.value = _refreshing.value + type
             reload(type, uid)
-            _refreshing.value = _refreshing.value - type
         }
     }
 

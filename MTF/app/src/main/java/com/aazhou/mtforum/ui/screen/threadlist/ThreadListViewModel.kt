@@ -76,10 +76,7 @@ class ThreadListViewModel(
                     )
                 }
             }
-            // 自动拉取也走下拉刷新的指示器：有缓存时列表已上屏，圆圈转起来才看得到在拉数据
-            update(sort) { it.copy(refreshing = true) }
             reload(sort)
-            update(sort) { it.copy(refreshing = false) }
         }
     }
 
