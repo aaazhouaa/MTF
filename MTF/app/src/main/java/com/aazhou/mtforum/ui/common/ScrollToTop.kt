@@ -29,6 +29,20 @@ suspend fun LazyListState.scrollToTop() {
     scrollToItem(0)
 }
 
+/**
+ * 列表内容整体替换后回到最新：仅在视口还停在顶部附近时归位。
+ *
+ * 首项已完全在顶部且无偏移时直接返回：否则 [LazyListState.scrollToItem] 仍会触发一次强制重排，顶部可见抖动。
+ * 中段不打扰：数据在用户已下滑后才到达（缓存先上屏、网络随后替换）也不应该把人拽回头。
+ *
+ * 必须用 [LazyListState.scrollToItem] 而非 [scrollToTop]：后者「已在顶部直接返回」会跳过它，
+ * 而 LazyList 的 key 锚点正是靠 scrollToItem 才会被忘掉，不调用就钉在旧条目上。
+ */
+suspend fun LazyListState.scrollToNewest() {
+    if (firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0) return
+    if (firstVisibleItemIndex <= 1) scrollToItem(0)
+}
+
 /** [LazyListState.scrollToTop] 的 `verticalScroll` 版本。 */
 suspend fun ScrollState.scrollToTop() {
     scrollTo(0)

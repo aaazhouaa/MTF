@@ -30,8 +30,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -57,6 +59,7 @@ import com.aazhou.mtforum.ui.common.SwipeTabIndicator
 import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.scrollToNewest
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
 import com.aazhou.mtforum.ui.theme.bodyTextColor
@@ -74,6 +77,8 @@ data class MyThreadsTabState(
     val page: Int = 1,
     val loadingMore: Boolean = false,
     val hasNext: Boolean = true,
+    /** 第 1 页数据替换上屏的次数，供界面在顶部时把视口拉回最新。 */
+    val resetScrollTick: Int = 0,
 )
 
 class MyPostsViewModel(
@@ -130,7 +135,10 @@ class MyPostsViewModel(
                     )
                 }
             }
+            // 自动拉取也走下拉刷新的指示器：有缓存时列表已上屏，圆圈转起来才看得到在拉数据
+            _refreshing.value = _refreshing.value + type
             reload(type, uid)
+            _refreshing.value = _refreshing.value - type
         }
     }
 
@@ -160,7 +168,12 @@ class MyPostsViewModel(
         runCatching { repository.myThreads(type = type, page = 1) }
             .onSuccess { data ->
                 update(type) {
-                    it.copy(state = UiState.Success(data.threads), page = 1, hasNext = data.hasNext)
+                    it.copy(
+                        state = UiState.Success(data.threads),
+                        page = 1,
+                        hasNext = data.hasNext,
+                        resetScrollTick = it.resetScrollTick + 1,
+                    )
                 }
                 saveToCache(uid, type)
             }
@@ -342,6 +355,15 @@ private fun MyThreadsTab(
     onThreadClick: (String) -> Unit,
     onUserClick: (String) -> Unit,
 ) {
+    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
+    var lastResetTick by remember { mutableIntStateOf(tab.resetScrollTick) }
+    LaunchedEffect(tab.resetScrollTick) {
+        if (tab.resetScrollTick > lastResetTick) {
+            lastResetTick = tab.resetScrollTick
+            listState.scrollToNewest()
+        }
+    }
     when (val current = tab.state) {
         is UiState.Loading -> LoadingBox()
         is UiState.Error -> ErrorBox(current.message, onRetry)

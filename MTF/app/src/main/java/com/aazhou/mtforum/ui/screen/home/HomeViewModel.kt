@@ -21,6 +21,8 @@ data class FeedState(
     val page: Int = 1,
     val loadingMore: Boolean = false,
     val hasNext: Boolean = true,
+    /** 第 1 页数据替换上屏的次数，供界面在顶部时把视口拉回最新。 */
+    val resetScrollTick: Int = 0,
 )
 
 class HomeViewModel(
@@ -70,7 +72,10 @@ class HomeViewModel(
                     it.copy(state = UiState.Success(cached.threads), page = cached.page)
                 }
             }
+            // 自动拉取也走下拉刷新的指示器：有缓存时列表已上屏，圆圈转起来才看得到在拉数据
+            _refreshing.value = _refreshing.value + view
             reload(view)
+            _refreshing.value = _refreshing.value - view
         }
     }
 
@@ -106,7 +111,12 @@ class HomeViewModel(
         runCatching { repository.guideFeed(view, 1) }
             .onSuccess { data ->
                 update(view) {
-                    it.copy(state = UiState.Success(data.threads), page = 1, hasNext = data.hasNext)
+                    it.copy(
+                        state = UiState.Success(data.threads),
+                        page = 1,
+                        hasNext = data.hasNext,
+                        resetScrollTick = it.resetScrollTick + 1,
+                    )
                 }
                 saveFeedToCache(view)
             }

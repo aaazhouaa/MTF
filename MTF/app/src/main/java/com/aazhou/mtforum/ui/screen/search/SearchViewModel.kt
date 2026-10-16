@@ -41,6 +41,10 @@ class SearchViewModel(
     private val _userState = MutableStateFlow<UiState<List<AtUser>>?>(null)
     val userState: StateFlow<UiState<List<AtUser>>?> = _userState.asStateFlow()
 
+    /** 点击搜索即回顶的信号：结果是另一批内容，停在原位置没有意义。 */
+    private val _resetScrollTick = MutableStateFlow(0)
+    val resetScrollTick: StateFlow<Int> = _resetScrollTick.asStateFlow()
+
     fun consumeActionMessage() {
         _actionMessage.value = null
     }
@@ -59,8 +63,10 @@ class SearchViewModel(
         if (keyword.isNotBlank()) submit(keyword)
     }
 
-    /** 按当前分类搜索。 */
+    /** 按当前分类搜索。点下去即回顶，不等结果回来。 */
     fun submit(keyword: String) {
+        if (keyword.isBlank()) return
+        _resetScrollTick.value = _resetScrollTick.value + 1
         when (_selectedTab.value) {
             SearchTab.Thread -> search(keyword)
             SearchTab.Forum -> searchForums(keyword)

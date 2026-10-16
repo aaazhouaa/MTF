@@ -25,6 +25,8 @@ data class NoticeTabState(
     val refreshing: Boolean = false,
     val loadingMore: Boolean = false,
     val hasNext: Boolean = false,
+    /** 第 1 页数据替换上屏的次数，供界面在顶部时把视口拉回最新。 */
+    val resetScrollTick: Int = 0,
 )
 
 /**
@@ -72,7 +74,14 @@ class NoticeTabViewModel(
         loadJob = viewModelScope.launch {
             val cached = memoryCache[tab] ?: readDiskCache(tab)
             if (cached != null) publish(tab, cached)
-            reload(tab)
+            // 自动拉取也走下拉刷新的指示器：缓存已上屏时圆圈转起来，才看得到在拉数据。
+            // finally 复位：切 tab 会取消上一个 job，不复位会把旧 tab 的圆圈永远留在屏幕上
+            update(tab) { it.copy(refreshing = true) }
+            try {
+                reload(tab)
+            } finally {
+                update(tab) { it.copy(refreshing = false) }
+            }
         }
     }
 
@@ -121,6 +130,8 @@ class NoticeTabViewModel(
                 }
             }
             updateContent(tab, content)
+            // 提醒与私信都按时间倒序，新条目插在头部，故第 1 页到手即视为可归位
+            update(tab) { it.copy(resetScrollTick = it.resetScrollTick + 1) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,6 +59,7 @@ import com.aazhou.mtforum.ui.common.ThreadCard
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.onDoubleTapToTop
+import com.aazhou.mtforum.ui.common.scrollToNewest
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
@@ -205,6 +207,15 @@ private fun ForumThreadList(
 ) {
     // 公告折叠态只活在本页组合里：切换档位或离开版块页即恢复默认折叠
     var announcementExpanded by remember { mutableStateOf(false) }
+    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
+    var lastResetTick by remember { mutableIntStateOf(tab.resetScrollTick) }
+    LaunchedEffect(tab.resetScrollTick) {
+        if (tab.resetScrollTick > lastResetTick) {
+            lastResetTick = tab.resetScrollTick
+            listState.scrollToNewest()
+        }
+    }
     when (val current = tab.state) {
         is UiState.Loading -> LoadingBox()
         is UiState.Error -> ErrorBox(current.message, onRetry)

@@ -23,6 +23,8 @@ data class ForumTabState(
     val hasNext: Boolean = true,
     /** 下拉刷新中：与 [state] 独立，刷新期间保留旧列表不清屏。 */
     val refreshing: Boolean = false,
+    /** 第 1 页数据替换上屏的次数，供界面在顶部时把视口拉回最新。 */
+    val resetScrollTick: Int = 0,
 )
 
 class ThreadListViewModel(
@@ -74,7 +76,10 @@ class ThreadListViewModel(
                     )
                 }
             }
+            // 自动拉取也走下拉刷新的指示器：有缓存时列表已上屏，圆圈转起来才看得到在拉数据
+            update(sort) { it.copy(refreshing = true) }
             reload(sort)
+            update(sort) { it.copy(refreshing = false) }
         }
     }
 
@@ -99,7 +104,12 @@ class ThreadListViewModel(
         runCatching { repository.forumPage(fid, 1, sort) }
             .onSuccess { data ->
                 update(sort) {
-                    it.copy(state = UiState.Success(data), page = 1, hasNext = data.hasNext)
+                    it.copy(
+                        state = UiState.Success(data),
+                        page = 1,
+                        hasNext = data.hasNext,
+                        resetScrollTick = it.resetScrollTick + 1,
+                    )
                 }
                 saveToCache(sort)
             }

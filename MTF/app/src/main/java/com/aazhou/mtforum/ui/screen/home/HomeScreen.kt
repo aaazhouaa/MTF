@@ -71,6 +71,8 @@ import com.aazhou.mtforum.ui.common.accountIconModel
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
 import com.aazhou.mtforum.ui.common.container
+import com.aazhou.mtforum.ui.common.onDoubleTapToTop
+import com.aazhou.mtforum.ui.common.scrollToNewest
 import com.aazhou.mtforum.ui.common.scrollToTop
 import com.aazhou.mtforum.ui.common.TopBarActionIcons
 import com.aazhou.mtforum.ui.common.TopBarActionsEndPadding
@@ -258,6 +260,15 @@ private fun FeedPage(
             listState.scrollToItem(0)
         }
         rankWasMissing = rankThreads.isEmpty()
+    }
+    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
+    var lastResetTick by remember { mutableIntStateOf(feed.resetScrollTick) }
+    LaunchedEffect(feed.resetScrollTick) {
+        if (feed.resetScrollTick > lastResetTick) {
+            lastResetTick = feed.resetScrollTick
+            listState.scrollToNewest()
+        }
     }
     when (val current = feed.state) {
         is UiState.Loading -> LoadingBox()

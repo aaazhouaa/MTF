@@ -40,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -70,6 +71,7 @@ import com.aazhou.mtforum.ui.common.SwipeTabIndicator
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
 import com.aazhou.mtforum.ui.common.bottomBarContentPadding
+import com.aazhou.mtforum.ui.common.scrollToNewest
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
@@ -208,6 +210,15 @@ private fun NoticeTabPage(
     onUserClick: (String) -> Unit,
     onChatClick: ((String, String) -> Unit)?,
 ) {
+    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
+    var lastResetTick by remember { mutableIntStateOf(tabState.resetScrollTick) }
+    LaunchedEffect(tabState.resetScrollTick) {
+        if (tabState.resetScrollTick > lastResetTick) {
+            lastResetTick = tabState.resetScrollTick
+            listState.scrollToNewest()
+        }
+    }
     when (val current = tabState.state) {
         is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())
         is UiState.Error -> ErrorBox(current.message, onRetry, Modifier.fillMaxSize())

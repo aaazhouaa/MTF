@@ -44,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -162,6 +163,17 @@ fun SearchScreen(
     val searchTabs = SearchTab.values()
     val pagerState = rememberPagerState(initialPage = 0) { searchTabs.size }
     val scope = rememberCoroutineScope()
+    val resetScrollTick by viewModel.resetScrollTick.collectAsStateWithLifecycle()
+
+    // 点击搜索即回顶（含点 tab / 滑分类——它们走同一条 submit 路径）。
+    // 记上次处理到的 tick（初值取当前值）：从结果页返回时本页重组、初值已是最新值，不会误跳
+    var lastResetTick by remember { mutableIntStateOf(resetScrollTick) }
+    LaunchedEffect(resetScrollTick) {
+        if (resetScrollTick > lastResetTick) {
+            lastResetTick = resetScrollTick
+            listStates[pagerState.currentPage].scrollToTop()
+        }
+    }
 
     // 滑动落定即切换分类：与点 tab 走同一条路，避免两处各提交一次搜索
     LaunchedEffect(pagerState.currentPage) {

@@ -39,8 +39,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +74,7 @@ import com.aazhou.mtforum.ui.common.MtfTopBarHeight
 import com.aazhou.mtforum.ui.common.SwipeTabIndicator
 import com.aazhou.mtforum.ui.common.UiState
 import com.aazhou.mtforum.ui.common.appViewModel
+import com.aazhou.mtforum.ui.common.scrollToNewest
 import com.aazhou.mtforum.ui.theme.LocalIsDarkTheme
 import com.aazhou.mtforum.ui.theme.LocalMtfColors
 import com.aazhou.mtforum.ui.theme.accentTextColor
@@ -91,6 +94,8 @@ data class FriendsTabState(
     val page: Int = 1,
     val loadingMore: Boolean = false,
     val hasNext: Boolean = true,
+    /** 第 1 页数据替换上屏的次数，供界面在顶部时把视口拉回最新。 */
+    val resetScrollTick: Int = 0,
 )
 
 class MyFriendsViewModel(
@@ -117,6 +122,10 @@ class MyFriendsViewModel(
 
     private val _requestLoadingMore = MutableStateFlow(false)
     val requestLoadingMore: StateFlow<Boolean> = _requestLoadingMore.asStateFlow()
+
+    /** 好友请求的第 1 页数据替换次数：与各 tab 独立，供界面在顶部时把视口拉回最新。 */
+    private val _requestResetTick = MutableStateFlow(0)
+    val requestResetTick: StateFlow<Int> = _requestResetTick.asStateFlow()
 
     /** 正在同意/忽略的请求 uid。 */
     private val _requestPending = MutableStateFlow("")
@@ -173,7 +182,10 @@ class MyFriendsViewModel(
                     )
                 }
             }
+            // 自动拉取也走下拉刷新的指示器：有缓存时列表已上屏，圆圈转起来才看得到在拉数据
+            _refreshing.value = _refreshing.value + view
             reload(view, uid)
+            _refreshing.value = _refreshing.value - view
         }
     }
 
@@ -209,7 +221,12 @@ class MyFriendsViewModel(
         runCatching { repository.myFriends(view = view, page = 1) }
             .onSuccess { data ->
                 update(view) {
-                    it.copy(state = UiState.Success(data.users), page = 1, hasNext = data.hasNext)
+                    it.copy(
+                        state = UiState.Success(data.users),
+                        page = 1,
+                        hasNext = data.hasNext,
+                        resetScrollTick = it.resetScrollTick + 1,
+                    )
                 }
                 saveToCache(uid, view)
             }
@@ -269,7 +286,10 @@ class MyFriendsViewModel(
                 _requestHasNext.value = cached.hasNext
                 _requestState.value = UiState.Success(cached.requests)
             }
+            // 自动拉取也走下拉刷新的指示器
+            _refreshing.value = _refreshing.value + VIEW_REQUEST
             reloadRequests(uid)
+            _refreshing.value = _refreshing.value - VIEW_REQUEST
         }
     }
 
@@ -285,6 +305,7 @@ class MyFriendsViewModel(
                 requestPage = 1
                 _requestHasNext.value = pageData.hasNext
                 _requestState.value = UiState.Success(pageData.requests)
+                _requestResetTick.value = _requestResetTick.value + 1
                 saveRequestsToCache(uid)
             }
             .onFailure { e ->
@@ -454,6 +475,7 @@ fun MyFriendsScreen(
     val requestHasNext by viewModel.requestHasNext.collectAsStateWithLifecycle()
     val requestLoadingMore by viewModel.requestLoadingMore.collectAsStateWithLifecycle()
     val requestPending by viewModel.requestPending.collectAsStateWithLifecycle()
+    val requestResetTick by viewModel.requestResetTick.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
 
     val pagerState = rememberPagerState(initialPage = 0) { tabs.size }
@@ -538,6 +560,7 @@ fun MyFriendsScreen(
                     pending = requestPending,
                     loadingMore = requestLoadingMore,
                     hasNext = requestHasNext,
+                    resetScrollTick = requestResetTick,
                     listState = listStates[page],
                     onRetry = { viewModel.retryRequests() },
                     onRefresh = { viewModel.refresh(view) },
@@ -585,6 +608,15 @@ private fun FriendsTab(
     onDelete: (FriendUserItem) -> Unit,
     onUnblock: (FriendUserItem) -> Unit,
 ) {
+    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
+    var lastResetTick by remember { mutableIntStateOf(tab.resetScrollTick) }
+    LaunchedEffect(tab.resetScrollTick) {
+        if (tab.resetScrollTick > lastResetTick) {
+            lastResetTick = tab.resetScrollTick
+            listState.scrollToNewest()
+        }
+    }
     when (val current = tab.state) {
         is UiState.Loading -> LoadingBox()
         is UiState.Error -> ErrorBox(current.message, onRetry)
@@ -650,6 +682,7 @@ private fun FriendRequestList(
     pending: String,
     loadingMore: Boolean,
     hasNext: Boolean,
+    resetScrollTick: Int,
     listState: LazyListState,
     onRetry: () -> Unit,
     onRefresh: () -> Unit,
@@ -657,6 +690,15 @@ private fun FriendRequestList(
     onIgnore: (FriendRequestItem) -> Unit,
     onLoadMore: () -> Unit,
 ) {
+    // 第 1 页数据替换上屏后归位：仅在顶部附近才跳，已下滑的用户不打扰。
+    // 记上次处理到的 tick（初值取当前值）：返回或重建时初值已是最新值，不会误跳
+    var lastResetTick by remember { mutableIntStateOf(resetScrollTick) }
+    LaunchedEffect(resetScrollTick) {
+        if (resetScrollTick > lastResetTick) {
+            lastResetTick = resetScrollTick
+            listState.scrollToNewest()
+        }
+    }
     when (val current = requestState) {
         is UiState.Loading -> LoadingBox()
         is UiState.Error -> ErrorBox(current.message, onRetry)
