@@ -208,7 +208,8 @@ fun ThreadDetailScreen(
     // 互动却全部放行的分歧
     val currentUser by container.currentUser.collectAsStateWithLifecycle()
     val loggedIn = currentUser?.isLoggedIn == true
-    val state by viewModel.state.collectAsStateWithLifecycle()
+    // 主数据流在页面真正停稳（RESUMED）后再上屏，避免数据在 200~280ms 提前返回时与转场动画收尾帧抢占主线程引发掉帧
+    val state by viewModel.state.collectAsStateWithLifecycle(minActiveState = Lifecycle.State.RESUMED)
     val replyState by viewModel.replyState.collectAsStateWithLifecycle()
     val orderType by viewModel.orderType.collectAsStateWithLifecycle()
     val opOnly by viewModel.opOnly.collectAsStateWithLifecycle()
@@ -606,12 +607,8 @@ fun ThreadDetailScreen(
             Box(
                 Modifier
                     .fillMaxSize()
-                    // 与 ReplyBar 同一可见条件：回复面板弹出时底栏整条让位，采样层没有消费者，
-                    // 不必再录全屏
-                    .then(
-                        if (page != null && !composerVisible) Modifier.layerBackdrop(replyBarBackdrop)
-                        else Modifier
-                    ),
+                    // 保持采样层常驻挂载：避免数据返回（page!=null）时动态增删 Modifier 引发 RenderNode 销毁重建与转场收尾掉帧
+                    .layerBackdrop(replyBarBackdrop),
             ) {
             when (val current = state) {
                 is UiState.Loading -> LoadingBox(Modifier.fillMaxSize())

@@ -1,8 +1,12 @@
 package com.aazhou.mtforum.ui.nav
 
 import android.net.Uri
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavBackStackEntry
 import com.aazhou.mtforum.R
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -143,39 +148,71 @@ fun AppRoot(onToggleTheme: () -> Unit, openNotice: Boolean = false) {
     Box(
         Modifier
             .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
             // 屏蔽本应用的无障碍内容：开着 GKD 等无障碍服务时快滑必卡，详见 AccessibilityMask.kt
             .maskAccessibility(),
     ) {
         val background = MaterialTheme.colorScheme.background
-        // 主题色必须经 state 间接读取再画进 backdrop：rememberLayerBackdrop 把 onDraw
-        // 这个 lambda 当 remember key，直接捕获背景色的话，一换主题 lambda 就变、
-        // LayerBackdrop 实例随之重建；新实例的 layerCoordinates 要等下一次布局才补上，
-        // 而换主题只改颜色不改布局，于是底栏采样一直拿到空、毛玻璃整个消失。
         val backgroundState = rememberUpdatedState(background)
         val backdrop = rememberLayerBackdrop {
             drawRect(backgroundState.value)
             drawContent()
         }
 
+        val isTabSwitch: AnimatedContentTransitionScope<NavBackStackEntry>.() -> Boolean = {
+            initialState.destination.route in tabRoutes && targetState.destination.route in tabRoutes
+        }
+
         NavHost(
             navController = navController,
             startDestination = Routes.HOME,
-            // 进出过渡也必须为 None：NavHost 默认 enter/exit 是 700ms 交叉淡入淡出，
-            // 切 tab 时新旧两页同时在场淡入淡出，表现为整屏闪一下；玻璃底栏采样的是
-            // 这个 NavHost 的图层，双页同场时采样内容还会跳变，故一律即时切换。
-            enterTransition = { EnterTransition.None },
-            exitTransition = { ExitTransition.None },
-            // 返回过渡同样必须为 None：NavHost 默认 popEnter/popExit 是 700ms 交叉淡入淡出，
-            // 期间被弹出的页面仍留在 composition 里淡出且 zIndex 高于下层页面，会先接到并
-            // 消耗用户的手势，表现为「退出帖子后第一次滑动不生效」。淡出用 alpha 实现，
-            // 命中测试不看 alpha，所以只能让旧页面在返回时立即移除。
-            popEnterTransition = { EnterTransition.None },
-            popExitTransition = { ExitTransition.None },
+            // 主 Tab 互切即时切换；二级页面保持标准 300ms 双页视差平移转场（不加速），
+            // exitTransition 配合渐隐使旧页面在动画收尾阶段平滑软着陆，彻底消除终点帧 Dispose 引发的视觉顿挫
+            enterTransition = {
+                if (isTabSwitch()) {
+                    EnterTransition.None
+                } else {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                    )
+                }
+            },
+            exitTransition = {
+                if (isTabSwitch()) {
+                    ExitTransition.None
+                } else {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        targetOffset = { (it * 0.3f).toInt() },
+                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                    )
+                }
+            },
+            popEnterTransition = {
+                if (isTabSwitch()) {
+                    EnterTransition.None
+                } else {
+                    slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        initialOffset = { (it * 0.3f).toInt() },
+                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                    )
+                }
+            },
+            popExitTransition = {
+                if (isTabSwitch()) {
+                    ExitTransition.None
+                } else {
+                    slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                    )
+                }
+            },
             modifier = Modifier
                 .fillMaxSize()
-            // 采样层只在 3 个 tab 页挂：非 tab 路由（搜索/登录/帖子详情/通知/发帖）没有玻璃底栏
-            // 消费这个 backdrop，挂了也只是逐帧把全屏内容录进一个没人读取的图层
-            .then(if (showBottomBar) Modifier.layerBackdrop(backdrop) else Modifier),
+                .then(if (showBottomBar) Modifier.layerBackdrop(backdrop) else Modifier),
         ) {
             // 未登录状态点击别人的信息不跳转到对方的主页，只弹出轻提示
             val navigateToUser: (String) -> Unit = { uid ->
