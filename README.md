@@ -18,38 +18,6 @@ MTF 是一款 [MT 论坛](https://bbs.binmt.cc/)（bbs.binmt.cc）的第三方 A
 - **个性化**：6 套主题配色、深色模式、液态玻璃底栏。
 - **其它**：签到、我的帖子、我的收藏、好友与关注列表、本地日志与崩溃日志。
 
-## 技术栈
-
-| 类别 | 技术 |
-| --- | --- |
-| 语言 | Kotlin 2.2 |
-| UI | Jetpack Compose（BOM 2025.12.01）+ Material 3 |
-| 网络 | OkHttp 4.12 |
-| HTML 解析 | Jsoup |
-| 图片 | Coil 2.7 |
-| 视频 | Media3 ExoPlayer |
-| 导航 / 状态 / 持久化 | Navigation Compose、ViewModel、DataStore、WorkManager |
-| 序列化 | kotlinx.serialization |
-| 依赖注入 | 手动 DI（`AppContainer`） |
-
-## 构建
-
-环境要求：
-
-- JDK 21
-- Android SDK（`compileSdk 36`、`buildTools 36.0.0`）
-- Gradle 8.14.2（随项目 `MTF/gradlew` 提供）
-
-```bash
-cd MTF
-# 构建 Release APK
-./gradlew :app:assembleRelease
-```
-
-构建产物为 `MTF/app/build/outputs/apk/release/MTF-v<version>.apk`。
-
-> Release 签名：若仓库外的 `.secrets/mtf/keystore.properties` 存在则使用正式签名，否则回退为 debug 签名，便于直接安装测试。
-
 ## 底层机制
 
 - **`ContentCache` 磁盘快照缓存**：TTL 过期 + 128MB 容量上限淘汰（先清过期、再按最旧删除），写入走「临时文件 + rename」原子替换，坏文件静默降级为「无缓存」走网络路径。
@@ -78,15 +46,6 @@ MTF/app/src/main/java/com/aazhou/mtforum/
     ├── screen/            # 各页面
     └── theme/             # 主题
 ```
-
-## 测试
-
-```bash
-cd MTF
-./gradlew :app:testReleaseUnitTest
-```
-
-单元测试覆盖站点 HTML 解析、正文渲染、WAF 求解、灌水折叠、贴图上传与草稿箱等核心逻辑。
 
 ## 免责声明
 
